@@ -814,6 +814,34 @@ unsafe fn lbd_right_panel_ai_controls(
             return Some(LRESULT(0));
         }
     }
+    // 4. "添加文件"按钮：弹系统文件选择器，把选中文件作为上下文附件
+    {
+        let hit = {
+            let st = state.borrow();
+            if let Some((bx, by, bw, bh)) = st.ai_panel.attach_file_button_region {
+                mouse_x >= bx && mouse_x < bx + bw && mouse_y >= by && mouse_y < by + bh
+            } else {
+                false
+            }
+        };
+        if hit {
+            if let Some(path) = Dialogs::open_file_dialog(hwnd, "选择要添加的文件", &[]) {
+                let mut st = state.borrow_mut();
+                match crate::ai_panel::AiPanel::read_local_file_attachment(&path) {
+                    Ok(att) => {
+                        st.ai_panel.toggle_attachment(att);
+                        st.status_message = format!("已添加文件上下文: {}", path.display());
+                    }
+                    Err(e) => {
+                        st.status_message = format!("添加文件失败: {}", e);
+                    }
+                }
+                drop(st);
+            }
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
     None
 }
 

@@ -541,6 +541,14 @@ impl EditorState {
                 AiContextAttachment::CustomText(text) => {
                     parts.push(format!("用户附加文本：\n{}\n", text));
                 }
+                AiContextAttachment::LocalFile { path, content } => {
+                    let lang = language_str(Language::from_path(std::path::Path::new(path)));
+                    parts.push(wrap_code_block(
+                        path,
+                        lang,
+                        &truncate_middle(content, 30_000),
+                    ));
+                }
             }
         }
 

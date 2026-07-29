@@ -1874,6 +1874,29 @@ impl EditorState {
                 &dim_brush,
             );
 
+            // 添加文件按钮（＋图标）：弹系统文件选择器，把选中文件作为上下文附件
+            let attach_btn_size = 24.0f32;
+            let attach_btn_x = menu_btn_x - attach_btn_size - 4.0;
+            let attach_btn_rect = D2D_RECT_F {
+                left: attach_btn_x,
+                top: send_btn_y,
+                right: attach_btn_x + attach_btn_size,
+                bottom: send_btn_y + send_btn_size,
+            };
+            fill_round_rect(target, &attach_btn_rect, 4.0, &btn_bg_brush);
+            self.icons.draw(
+                target,
+                crate::icons::IconKind::Plus,
+                attach_btn_x + 2.0,
+                send_btn_y + 2.0,
+                attach_btn_size - 4.0,
+                attach_btn_size - 4.0,
+                &dim_brush,
+            );
+            // 注册命中区（窗口绝对坐标）
+            self.ai_panel.attach_file_button_region =
+                Some((attach_btn_x, send_btn_y, attach_btn_size, send_btn_size));
+
             // ===== 历史记录下拉面板（浮层：最后渲染，覆盖于对话内容之上，不挤压布局）=====
             if self.ai_panel.history_open || self.ai_panel.history_anim > 0.0 {
                 let hist_y = history_dropdown_y;

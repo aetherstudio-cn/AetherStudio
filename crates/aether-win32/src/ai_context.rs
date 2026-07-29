@@ -16,6 +16,8 @@ pub enum AiContextAttachment {
     FileTree,
     /// 用户自定义文本（如粘贴的日志、错误信息）
     CustomText(String),
+    /// 用户通过文件选择器上传的本地文件（含路径与已读取的内容）
+    LocalFile { path: String, content: String },
 }
 
 impl AiContextAttachment {
@@ -27,6 +29,7 @@ impl AiContextAttachment {
             Self::Diagnostics => "诊断".to_string(),
             Self::FileTree => "文件树".to_string(),
             Self::CustomText(_) => "自定义文本".to_string(),
+            Self::LocalFile { path, .. } => format!("文件: {}", file_name_of(path)),
         }
     }
 
@@ -39,6 +42,7 @@ impl AiContextAttachment {
             Self::Diagnostics => "⚠ 诊断".to_string(),
             Self::FileTree => "🌲 文件树".to_string(),
             Self::CustomText(_) => "📝 自定义".to_string(),
+            Self::LocalFile { path, .. } => format!("📎 {}", file_name_of(path)),
         }
     }
 
@@ -51,8 +55,17 @@ impl AiContextAttachment {
             Self::Diagnostics => "诊断",
             Self::FileTree => "树",
             Self::CustomText(_) => "文本",
+            Self::LocalFile { .. } => "附件",
         }
     }
+}
+
+/// 从路径中取出文件名（无法解析时回退为原始路径）
+fn file_name_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
 }
 
 /// 把一个代码片段包装成带路径/语言标记的文本块
@@ -92,6 +105,24 @@ mod tests {
             AiContextAttachment::CustomText("日志".to_string()).label(),
             "自定义文本"
         );
+    }
+
+    #[test]
+    fn test_local_file_labels() {
+        let att = AiContextAttachment::LocalFile {
+            path: "C:\\proj\\src\\main.rs".to_string(),
+            content: "fn main() {}".to_string(),
+        };
+        assert_eq!(att.label(), "文件: main.rs");
+        assert_eq!(att.short_label(), "📎 main.rs");
+        assert_eq!(att.toolbar_label(), "附件");
+    }
+
+    #[test]
+    fn test_file_name_of() {
+        assert_eq!(file_name_of("C:\\a\\b\\c.txt"), "c.txt");
+        assert_eq!(file_name_of("/home/u/x.log"), "x.log");
+        assert_eq!(file_name_of("plain"), "plain");
     }
 
     #[test]

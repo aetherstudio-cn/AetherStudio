@@ -630,6 +630,8 @@ pub struct AiPanel {
     pub file_card_regions: Vec<(usize, usize, f32, f32, f32, f32)>,
     /// "浏览并选择文件夹"按钮命中区 (x, y, w, h)
     pub browse_folder_region: Option<(f32, f32, f32, f32)>,
+    /// 底部工具栏"添加文件"按钮命中区 (x, y, w, h)，渲染每帧更新
+    pub attach_file_button_region: Option<(f32, f32, f32, f32)>,
 }
 
 /// 在后台线程发起一次流式 AI 请求，把事件写入共享 stream_state。
@@ -772,6 +774,7 @@ impl AiPanel {
             expanded_file_cards: std::collections::HashSet::new(),
             file_card_regions: Vec::new(),
             browse_folder_region: None,
+            attach_file_button_region: None,
         };
         panel.restore_latest_conversation();
         panel
@@ -886,6 +889,7 @@ impl AiPanel {
             expanded_file_cards: std::collections::HashSet::new(),
             file_card_regions: Vec::new(),
             browse_folder_region: None,
+            attach_file_button_region: None,
         }
     }
 
@@ -1995,6 +1999,10 @@ impl AiPanel {
                 (AiContextAttachment::Diagnostics, AiContextAttachment::Diagnostics) => true,
                 (AiContextAttachment::FileTree, AiContextAttachment::FileTree) => true,
                 (AiContextAttachment::CustomText(x), AiContextAttachment::CustomText(y)) => x == y,
+                (
+                    AiContextAttachment::LocalFile { path: x, .. },
+                    AiContextAttachment::LocalFile { path: y, .. },
+                ) => x == y,
                 _ => false,
             });
         if let Some(idx) = pos {
@@ -2041,6 +2049,32 @@ impl AiPanel {
         AiContextAttachment::CustomText(truncate_middle(text, 2000))
     }
 
+    /// 读取本地文件并构造为 LocalFile 附件。
+    /// 失败（不存在/无权限/疑似二进制/超大）时返回 Err(原因)，由调用方展示状态。
+    pub fn read_local_file_attachment(
+        path: &std::path::Path,
+    ) -> Result<AiContextAttachment, String> {
+        const MAX_BYTES: u64 = 2 * 1024 * 1024; // 2 MiB 上限，避免超大文件撑爆上下文
+        let meta = std::fs::metadata(path).map_err(|e| format!("无法读取文件信息：{}", e))?;
+        if meta.len() > MAX_BYTES {
+            return Err(format!(
+                "文件过大（{} KB），上限 {} KB",
+                meta.len() / 1024,
+                MAX_BYTES / 1024
+            ));
+        }
+        let bytes = std::fs::read(path).map_err(|e| format!("读取文件失败：{}", e))?;
+        // 简单二进制检测：含 NUL 字节则拒绝（文本文件通常不含）
+        if bytes.contains(&0) {
+            return Err("疑似二进制文件，无法作为文本上下文".to_string());
+        }
+        let content = String::from_utf8_lossy(&bytes).to_string();
+        Ok(AiContextAttachment::LocalFile {
+            path: path.to_string_lossy().to_string(),
+            content,
+        })
+    }
+
     /// 命中测试：模式切换按钮
     pub fn hit_test_mode_button(&self, px: f32, py: f32) -> Option<AiMode> {
         for (mode, x, y, w, h) in &self.mode_button_regions {
@@ -2085,6 +2119,7 @@ impl AiPanel {
         self.history_detail_restore_region = None;
         self.history_panel_region = None;
         self.browse_folder_region = None;
+        self.attach_file_button_region = None;
     }
 
     /// 历史下拉面板动画步进：向目标状态（展开 1.0 / 收起 0.0）推进。
@@ -2377,6 +2412,57 @@ mod tests {
 
     fn msg(role: AiRole, content: &str) -> AiMessage {
         AiMessage::new(role, content.to_string())
+    }
+
+    #[test]
+    fn read_local_file_ok() {
+        let mut p = std::env::temp_dir();
+        p.push(format!("aether_attach_test_{}.txt", std::process::id()));
+        std::fs::write(&p, "hello 上传\nline2").unwrap();
+        let att = AiPanel::read_local_file_attachment(&p).expect("应读取成功");
+        match att {
+            AiContextAttachment::LocalFile { path, content } => {
+                assert!(path.ends_with(".txt"));
+                assert!(content.contains("hello 上传"));
+                assert!(content.contains("line2"));
+            }
+            _ => panic!("应为 LocalFile 变体"),
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn read_local_file_rejects_binary() {
+        let mut p = std::env::temp_dir();
+        p.push(format!("aether_attach_bin_{}.bin", std::process::id()));
+        std::fs::write(&p, [0u8, 1, 2, 3, 0, 255]).unwrap();
+        let err = AiPanel::read_local_file_attachment(&p).unwrap_err();
+        assert!(err.contains("二进制"));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn read_local_file_missing_errors() {
+        let p = std::path::Path::new("Z:\\definitely\\not\\here_aether_xyz.txt");
+        assert!(AiPanel::read_local_file_attachment(p).is_err());
+    }
+
+    #[test]
+    fn toggle_local_file_dedup_by_path() {
+        let mut panel = AiPanel::new();
+        let a = AiContextAttachment::LocalFile {
+            path: "C:\\x\\a.rs".to_string(),
+            content: "one".to_string(),
+        };
+        // 同路径但内容不同，应视为同一附件（按 path 去重）
+        let a2 = AiContextAttachment::LocalFile {
+            path: "C:\\x\\a.rs".to_string(),
+            content: "two".to_string(),
+        };
+        panel.toggle_attachment(a);
+        assert_eq!(panel.attachments.len(), 1);
+        panel.toggle_attachment(a2); // 命中已存在 → 移除
+        assert_eq!(panel.attachments.len(), 0);
     }
 
     #[test]
