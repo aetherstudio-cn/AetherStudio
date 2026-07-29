@@ -462,6 +462,11 @@ impl EditorState {
         }
     }
     pub fn close_workspace(&mut self) {
+        // 关闭工作区时使正在进行的后台扫描作废：递增代际计数，
+        // 这样 on_folder_scan_batch_ref 会因代际不符丢弃旧线程发回的批次，
+        // 避免关闭后仍处理大量无效扫描消息导致主线程卡顿。
+        self.folder_generation = self.folder_generation.wrapping_add(1);
+        self.is_loading_folder = false;
         self.file_tree = None;
         self.current_folder = None;
         // 同步清空持久化的 last_workspace，避免下次启动重新打开已被用户主动关闭的工作区
