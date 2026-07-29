@@ -119,9 +119,9 @@ impl EditorState {
                 let is_hover = self.settings_panel.hover_model_id.as_ref() == Some(&model.id);
                 let is_active = active_id.as_deref() == Some(model.id.as_str());
                 let card_bg = if is_hover {
-                    color_f(0.22, 0.22, 0.24, 1.0)
+                    color_f(0.165, 0.180, 0.208, 1.0)
                 } else {
-                    color_f(0.18, 0.18, 0.20, 1.0)
+                    color_f(0.129, 0.141, 0.161, 1.0)
                 };
                 let card_bg_brush = self
                     .render_ctx
@@ -137,7 +137,7 @@ impl EditorState {
                 target.FillRectangle(&card_rect, &card_bg_brush);
                 // 卡片边框（激活模型高亮）
                 let card_border = if is_active {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    color_f(0.239, 0.545, 0.992, 1.0)
                 } else {
                     color_f(0.28, 0.28, 0.30, 1.0)
                 };
@@ -351,7 +351,7 @@ impl EditorState {
                 let del_bg = if is_del_hover {
                     color_f(0.34, 0.16, 0.16, 1.0)
                 } else {
-                    color_f(0.16, 0.16, 0.18, 1.0)
+                    color_f(0.102, 0.110, 0.125, 1.0)
                 };
                 let del_bg_brush = self
                     .render_ctx
@@ -408,9 +408,9 @@ impl EditorState {
                     bottom: act_y + act_h,
                 };
                 let edit_bg = if is_edit_hover {
-                    color_f(0.18, 0.28, 0.40, 1.0)
+                    color_f(0.125, 0.204, 0.306, 1.0)
                 } else {
-                    color_f(0.16, 0.16, 0.18, 1.0)
+                    color_f(0.102, 0.110, 0.125, 1.0)
                 };
                 let edit_bg_brush = self
                     .render_ctx
@@ -482,7 +482,7 @@ impl EditorState {
             let add_bg = if is_add_hover {
                 color_f(0.0, 0.55, 0.95, 1.0)
             } else {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                color_f(0.239, 0.545, 0.992, 1.0)
             };
             let add_bg_brush = self
                 .render_ctx
@@ -532,7 +532,7 @@ impl EditorState {
         unsafe {
             let btn_w = 132.0f32;
             let btn_h = 28.0f32;
-            let bg = color_f(0.18, 0.18, 0.20, 1.0);
+            let bg = color_f(0.129, 0.141, 0.161, 1.0);
             let bg_brush = self.render_ctx.brush_cache.get_brush(target, &bg).unwrap();
             let rect = D2D_RECT_F {
                 left: x,
