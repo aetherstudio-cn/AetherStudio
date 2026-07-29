@@ -32,8 +32,6 @@ impl EditorState {
                 self.delete_selection();
             }
             let pos = self.cursor_byte_pos();
-            let before_pieces = self.content.buffer.get_pieces();
-            let before_add_len = self.content.buffer.add_buffer_len();
             let cursor_before =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
@@ -55,15 +53,9 @@ impl EditorState {
 
             let cursor_after =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
-                cursor_before,
-                cursor_after,
-                OpType::Insert,
-                pos,
-                text.len(),
-            );
+            self.content
+                .history
+                .record_insert(pos, &text, cursor_before, cursor_after);
             self.clear_selection();
             self.status_message = "已粘贴".to_string();
         }
@@ -94,8 +86,7 @@ impl EditorState {
         let end_byte = self.line_byte_start(last_line) + last_col;
 
         if start_byte < end_byte {
-            let before_pieces = self.content.buffer.get_pieces();
-            let before_add_len = self.content.buffer.add_buffer_len();
+            let deleted_text = self.content.buffer.get_text(start_byte, end_byte);
             let cursor_before =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
@@ -108,14 +99,11 @@ impl EditorState {
 
             let cursor_after =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
+            self.content.history.record_delete(
+                start_byte,
+                deleted_text,
                 cursor_before,
                 cursor_after,
-                OpType::Delete,
-                start_byte,
-                0,
             );
         }
         self.clear_selection();
@@ -234,8 +222,6 @@ impl EditorState {
         }
 
         let pos = self.cursor_byte_pos();
-        let before_pieces = self.content.buffer.get_pieces();
-        let before_add_len = self.content.buffer.add_buffer_len();
         let cursor_before = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
         let text = ch.to_string();
@@ -248,18 +234,12 @@ impl EditorState {
         self.content.buffer_version += 1;
 
         let cursor_after = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-        self.content.history.record(
-            before_pieces,
-            before_add_len,
-            cursor_before,
-            cursor_after,
-            OpType::Insert,
-            pos,
-            ch.len_utf8(),
-        );
+        self.content
+            .history
+            .record_insert(pos, &text, cursor_before, cursor_after);
         self.status_message = "已修改".to_string();
         self.emit_edit_events();
-        self.lsp.notify_change(&self.content);
+        self.lsp_notify_change_thawed();
     }
     /// P1-4: 尝试自动配对括号。
     /// 返回 true 表示已处理（调用方不应再执行默认插入）。
@@ -308,8 +288,6 @@ impl EditorState {
             .filter(|(s, e)| s != e);
 
         let pos = self.cursor_byte_pos();
-        let before_pieces = self.content.buffer.get_pieces();
-        let before_add_len = self.content.buffer.add_buffer_len();
         let cursor_before = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
         // C-05: 使用模式匹配代替 unwrap，避免选择状态不一致时 panic
@@ -355,15 +333,16 @@ impl EditorState {
 
             let cursor_after =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
-                cursor_before,
-                cursor_after,
-                OpType::Insert,
-                pos,
-                close_str.len() + open_str.len(),
-            );
+            // 两处插入（先闭括号后开括号）作为一个原子撤销组记录，
+            // 记录顺序与实际编辑顺序一致，保证 undo/redo 位置正确
+            self.content.history.begin_group();
+            self.content
+                .history
+                .record_insert(end_byte, &close_str, cursor_before, cursor_after);
+            self.content
+                .history
+                .record_insert(start_byte, &open_str, cursor_before, cursor_after);
+            self.content.history.end_group();
             self.status_message = "已修改".to_string();
             self.emit_edit_events();
             return true;
@@ -382,23 +361,15 @@ impl EditorState {
         self.content.buffer_version += 1;
 
         let cursor_after = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-        self.content.history.record(
-            before_pieces,
-            before_add_len,
-            cursor_before,
-            cursor_after,
-            OpType::Insert,
-            pos,
-            pair_text.len(),
-        );
+        self.content
+            .history
+            .record_insert(pos, &pair_text, cursor_before, cursor_after);
         self.status_message = "已修改".to_string();
         self.emit_edit_events();
         true
     }
     pub fn insert_tab(&mut self) {
         let pos = self.cursor_byte_pos();
-        let before_pieces = self.content.buffer.get_pieces();
-        let before_add_len = self.content.buffer.add_buffer_len();
         let cursor_before = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
         let tab_text = "    ";
@@ -411,22 +382,14 @@ impl EditorState {
         self.content.buffer_version += 1;
 
         let cursor_after = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-        self.content.history.record(
-            before_pieces,
-            before_add_len,
-            cursor_before,
-            cursor_after,
-            OpType::Insert,
-            pos,
-            tab_text.len(),
-        );
+        self.content
+            .history
+            .record_insert(pos, tab_text, cursor_before, cursor_after);
         self.status_message = "已修改".to_string();
         self.emit_edit_events();
     }
     pub fn insert_newline(&mut self) {
         let pos = self.cursor_byte_pos();
-        let before_pieces = self.content.buffer.get_pieces();
-        let before_add_len = self.content.buffer.add_buffer_len();
         let cursor_before = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
         // 获取当前行的前导空白（用于自动缩进）
@@ -471,26 +434,19 @@ impl EditorState {
         self.content.buffer_version += 1;
 
         let cursor_after = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-        self.content.history.record(
-            before_pieces,
-            before_add_len,
-            cursor_before,
-            cursor_after,
-            OpType::Insert,
-            pos,
-            insert_text.len(),
-        );
+        self.content
+            .history
+            .record_insert(pos, &insert_text, cursor_before, cursor_after);
         self.status_message = "已修改".to_string();
         self.emit_edit_events();
-        self.lsp.notify_change(&self.content);
+        self.lsp_notify_change_thawed();
     }
     pub fn delete_char(&mut self) {
         if self.content.cursor_col > 0 {
             let pos = self.cursor_byte_pos();
             let prev_pos = self.find_prev_char_boundary(pos);
             if prev_pos < pos {
-                let before_pieces = self.content.buffer.get_pieces();
-                let before_add_len = self.content.buffer.add_buffer_len();
+                let deleted_text = self.content.buffer.get_text(prev_pos, pos);
                 let cursor_before =
                     CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
@@ -504,14 +460,11 @@ impl EditorState {
 
                 let cursor_after =
                     CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-                self.content.history.record(
-                    before_pieces,
-                    before_add_len,
+                self.content.history.record_delete(
+                    prev_pos,
+                    deleted_text,
                     cursor_before,
                     cursor_after,
-                    OpType::Delete,
-                    prev_pos,
-                    0,
                 );
                 self.status_message = "已修改".to_string();
                 // REQ-P1-02: 行内退格也需要触发编辑事件，确保脏矩形标记和即时刷新
@@ -526,8 +479,7 @@ impl EditorState {
                     let start = self.line_byte_start(prev_line) + prev_len;
                     let end = start + curr_len + 1;
 
-                    let before_pieces = self.content.buffer.get_pieces();
-                    let before_add_len = self.content.buffer.add_buffer_len();
+                    let deleted_text = self.content.buffer.get_text(start, end);
                     let cursor_before =
                         CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
@@ -542,28 +494,24 @@ impl EditorState {
 
                     let cursor_after =
                         CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-                    self.content.history.record(
-                        before_pieces,
-                        before_add_len,
+                    self.content.history.record_delete(
+                        start,
+                        deleted_text,
                         cursor_before,
                         cursor_after,
-                        OpType::Delete,
-                        start,
-                        0,
                     );
                     self.status_message = "已修改".to_string();
                     self.emit_edit_events();
                 }
             }
         }
-        self.lsp.notify_change(&self.content);
+        self.lsp_notify_change_thawed();
     }
     pub fn delete_forward(&mut self) {
         let pos = self.cursor_byte_pos();
         let next_pos = self.find_next_char_boundary(pos);
         if next_pos > pos {
-            let before_pieces = self.content.buffer.get_pieces();
-            let before_add_len = self.content.buffer.add_buffer_len();
+            let deleted_text = self.content.buffer.get_text(pos, next_pos);
             let cursor_before =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
@@ -576,19 +524,13 @@ impl EditorState {
 
             let cursor_after =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
-                cursor_before,
-                cursor_after,
-                OpType::Delete,
-                pos,
-                0,
-            );
+            self.content
+                .history
+                .record_delete(pos, deleted_text, cursor_before, cursor_after);
             self.status_message = "已修改".to_string();
             self.emit_edit_events();
         }
-        self.lsp.notify_change(&self.content);
+        self.lsp_notify_change_thawed();
     }
     /// 多光标编辑操作广播
     /// 将插入、删除等操作应用到所有光标位置
@@ -611,22 +553,13 @@ impl EditorState {
         for cursor in cursors.iter().rev() {
             let pos = self.line_col_to_byte(cursor.line, cursor.col);
 
-            // REQ-P0-03: 记录缓冲区状态
-            let before_pieces = self.content.buffer.get_pieces();
-            let before_add_len = self.content.buffer.add_buffer_len();
-
-            self.content.buffer.insert(pos, &ch.to_string());
+            let text = ch.to_string();
+            self.content.buffer.insert(pos, &text);
 
             // REQ-P0-03: 记录撤销历史
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
-                cursor_before,
-                cursor_before,
-                OpType::Insert,
-                pos,
-                ch.len_utf8(),
-            );
+            self.content
+                .history
+                .record_insert(pos, &text, cursor_before, cursor_before);
         }
 
         // REQ-P0-03: 结束撤销组
@@ -685,20 +618,12 @@ impl EditorState {
 
         // 执行删除（delete_info 已按 line/col 降序排列，从后往前删除）
         for (_, _, _, start, end) in &delete_info {
-            let before_pieces = self.content.buffer.get_pieces();
-            let before_add_len = self.content.buffer.add_buffer_len();
-
+            let deleted_text = self.content.buffer.get_text(*start, *end);
             self.content.buffer.delete(*start, *end);
 
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
-                cursor_before,
-                cursor_before,
-                OpType::Delete,
-                *start,
-                0,
-            );
+            self.content
+                .history
+                .record_delete(*start, deleted_text, cursor_before, cursor_before);
         }
 
         // REQ-P0-03: 结束撤销组
@@ -745,22 +670,12 @@ impl EditorState {
         for cursor in cursors.iter().rev() {
             let pos = self.line_col_to_byte(cursor.line, cursor.col);
 
-            // REQ-P0-03: 记录缓冲区状态
-            let before_pieces = self.content.buffer.get_pieces();
-            let before_add_len = self.content.buffer.add_buffer_len();
-
             self.content.buffer.insert(pos, "\n");
 
             // REQ-P0-03: 记录撤销历史
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
-                cursor_before,
-                cursor_before,
-                OpType::Insert,
-                pos,
-                1,
-            );
+            self.content
+                .history
+                .record_insert(pos, "\n", cursor_before, cursor_before);
         }
 
         // REQ-P0-03: 结束撤销组
@@ -781,16 +696,11 @@ impl EditorState {
     }
     /// 撤销
     pub fn undo(&mut self) {
-        let current_pieces = self.content.buffer.get_pieces();
-        let current_add_len = self.content.buffer.add_buffer_len();
-        let current_cursor = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-
-        if let Some((pieces, add_len, cursor)) =
-            self.content
-                .history
-                .undo(current_pieces, current_add_len, current_cursor)
-        {
-            self.content.buffer.restore(pieces, add_len);
+        if let Some((deltas, cursor)) = self.content.history.undo() {
+            // 差分撤销：按返回顺序（组内已逆序）应用逆操作，零 piece 表克隆
+            for delta in &deltas {
+                delta.apply_inverse(&mut self.content.buffer);
+            }
             self.content.cursor_line = cursor.line;
             self.content.cursor_col = cursor.column;
             self.content.is_dirty = true;
@@ -802,16 +712,10 @@ impl EditorState {
     }
     /// 重做
     pub fn redo(&mut self) {
-        let current_pieces = self.content.buffer.get_pieces();
-        let current_add_len = self.content.buffer.add_buffer_len();
-        let current_cursor = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-
-        if let Some((pieces, add_len, cursor)) =
-            self.content
-                .history
-                .redo(current_pieces, current_add_len, current_cursor)
-        {
-            self.content.buffer.restore(pieces, add_len);
+        if let Some((deltas, cursor)) = self.content.history.redo() {
+            for delta in &deltas {
+                delta.apply_forward(&mut self.content.buffer);
+            }
             self.content.cursor_line = cursor.line;
             self.content.cursor_col = cursor.column;
             self.content.is_dirty = true;
@@ -845,10 +749,9 @@ impl EditorState {
         // 检测是否已有注释前缀
         let stripped = line.strip_prefix(comment_prefix);
         let pos = self.line_byte_start(line_idx);
-        let before_pieces = self.content.buffer.get_pieces();
-        let before_add_len = self.content.buffer.add_buffer_len();
         let cursor_before = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
+        let removed_comment = stripped.is_some();
         if let Some(_rest) = stripped {
             // 已有注释：移除前缀
             let remove_len = comment_prefix.len();
@@ -869,15 +772,18 @@ impl EditorState {
         self.content.buffer_version += 1;
 
         let cursor_after = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-        self.content.history.record(
-            before_pieces,
-            before_add_len,
-            cursor_before,
-            cursor_after,
-            OpType::Insert,
-            pos,
-            comment_prefix.len(),
-        );
+        if removed_comment {
+            self.content.history.record_delete(
+                pos,
+                comment_prefix.to_string(),
+                cursor_before,
+                cursor_after,
+            );
+        } else {
+            self.content
+                .history
+                .record_insert(pos, comment_prefix, cursor_before, cursor_after);
+        }
         self.status_message = "已切换注释".to_string();
     }
     pub fn get_selected_text(&self) -> Option<String> {

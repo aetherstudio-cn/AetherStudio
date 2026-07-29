@@ -811,85 +811,14 @@ impl AiPanel {
     }
 
     /// 同步当前状态到热数据存储
+    /// P1-B: 只借用会话列表传入，不再克隆整个 AiPanel（原 clone_for_sync
+    /// 每次同步深拷贝全部会话消息体，长对话下单次即 MB 级分配）
     fn sync_hot_data(&mut self) {
         // 先 snapshot 到槽位，确保热数据看到的是完整状态
         self.snapshot_active_into_slot();
-        if let Some(store) = self.hot_data_store.take() {
-            let panel_clone = self.clone_for_sync();
-            let mut new_store = store;
-            new_store.sync_from_panel(panel_clone);
-            self.hot_data_store = Some(new_store);
-        }
-    }
-
-    /// 为热数据同步克隆必要字段（避免 Clone 整个 AiPanel）
-    fn clone_for_sync(&self) -> crate::ai_panel::AiPanel {
-        crate::ai_panel::AiPanel {
-            visible: self.visible,
-            messages: self.messages.clone(),
-            input: self.input.clone(),
-            is_generating: self.is_generating,
-            scroll_y: self.scroll_y,
-            hover_apply_button: self.hover_apply_button,
-            stream_state: Arc::clone(&self.stream_state),
-            input_focused: self.input_focused,
-            mode: self.mode,
-            model_menu_open: self.model_menu_open,
-            attachments: self.attachments.clone(),
-            mode_button_regions: self.mode_button_regions.clone(),
-            attachment_chip_regions: self.attachment_chip_regions.clone(),
-            hover_attachment: self.hover_attachment,
-            content_height: self.content_height,
-            code_save_regions: self.code_save_regions.clone(),
-            stick_to_bottom: self.stick_to_bottom,
-            caret_pos: self.caret_pos,
-            caret_visible: self.caret_visible,
-            composition: self.composition.clone(),
-            should_stop: Arc::clone(&self.should_stop),
-            conversations: self.conversations.clone(),
-            active: self.active,
-            tab_regions: self.tab_regions.clone(),
-            tab_close_regions: self.tab_close_regions.clone(),
-            new_tab_region: self.new_tab_region,
-            history_button_region: self.history_button_region,
-            hover_tab: self.hover_tab,
-            history_open: self.history_open,
-            history_anim: self.history_anim,
-            history_scroll: self.history_scroll,
-            history_max_scroll: self.history_max_scroll,
-            history_panel_region: self.history_panel_region,
-            history_item_regions: self.history_item_regions.clone(),
-            history: self.history.clone(),
-            reasoning_toggle_regions: self.reasoning_toggle_regions.clone(),
-            hot_data_store: None,
-            warm_data_store: None,
-            history_workspace_only: self.history_workspace_only,
-            playbook_open: self.playbook_open,
-            playbook_items: Vec::new(),
-            playbook_button_region: None,
-            playbook_delete_regions: Vec::new(),
-            history_ws_toggle_region: None,
-            history_page: self.history_page,
-            history_time_filter: self.history_time_filter,
-            history_type_filter: self.history_type_filter.clone(),
-            history_detail_id: None,
-            history_detail_conv: None,
-            history_delete_regions: Vec::new(),
-            history_page_prev_region: None,
-            history_page_next_region: None,
-            history_time_filter_regions: Vec::new(),
-            history_type_filter_regions: Vec::new(),
-            history_clear_all_region: None,
-            history_detail_back_region: None,
-            history_detail_restore_region: None,
-            agent_iter_count: 0,
-            last_truncated: false,
-            continue_button_region: None,
-            agent_pipeline: None,
-            expanded_file_cards: std::collections::HashSet::new(),
-            file_card_regions: Vec::new(),
-            browse_folder_region: None,
-            attach_file_button_region: None,
+        if let Some(mut store) = self.hot_data_store.take() {
+            store.sync_from_panel(&self.conversations);
+            self.hot_data_store = Some(store);
         }
     }
 

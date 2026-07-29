@@ -379,6 +379,12 @@ impl TerminalPanel {
         !self.pending_commands.is_empty()
     }
 
+    /// AI Agent 是否仍有终端活动（待发送命令或等待输出回传），
+    /// 冰冻态无头泵据此决定是否继续保活
+    pub fn has_agent_activity(&self) -> bool {
+        !self.pending_commands.is_empty() || !self.agent_requests.is_empty()
+    }
+
     /// 刷新待执行命令：当 ConPTY 就绪且 shell 提示符已显示后，发送队列中的命令。
     /// 应在主线程每帧调用（与 poll_startup / flush_output 同级）。
     pub fn flush_pending_commands(&mut self) {

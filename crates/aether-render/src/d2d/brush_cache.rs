@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use windows::core::Result;
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 use windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget;
@@ -29,15 +29,15 @@ const MAX_TEXT_FORMAT_CACHE_ENTRIES: usize = 64;
 pub struct BrushCache {
     /// 预存常用画笔（key + brush 对，线性扫描）
     precomputed: Vec<(u32, ID2D1SolidColorBrush)>,
-    /// 回退 HashMap（不常用颜色）
-    brushes: HashMap<u32, ID2D1SolidColorBrush>,
+    /// 回退 HashMap（不常用颜色）—— P1-D: FxHash 替代 SipHash，哈希快 3-5 倍
+    brushes: FxHashMap<u32, ID2D1SolidColorBrush>,
 }
 
 impl Default for BrushCache {
     fn default() -> Self {
         Self {
             precomputed: Vec::with_capacity(PRECOMPUTED_BRUSH_SLOTS),
-            brushes: HashMap::new(),
+            brushes: FxHashMap::default(),
         }
     }
 }
@@ -113,8 +113,8 @@ pub struct TextFormatCache {
     dwrite_factory: IDWriteFactory,
     /// 预存常用格式（key + format 对，线性扫描）
     precomputed: Vec<(TextFormatKey, IDWriteTextFormat)>,
-    /// 回退 HashMap（不常用格式）
-    formats: HashMap<TextFormatKey, IDWriteTextFormat>,
+    /// 回退 HashMap（不常用格式）—— P1-D: FxHash 替代 SipHash
+    formats: FxHashMap<TextFormatKey, IDWriteTextFormat>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -132,7 +132,7 @@ impl TextFormatCache {
             Ok(Self {
                 dwrite_factory,
                 precomputed: Vec::with_capacity(8),
-                formats: HashMap::new(),
+                formats: FxHashMap::default(),
             })
         }
     }
@@ -378,18 +378,24 @@ impl TextFormatCache {
     }
 }
 
-/// TextLayout 缓存最大条目数
-const MAX_TEXT_LAYOUT_CACHE_ENTRIES: usize = 512;
+/// TextLayout 缓存单代最大条目数（young/old 两代共计最多 2 倍）
+const MAX_TEXT_LAYOUT_CACHE_ENTRIES: usize = 256;
 
 /// TextLayout 缓存 — 避免每帧重复创建 IDWriteTextLayout COM 对象
 ///
 /// `DrawText` 内部每次调用都会创建临时 TextLayout，
 /// 改用 `DrawTextLayout` + 缓存可显著减少 COM 对象分配开销。
 /// 代码编辑器中相同 token 文本（关键字、标识符等）高频重复，缓存命中率极高。
+///
+/// P1-D: 二代（young/old）淘汰替代“满则全清”—— young 满时整代下沉为 old，
+/// old 被丢弃；命中 old 时晋升回 young。热点条目自然存活，
+/// 消除全清导致的周期性缓存雪崩（表现为规律性掉帧）。
 pub struct TextLayoutCache {
     dwrite_factory: IDWriteFactory,
-    /// 缓存：文本内容 → TextLayout
-    layouts: HashMap<String, IDWriteTextLayout>,
+    /// 年轻代：最近创建/命中的布局
+    young: FxHashMap<String, IDWriteTextLayout>,
+    /// 老代：上一代的布局，命中时晋升回 young
+    old: FxHashMap<String, IDWriteTextLayout>,
     /// 当前缓存对应的字体大小（变化时清空）
     font_size: f32,
 }
@@ -398,7 +404,8 @@ impl TextLayoutCache {
     pub fn new(dwrite_factory: IDWriteFactory) -> Self {
         Self {
             dwrite_factory,
-            layouts: HashMap::new(),
+            young: FxHashMap::default(),
+            old: FxHashMap::default(),
             font_size: 0.0,
         }
     }
@@ -416,18 +423,20 @@ impl TextLayoutCache {
     ) -> Result<IDWriteTextLayout> {
         // 字体大小变化时清空缓存
         if (self.font_size - font_size).abs() > 0.01 {
-            self.layouts.clear();
+            self.young.clear();
+            self.old.clear();
             self.font_size = font_size;
         }
 
-        // 查缓存
-        if let Some(layout) = self.layouts.get(text) {
+        // 查年轻代
+        if let Some(layout) = self.young.get(text) {
             return Ok(layout.clone());
         }
-
-        // 超出上限时清空（简单淘汰策略）
-        if self.layouts.len() >= MAX_TEXT_LAYOUT_CACHE_ENTRIES {
-            self.layouts.clear();
+        // 查老代，命中则晋升回 young（保持热点存活）
+        if let Some((key, layout)) = self.old.remove_entry(text) {
+            let result = layout.clone();
+            self.insert_young(key, layout);
+            return Ok(result);
         }
 
         // 创建新 layout
@@ -442,13 +451,22 @@ impl TextLayoutCache {
                 .CreateTextLayout(&wide, format, f32::MAX, max_height)?
         };
         let result = layout.clone();
-        self.layouts.insert(text.to_string(), layout);
+        self.insert_young(text.to_string(), layout);
         Ok(result)
+    }
+
+    /// 插入 young 代；满则换代（young 下沉为 old，旧 old 丢弃）
+    fn insert_young(&mut self, key: String, layout: IDWriteTextLayout) {
+        if self.young.len() >= MAX_TEXT_LAYOUT_CACHE_ENTRIES {
+            self.old = std::mem::take(&mut self.young);
+        }
+        self.young.insert(key, layout);
     }
 
     /// 清空缓存（设备丢失或字体变化时调用）
     pub fn clear(&mut self) {
-        self.layouts.clear();
+        self.young.clear();
+        self.old.clear();
     }
 
     /// 创建带省略号的文本布局（用于侧边栏文件树等长文本截断场景）

@@ -59,15 +59,10 @@ pub(crate) unsafe fn draw_input_borders(
 }
 
 impl EditorState {
-    pub fn render(&mut self) {
-        // 避免0尺寸渲染
-        if self.window_width == 0 || self.window_height == 0 {
-            return;
-        }
-
-        // TEST: 每帧开始清除上一帧命中区域
-        crate::hit_test::clear_hit_regions();
-
+    /// 后台任务泵：消费 AI 流式结果、Agent 动作、终端输出与 LSP 事件。
+    /// 渲染路径每帧调用；冰冻态由 AI 定时器无头调用（不触发重绘），
+    /// 保证最小化/长期空闲期间 AI 生成与 Agent 终端命令回环不中断。
+    pub(crate) fn pump_background_tasks(&mut self) {
         // AI-H01: 轮询后台 AI 请求结果，不阻塞 UI 线程
         // 多会话并发：轮询所有会话（活动 + 后台），对本帧刚完成的每个会话处理 Agent 动作；
         // 对本帧因错误中断的会话抢救已接收的文件块（不执行 RUN 命令）
@@ -79,6 +74,42 @@ impl EditorState {
         for conv_idx in ai_interrupted {
             self.salvage_ai_partial_edits(conv_idx);
         }
+
+        // LSP: 轮询诊断事件，更新 diagnostics 字段
+        self.lsp
+            .poll_events(&mut self.diagnostics, &mut self.status_message);
+
+        // 终端输出轮询：从读取线程拉取子进程 stdout/stderr 并写入输出缓存。
+        // 此前未调用 flush_output 导致 shell 输出无法显示，现在每帧轮询保证实时性。
+        if self.terminal_panel.running {
+            self.terminal_panel.poll_startup();
+            self.terminal_panel.flush_output();
+            // AI Agent 排队命令：终端就绪后自动发送执行
+            self.terminal_panel.flush_pending_commands();
+        }
+        // AI Agent 命令完成回环：输出回传给 AI 继续推理（哨兵检测，含超时兕底）
+        let agent_results = self.terminal_panel.poll_agent_results();
+        if !agent_results.is_empty() {
+            self.handle_agent_command_results(agent_results);
+        }
+    }
+
+    pub fn render(&mut self) {
+        // 避免0尺寸渲染
+        if self.window_width == 0 || self.window_height == 0 {
+            return;
+        }
+        // 冰冻且最小化：跳过渲染，防止杂散 WM_PAINT 重建已释放的 D2D 资源；
+        // 后台任务由无头泵（AI 定时器）驱动，不依赖渲染路径
+        if self.power.frozen && self.power.minimized {
+            return;
+        }
+
+        // TEST: 每帧开始清除上一帧命中区域
+        crate::hit_test::clear_hit_regions();
+
+        // 后台任务泵：AI 流 / Agent 回环 / LSP 诊断 / 终端输出
+        self.pump_background_tasks();
 
         // 设置面板：轮询测试连接结果
         match self.settings_panel.poll_test_result() {
@@ -99,24 +130,6 @@ impl EditorState {
         // 设置面板：轮询模型列表拉取结果（打开模型下拉后自动获取厂商可用模型）
         if self.settings_panel.poll_models_fetch() {
             self.dirty_tracker.mark_full_window();
-        }
-
-        // LSP: 轮询诊断事件，更新 diagnostics 字段
-        self.lsp
-            .poll_events(&mut self.diagnostics, &mut self.status_message);
-
-        // 终端输出轮询：从读取线程拉取子进程 stdout/stderr 并写入输出缓存。
-        // 此前未调用 flush_output 导致 shell 输出无法显示，现在每帧轮询保证实时性。
-        if self.terminal_panel.running {
-            self.terminal_panel.poll_startup();
-            self.terminal_panel.flush_output();
-            // AI Agent 排队命令：终端就绪后自动发送执行
-            self.terminal_panel.flush_pending_commands();
-        }
-        // AI Agent 命令完成回环：输出回传给 AI 继续推理（哨兵检测，含超时兜底）
-        let agent_results = self.terminal_panel.poll_agent_results();
-        if !agent_results.is_empty() {
-            self.handle_agent_command_results(agent_results);
         }
 
         // 懒加载预扫描：确保所有 is_expanded 但未加载的目录节点子项已就绪
@@ -288,10 +301,49 @@ impl EditorState {
             || self.remote.clone_dialog.visible
             || self.command_palette.visible;
 
-        // 标签页切换会改变标签栏高亮、编辑器内容、状态栏等多个区域，
-        // 局部裁剪容易遗漏旧像素导致重影，强制全量重绘。
+        // P5-2: 标签页切换只影响标签栏高亮、编辑器内容、状态栏三个区域，
+        // 侧边栏/活动栏/AI 面板与活动标签无关，改为精确标记省去 ~60% 绘制面积。
+        // 仅当新旧标签涉及 Welcome/Settings 等特殊页类型时保留全窗口重绘
+        //（欢迎页跳过侧边栏等面板渲染，局部裁剪会留下残影）
         if active_tab_changed {
-            self.dirty_tracker.mark_full_window();
+            let is_special = |idx: usize| -> bool {
+                self.tab_bar
+                    .tabs
+                    .get(idx)
+                    .map(|t| !t.is_file())
+                    .unwrap_or(true)
+            };
+            if is_special(self.prev.active_tab)
+                || is_special(self.tab_bar.active_tab)
+                || self.show_welcome()
+            {
+                self.dirty_tracker.mark_full_window();
+            } else {
+                let show_tab_bar = self.show_tab_bar();
+                let tab_region = self.layout.tab_bar_region(show_tab_bar);
+                self.dirty_tracker.mark_region(
+                    tab_region.x,
+                    tab_region.y,
+                    tab_region.width,
+                    tab_region.height,
+                    crate::dirty_rect::DirtyRegionType::TabBar,
+                );
+                let editor_region = self.layout.editor_region();
+                self.dirty_tracker.mark_region(
+                    editor_region.x,
+                    editor_region.y,
+                    editor_region.width,
+                    editor_region.height,
+                    crate::dirty_rect::DirtyRegionType::EditorContent,
+                );
+                let status_region = self.layout.status_bar_region();
+                self.dirty_tracker.mark_status_bar(
+                    status_region.x,
+                    status_region.y,
+                    status_region.width,
+                    status_region.height,
+                );
+            }
         }
 
         // 底部面板可见性变化属于重大布局变更，强制全量重绘以保证编辑器区域正确刷新

@@ -205,6 +205,11 @@ pub const MIN_RIGHT_PANEL_WIDTH: f32 = 150.0;
 pub const SIDEBAR_RESIZE_GRAB: f32 = 4.0;
 /// 活动栏按钮尺寸
 pub const ACTIVITY_BAR_BUTTON_SIZE: f32 = 40.0;
+/// 文件树行高（逻辑像素，乘 dpi_scale 后使用）。
+/// 渲染、命中测试、滚动高度估算共用同一常量，改行高只动这一处。
+pub const FILE_TREE_ROW_HEIGHT: f32 = 18.0;
+/// 文件树每级缩进宽度（逻辑像素）
+pub const FILE_TREE_INDENT: f32 = 16.0;
 
 /// 布局管理器 - 计算和管理所有 UI 区域的几何布局
 #[derive(Clone, Debug)]
@@ -232,6 +237,8 @@ pub struct LayoutManager {
     pub sidebar_resizing: bool,
     /// 侧边栏宽度动画状态（None = 静态无动画）
     pub sidebar_anim: Option<SidebarAnim>,
+    /// 当前已应用的 DPI 缩放因子（用于 DPI 变化时按比例换算用户可调尺寸）
+    dpi_scale: f32,
 }
 
 /// 侧边栏宽度动画：在 200ms 内线性插值从 start_width 到 end_width。
@@ -288,25 +295,29 @@ impl LayoutManager {
             bottom_panel_resizing: false,
             sidebar_resizing: false,
             sidebar_anim: None,
+            dpi_scale: 1.0,
         }
     }
 
     /// REQ-P2-07: 应用 DPI 缩放到所有布局常量
     /// 在窗口初始化和 DPI 变化时调用，确保高 DPI 显示器上 UI 元素尺寸正确
     pub fn apply_dpi_scale(&mut self, scale: f32) {
+        let old_scale = self.dpi_scale.max(0.01);
         self.title_bar_height = TITLE_BAR_HEIGHT * scale;
         self.menu_bar_height = MENU_BAR_HEIGHT * scale;
         self.activity_bar_width = ACTIVITY_BAR_WIDTH * scale;
-        // 侧边栏宽度保持用户可调，但初始值按 DPI 缩放
-        self.sidebar_width = SIDEBAR_WIDTH * scale;
+        // P5-3: 侧边栏宽度是用户可调尺寸，按新旧 scale 比例换算，
+        // 不再重置为默认值（原实现会丢失用户拖拽调好的宽度）
+        self.sidebar_width = self.sidebar_width / old_scale * scale;
         self.status_bar_height = STATUS_BAR_HEIGHT * scale;
-        // 右侧/底部面板高度仅在可见时缩放
+        // 右侧/底部面板同样按比例换算（仅在可见时）
         if self.right_panel_width > 0.0 {
-            self.right_panel_width = 300.0 * scale;
+            self.right_panel_width = self.right_panel_width / old_scale * scale;
         }
         if self.bottom_panel_height > 0.0 {
-            self.bottom_panel_height = 200.0 * scale;
+            self.bottom_panel_height = self.bottom_panel_height / old_scale * scale;
         }
+        self.dpi_scale = scale;
     }
 
     /// 计算标题栏区域

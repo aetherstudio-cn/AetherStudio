@@ -14,8 +14,9 @@ impl EditorState {
         let handle_x = sidebar.x + sidebar.width;
         mouse_x >= handle_x - SIDEBAR_RESIZE_GRAB && mouse_x <= handle_x + SIDEBAR_RESIZE_GRAB
     }
-    /// 文件树节点列表的起始 Y 坐标（相对侧边栏顶部），与 render_tree_nodes
-    /// 中的 `y + header_h + 6.0 * s + input_offset_y - sidebar_scroll_y` 严格一致。
+    /// 文件树根目录行（工作区文件夹名）的起始 Y 坐标（相对侧边栏顶部），
+    /// 与 render_tree_nodes 中的 `y + header_h + 6.0 * s + input_offset_y - sidebar_scroll_y`
+    /// 严格一致。
     ///
     /// 之前三处（render、handle_file_tree_click、update_local_tree_hover、rbutton_down）
     /// 各自硬编码 34.0，未考虑 dpi_scale、sidebar_scroll_y 和 file_tree_input，
@@ -31,6 +32,11 @@ impl EditorState {
             0.0
         };
         base + input_offset_y - self.sidebar_scroll_y
+    }
+
+    /// 树节点列表的起始 Y 坐标：根目录行之下一行（根行高度 = 节点行高）
+    pub fn file_tree_nodes_start_y(&self) -> f32 {
+        self.file_tree_list_start_y() + crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale
     }
     /// 开始文件树内联输入（新建文件/文件夹/重命名），在工作区根目录创建
     pub fn start_file_tree_input(&mut self, kind: FileTreeInputKind) {
@@ -235,6 +241,7 @@ impl EditorState {
         let mut tree = FileTree::new();
         Self::rebuild_tree_level(&mut tree, &folder, u32::MAX, 0, &folder, &expanded);
         self.file_tree = Some(tree);
+        self.mark_file_tree_rows_dirty();
         // 文件可能变化，刷新 Git 状态
         self.git.detect(&folder);
         self.dirty_tracker.mark_full_window();
@@ -615,23 +622,29 @@ impl EditorState {
             return true;
         }
 
-        let tree = match self.file_tree.as_ref() {
-            Some(t) => t,
-            None => return false,
-        };
+        if self.file_tree.is_none() {
+            return false;
+        }
 
-        let mut current_y = self.file_tree_list_start_y();
+        // 根目录行（工作区文件夹名）：点击切换整棵树的展开/折叠
+        let root_top = self.file_tree_list_start_y();
+        let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale;
+        if mouse_y >= root_top && mouse_y < root_top + row_h {
+            self.file_tree_root_expanded = !self.file_tree_root_expanded;
+            self.emit_event(crate::events::EditorEvent::SidebarChanged);
+            return true;
+        }
+        if !self.file_tree_root_expanded {
+            return false;
+        }
+
+        if self.file_tree.is_none() {
+            return false;
+        }
+
+        let start_y = self.file_tree_nodes_start_y();
         let sidebar_width = self.layout.sidebar_width;
-        let dpi_scale = self.dpi_scale;
-        let result = Self::find_tree_click_target(
-            tree,
-            u32::MAX,
-            mouse_x,
-            mouse_y,
-            sidebar_width,
-            dpi_scale,
-            &mut current_y,
-        );
+        let result = self.file_tree_hit_test(mouse_x, mouse_y, start_y, sidebar_width);
 
         if let Some((node_idx, kind, part)) = result {
             match kind {
@@ -652,6 +665,8 @@ impl EditorState {
                             node.is_expanded = !node.is_expanded;
                         }
                     }
+                    // P5-1: 展开状态变化，可见行数组失效
+                    self.mark_file_tree_rows_dirty();
                     // 点击名称/图标区域时同时选中该目录
                     if part == FileTreeClickPart::Label {
                         self.selected_file_node = Some(node_idx);
@@ -701,35 +716,36 @@ impl EditorState {
             crate::layout::SidebarContent::RemoteFileTree => self.update_remote_tree_hover(mouse_y),
             _ => {
                 let old = self.hover_file_node.take();
-                old.is_some()
+                let old_root = std::mem::take(&mut self.hover_file_tree_root);
+                old.is_some() || old_root
             }
         }
     }
     pub(super) fn update_local_tree_hover(&mut self, mouse_x: f32, mouse_y: f32) -> bool {
-        let tree = match self.file_tree.as_ref() {
-            Some(t) => t,
-            None => {
-                let old = self.hover_file_node.take();
-                return old.is_some();
-            }
+        if self.file_tree.is_none() {
+            let old = self.hover_file_node.take();
+            let old_root = std::mem::take(&mut self.hover_file_tree_root);
+            return old.is_some() || old_root;
+        }
+
+        // 根目录行悬停检测（与节点悬停互斥）
+        let root_top = self.file_tree_list_start_y();
+        let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale;
+        let new_root_hover = mouse_y >= root_top && mouse_y < root_top + row_h;
+
+        let new_hover = if new_root_hover || !self.file_tree_root_expanded {
+            None
+        } else {
+            let start_y = self.file_tree_nodes_start_y();
+            let sidebar_width = self.layout.sidebar_width;
+            self.file_tree_hit_test(mouse_x, mouse_y, start_y, sidebar_width)
+                .map(|(idx, _, _)| idx)
         };
 
-        let mut current_y = self.file_tree_list_start_y();
-        let sidebar_width = self.layout.sidebar_width;
-        let dpi_scale = self.dpi_scale;
-        let result = Self::find_tree_click_target(
-            tree,
-            u32::MAX,
-            mouse_x,
-            mouse_y,
-            sidebar_width,
-            dpi_scale,
-            &mut current_y,
-        );
-
-        let new_hover = result.map(|(idx, _, _)| idx);
-        let changed = self.hover_file_node != new_hover;
+        let changed =
+            self.hover_file_node != new_hover || self.hover_file_tree_root != new_root_hover;
         self.hover_file_node = new_hover;
+        self.hover_file_tree_root = new_root_hover;
         changed
     }
     /// 根据当前打开的文件路径同步文件树选中状态
@@ -872,19 +888,27 @@ impl EditorState {
             let _ = self.ensure_node_loaded(idx);
         }
     }
-    pub(crate) fn find_tree_click_target(
-        tree: &FileTree,
-        parent_idx: u32,
-        mouse_x: f32,
-        mouse_y: f32,
-        sidebar_width: f32,
-        dpi_scale: f32,
-        current_y: &mut f32,
-    ) -> Option<(u32, FileKind, FileTreeClickPart)> {
-        let node_height = 16.0 * dpi_scale;
-        // 与 render_tree_nodes 的节点起点 `x + 10.0 * s` 保持一致：
-        // 基准 X 同样需要乘 DPI，否则高 DPI 下命中区整体偏左。
-        let base_x = 10.0 * dpi_scale;
+    /// P5-1: 标记可见行数组需要重建（展开/折叠等不改变节点数的变更后调用）
+    pub(crate) fn mark_file_tree_rows_dirty(&mut self) {
+        self.file_tree_rows_dirty = true;
+    }
+
+    /// P5-1: 确保可见行数组与当前树状态一致（脏标志或节点数变化时重建）
+    pub(crate) fn ensure_file_tree_rows(&mut self) {
+        let tree_len = self.file_tree.as_ref().map(|t| t.len()).unwrap_or(0);
+        if !self.file_tree_rows_dirty && self.file_tree_rows_tree_len == tree_len {
+            return;
+        }
+        self.file_tree_visible_rows.clear();
+        if let Some(tree) = self.file_tree.as_ref() {
+            Self::collect_visible_rows(tree, u32::MAX, &mut self.file_tree_visible_rows);
+        }
+        self.file_tree_rows_tree_len = tree_len;
+        self.file_tree_rows_dirty = false;
+    }
+
+    /// 按显示顺序（DFS，仅展开目录递归）收集可见节点索引
+    fn collect_visible_rows(tree: &FileTree, parent_idx: u32, out: &mut Vec<u32>) {
         let mut child_idx = if parent_idx == u32::MAX {
             tree.first_root_node()
         } else {
@@ -892,73 +916,67 @@ impl EditorState {
                 .map(|n| n.first_child)
                 .filter(|&c| c != u32::MAX)
         };
-
         while let Some(idx) = child_idx {
-            if let Some(node) = tree.get_node(idx) {
-                let next_sibling = if node.next_sibling != u32::MAX {
-                    Some(node.next_sibling)
-                } else {
-                    None
-                };
-
-                // 节点按 y 递增排列，鼠标在当前节点上方则后续不可能命中
-                if mouse_y < *current_y {
-                    return None;
-                }
-
-                if mouse_y >= *current_y && mouse_y < *current_y + node_height {
-                    // 计算该节点在渲染时的横向范围，与 render_tree_nodes 保持一致
-                    let indent = if node.parent_idx == u32::MAX {
-                        0.0
-                    } else {
-                        node.depth as f32 * 16.0 * dpi_scale
-                    };
-                    let item_left = base_x + indent;
-                    let item_right = sidebar_width - 10.0 * dpi_scale;
-
-                    // x 超出节点有效区域视为未命中（避免点击滚动条或空白处误触发）
-                    if mouse_x < item_left - 4.0 * dpi_scale || mouse_x > item_right {
-                        return None;
-                    }
-
-                    // 判断点击的是目录展开箭头还是名称/图标区域
-                    let part = if node.kind == FileKind::Directory {
-                        // 箭头区域近似为节点左侧约 20px（"▶ " / "▼ "）
-                        let arrow_right = item_left + 20.0 * dpi_scale;
-                        if mouse_x < arrow_right {
-                            FileTreeClickPart::Arrow
-                        } else {
-                            FileTreeClickPart::Label
-                        }
-                    } else {
-                        FileTreeClickPart::Label
-                    };
-
-                    return Some((idx, node.kind, part));
-                }
-                *current_y += node_height;
-
-                // 如果目录展开，递归查找子节点
-                if node.kind == FileKind::Directory && node.is_expanded {
-                    if let Some(result) = Self::find_tree_click_target(
-                        tree,
-                        idx,
-                        mouse_x,
-                        mouse_y,
-                        sidebar_width,
-                        dpi_scale,
-                        current_y,
-                    ) {
-                        return Some(result);
-                    }
-                }
-
-                child_idx = next_sibling;
-            } else {
+            let Some(node) = tree.get_node(idx) else {
                 break;
+            };
+            out.push(idx);
+            if node.kind == FileKind::Directory && node.is_expanded {
+                Self::collect_visible_rows(tree, idx, out);
             }
+            child_idx = if node.next_sibling != u32::MAX {
+                Some(node.next_sibling)
+            } else {
+                None
+            };
         }
-        None
+    }
+
+    /// P5-1: O(1) 文件树命中测试 — 基于可见行数组按行高直接索引，
+    /// 替代逐节点递归遍历（每次鼠标移动都执行的热路径）。
+    /// 横向命中规则与 render_tree_nodes 保持一致（根目录行占第 0 层，
+    /// 节点整体缩进一级；chevron 列宽 14px）。
+    pub(crate) fn file_tree_hit_test(
+        &mut self,
+        mouse_x: f32,
+        mouse_y: f32,
+        start_y: f32,
+        sidebar_width: f32,
+    ) -> Option<(u32, FileKind, FileTreeClickPart)> {
+        self.ensure_file_tree_rows();
+        let s = self.dpi_scale;
+        let node_height = crate::layout::FILE_TREE_ROW_HEIGHT * s;
+        if mouse_y < start_y || node_height <= 0.0 {
+            return None;
+        }
+        let row = ((mouse_y - start_y) / node_height) as usize;
+        let idx = *self.file_tree_visible_rows.get(row)?;
+        let tree = self.file_tree.as_ref()?;
+        let node = tree.get_node(idx)?;
+
+        let base_x = 10.0 * s;
+        let indent = (node.depth as f32 + 1.0) * crate::layout::FILE_TREE_INDENT * s;
+        let item_left = base_x + indent;
+        let item_right = sidebar_width - 10.0 * s;
+
+        // x 超出节点有效区域视为未命中（避免点击滚动条或空白处误触发）
+        if mouse_x < item_left - 4.0 * s || mouse_x > item_right {
+            return None;
+        }
+
+        // 判断点击的是目录展开箭头还是名称/图标区域
+        let part = if node.kind == FileKind::Directory {
+            let arrow_right = item_left + 14.0 * s;
+            if mouse_x < arrow_right {
+                FileTreeClickPart::Arrow
+            } else {
+                FileTreeClickPart::Label
+            }
+        } else {
+            FileTreeClickPart::Label
+        };
+
+        Some((idx, node.kind, part))
     }
     pub(super) fn format_file_tree(&self, tree: &FileTree) -> String {
         let mut lines = Vec::new();

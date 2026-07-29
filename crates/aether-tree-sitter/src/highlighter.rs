@@ -256,8 +256,8 @@ impl TreeSitterHighlighter {
                     Ok(HighlightEvent::Source { start, end: _ }) => {
                         if in_highlight && start > current_start {
                             spans.push(LexemeSpan {
-                                start: current_start,
-                                len: start - current_start,
+                                start: current_start as u32,
+                                len: (start - current_start) as u32,
                                 kind: current_kind,
                                 flags: 0,
                             });
@@ -521,8 +521,8 @@ fn assign_segment_to_lines(
 
         if l_end > offset {
             result[current_line].push(LexemeSpan {
-                start: offset - l_start,
-                len: l_end - offset,
+                start: (offset - l_start) as u32,
+                len: (l_end - offset) as u32,
                 kind,
                 flags: 0,
             });

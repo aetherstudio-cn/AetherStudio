@@ -1,5 +1,7 @@
 use super::*;
 
+use aether_core::buffer::text_buffer::TextBuffer as _;
+
 impl EditorState {
     /// 切换活动视图到指定视图（非 AI 助手）。
     ///
@@ -354,13 +356,18 @@ impl EditorState {
         // 必须在签名检查之前 poll，否则空闲帧（签名匹配）会 early return，
         // 导致后台高亮结果永远无法被消费，tokens 停留在空/旧状态。
         if ts_lang.is_some() && !self.content.is_large_file {
-            if let Some(result) = self.bg_highlighter.poll_result() {
-                let min_len = result
-                    .token_lines
-                    .len()
-                    .min(self.content.cached_tokens.len());
-                for i in 0..min_len {
-                    self.content.cached_tokens[i] = result.token_lines[i].clone();
+            if let Some(mut result) = self.bg_highlighter.poll_result() {
+                // P1-C: 后台结果整体 move 接管，避免逐行 clone 全文档 token
+                let token_lines = std::mem::take(&mut result.token_lines);
+                if self.content.cached_tokens.len() < token_lines.len() {
+                    self.content
+                        .cached_tokens
+                        .resize_with(token_lines.len(), Vec::new);
+                }
+                for (i, tokens) in token_lines.into_iter().enumerate() {
+                    if i < self.content.cached_tokens.len() {
+                        self.content.cached_tokens[i] = tokens;
+                    }
                 }
                 // 后台高亮结果刚到达：标记编辑器区域脏，使本帧立即以着色重绘，
                 // 避免文件打开后停留在无高亮的纯文本状态直到下一次无关重绘。
@@ -383,8 +390,13 @@ impl EditorState {
             visible_end,
             total_lines,
         );
+        // P0-A: 窗口化后附加校验窗口长度，防止首帧空窗口被签名误判为已建
+        let cache_start = visible_start.saturating_sub(2);
+        let cache_end = (visible_end + 2).min(total_lines).max(cache_start);
+        let window_len = cache_end - cache_start;
         if self.content.last_cache_signature == signature
-            && self.content.cached_lines.len() == total_lines
+            && self.content.cache_window_start == cache_start
+            && self.content.cached_lines.len() == window_len
         {
             return;
         }
@@ -394,25 +406,15 @@ impl EditorState {
         self.update_large_file_flag();
         self.rebuild_line_y_offsets();
 
-        // 如果行数变化，重新调整缓存向量大小
-        if self.content.cached_lines.len() != total_lines {
-            self.content
-                .cached_lines
-                .resize_with(total_lines, String::new);
+        // P0-A: 平移行文本缓存窗口（重叠行保留，新行待重建）
+        self.content.slide_cache_window(cache_start, window_len);
+
+        // tokens 仍为全文件索引（后台高亮整体接管），行数变化时调整
+        if self.content.cached_tokens.len() != total_lines {
             self.content
                 .cached_tokens
                 .resize_with(total_lines, Vec::new);
-            self.content.line_cache_versions.resize(total_lines, 0);
         }
-
-        // 调整行号 UTF-16 缓存大小
-        if self.cached_line_numbers.len() != total_lines {
-            self.cached_line_numbers.resize_with(total_lines, Vec::new);
-        }
-
-        // 只重建可见行范围内的缓存（加上前后各2行的缓冲，避免滚动时闪烁）
-        let cache_start = visible_start.saturating_sub(2);
-        let cache_end = (visible_end + 2).min(total_lines);
 
         // P2.3: 大文件模式下跳过语法高亮，只缓存行文本
         // 延迟创建 fallback lexer：仅在 tree-sitter 不支持且至少一行需要重建时才创建
@@ -422,36 +424,43 @@ impl EditorState {
         // poll 逻辑已移至签名检查之前，确保空闲帧也能消费后台结果。
         // 此处仅在 buffer_version 变化时发送新请求。
         if let Some(lang) = ts_lang {
+            // 冰冻态唤醒后 tokens_trimmed 置位：即使 buffer_version 未变也强制重新请求，
+            // 否则被裁剪的高亮 token 永远不会重建（后台高亮仅在版本变化时请求）
             if !self.content.is_large_file
-                && self.content.buffer_version != self.hl_request_version
+                && (self.content.buffer_version != self.hl_request_version
+                    || self.content.tokens_trimmed)
                 && !self.bg_highlighter.has_pending()
             {
-                let full_text = self.content.buffer.get_all_text();
+                // P1-C: 传递轻量快照（Arc pieces），全文物化移到后台线程，
+                // UI 线程不再每次编辑都做 O(文件) 的 get_all_text 拷贝
+                let snapshot = self.content.buffer.create_snapshot();
                 let doc_id = self
                     .content
                     .file_path
                     .as_ref()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|| "untitled".to_string());
-                self.bg_highlighter.request(&doc_id, lang, &full_text);
+                self.bg_highlighter.request(&doc_id, lang, snapshot);
                 self.hl_request_version = self.content.buffer_version;
+                self.content.tokens_trimmed = false;
             }
         }
 
         for i in cache_start..cache_end {
-            if self.content.line_cache_versions[i] != self.content.buffer_version {
+            let slot = i - cache_start;
+            if self.content.line_cache_versions[slot] != self.content.buffer_version {
                 let line = self.content.buffer.get_line(i).unwrap_or_default();
 
                 if self.content.is_large_file {
                     // 大文件：跳过语法高亮
-                    self.content.cached_lines[i] = line;
+                    self.content.cached_lines[slot] = line;
                     self.content.cached_tokens[i] = Vec::new();
-                    self.content.line_cache_versions[i] = self.content.buffer_version;
+                    self.content.line_cache_versions[slot] = self.content.buffer_version;
                 } else if ts_lang.is_some() {
                     // tree-sitter 语言：只更新文本，tokens 由后台线程异步更新
                     // 保留上一版本的 tokens（stale but usable），实现零输入延迟
-                    self.content.cached_lines[i] = line;
-                    self.content.line_cache_versions[i] = self.content.buffer_version;
+                    self.content.cached_lines[slot] = line;
+                    self.content.line_cache_versions[slot] = self.content.buffer_version;
                 } else {
                     // fallback：手写 lexer（Markdown/Html/Css/PlainText/Image 等）
                     if lexer.is_none() {
@@ -463,15 +472,10 @@ impl EditorState {
                     } else {
                         Vec::new()
                     };
-                    self.content.cached_lines[i] = line;
+                    self.content.cached_lines[slot] = line;
                     self.content.cached_tokens[i] = tokens;
-                    self.content.line_cache_versions[i] = self.content.buffer_version;
+                    self.content.line_cache_versions[slot] = self.content.buffer_version;
                 }
-            }
-            // 行号 UTF-16 缓存：如果为空则构建
-            if self.cached_line_numbers[i].is_empty() {
-                let num_str = format!("{}", i + 1);
-                self.cached_line_numbers[i] = num_str.encode_utf16().chain(Some(0)).collect();
             }
         }
     }

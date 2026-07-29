@@ -18,8 +18,6 @@ use crate::ai_panel::{now_secs, AiConversation, AiMessage};
 pub struct HotDataStore {
     /// 活跃会话的内存状态（完整消息列表 + 元数据）
     conversations: Vec<AiConversation>,
-    /// 当前活动会话下标
-    active: usize,
     /// mmap 增量日志写入器
     log_writer: Option<MmapLogWriter>,
     /// 自上次归档以来发生变更的会话 ID 集合（用于温数据阶段增量归档）
@@ -81,7 +79,6 @@ impl HotDataStore {
         }
         Ok(Self {
             conversations: Vec::new(),
-            active: 0,
             log_writer: None,
             dirty_conversations: std::collections::HashSet::new(),
             is_active: AtomicBool::new(true),
@@ -89,23 +86,11 @@ impl HotDataStore {
         })
     }
 
-    /// 从 AiPanel 加载活跃会话状态
-    pub fn load_from_panel(&mut self, panel: &crate::ai_panel::AiPanel) {
-        self.conversations = panel.conversations.clone();
-        self.active = panel.active;
-        for conv in &self.conversations {
-            // 休眠会话消息体已卸载且已落库，标脏会以空消息覆写归档元数据
-            if conv.hibernated {
-                continue;
-            }
-            self.dirty_conversations.insert(conv.id.clone());
-        }
-    }
-
-    /// 同步 AiPanel 的当前状态到热数据（每次消息变更后调用）
+    /// 同步 AiPanel 的当前会话列表到热数据（每次消息变更后调用）
     ///
-    /// 注意：panel 参数以值传递（克隆）传入，避免借用冲突
-    pub fn sync_from_panel(&mut self, panel: crate::ai_panel::AiPanel) {
+    /// P1-B: 只借用会话列表做差异对比，仅克隆变更部分；
+    /// 替代旧实现每次同步都深拷贝全部会话 + 整个 AiPanel 结构的开销
+    pub fn sync_from_panel(&mut self, conversations: &[AiConversation]) {
         self.last_activity_at.store(now_secs(), Ordering::Relaxed);
         self.is_active.store(true, Ordering::Relaxed);
 
@@ -114,7 +99,7 @@ impl HotDataStore {
         let mut dirty_ids: Vec<String> = Vec::new();
 
         // 检测哪些会话发生了变更
-        for (i, conv) in panel.conversations.iter().enumerate() {
+        for (i, conv) in conversations.iter().enumerate() {
             // 休眠会话：消息体已卸载（空 Vec），若照常对比会被误判为
             // “消息变化”标脏，进而以空会话覆写热日志/归档元数据，必须跳过
             if conv.hibernated {

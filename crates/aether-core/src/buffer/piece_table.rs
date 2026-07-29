@@ -40,9 +40,7 @@ impl Clone for PieceTable {
             original: self.original.clone(),
             add_buffer: self.add_buffer.clone(),
             pieces: self.pieces.clone(),
-            line_index: LineIndex {
-                line_starts: self.line_index.line_starts.clone(),
-            },
+            line_index: self.line_index.clone(),
             piece_offset_cache: self.piece_offset_cache.clone(),
             len_chars: self.len_chars,
             len_lines: self.len_lines,
@@ -67,66 +65,313 @@ pub enum Source {
     Add,      // 追加缓冲区
 }
 
+/// 每块目标行数（新建/分裂时的粒度）
+const LINE_BLOCK_SIZE: usize = 4096;
+/// 块内行数上限，超过则分裂（约束单次编辑的块内 memmove 上界）
+const LINE_BLOCK_MAX: usize = LINE_BLOCK_SIZE * 2;
+
+/// 行索引分块：`base + rel[i]` = 该块第 i 行的绝对字节偏移。
+/// drain 后 `rel[0]` 可能非 0（base 保持为历史锚点），`abs()` 始终正确。
+#[derive(Clone, Debug)]
+struct LineBlock {
+    base: usize,
+    rel: Vec<u32>,
+}
+
+impl LineBlock {
+    #[inline]
+    fn abs(&self, local: usize) -> usize {
+        self.base + self.rel[local] as usize
+    }
+
+    /// 将基址归一到首行绝对偏移（消除 drain 留下的 rel[0] != 0 偏置），
+    /// 供 shift_from_sub 在 base 不足以减去 delta 时使用
+    fn rebase(&mut self) {
+        let d = match self.rel.first() {
+            Some(&d) if d != 0 => d,
+            _ => return,
+        };
+        self.base += d as usize;
+        for r in &mut self.rel {
+            *r -= d;
+        }
+    }
+}
+
 /// 行索引：每行起始字节位置
-/// 支持 O(1) 行号到字节偏移转换
-#[derive(Debug)]
+///
+/// 两级分块结构：块级存绝对基址（usize），块内存 u32 相对偏移。
+/// 编辑时的整体平移只需修改 O(块数) 个基址 + 单块内 O(块大小) 个相对偏移，
+/// 替代旧实现单一 `Vec<usize>` 的 O(总行数) 全量平移；
+/// 每行开销同时从 8 字节降为 4 字节。
+#[derive(Clone, Debug)]
 pub struct LineIndex {
-    /// 每行起始的全局字节偏移
-    line_starts: Vec<usize>,
+    /// 每块第一行的全局行号（与 blocks 平行，严格递增）
+    block_start_lines: Vec<usize>,
+    blocks: Vec<LineBlock>,
+    /// 总行数缓存（等于所有块 rel 长度之和）
+    total_lines: usize,
 }
 
 impl LineIndex {
     fn new() -> Self {
         Self {
-            line_starts: Vec::new(),
+            block_start_lines: Vec::new(),
+            blocks: Vec::new(),
+            total_lines: 0,
         }
     }
 
-    fn clear(&mut self) {
-        self.line_starts.clear();
+    /// 从完整的行起始偏移列表构建（rebuild 路径）。
+    /// 每块最多 LINE_BLOCK_SIZE 行；块字节跨度超出 u32 时提前切块。
+    fn from_line_starts(line_starts: Vec<usize>) -> Self {
+        let mut idx = Self::new();
+        let mut i = 0;
+        while i < line_starts.len() {
+            let base = line_starts[i];
+            let cap = LINE_BLOCK_SIZE.min(line_starts.len() - i);
+            let mut rel: Vec<u32> = Vec::with_capacity(cap);
+            while i < line_starts.len() && rel.len() < LINE_BLOCK_SIZE {
+                let off = line_starts[i] - base;
+                if off > u32::MAX as usize {
+                    break;
+                }
+                rel.push(off as u32);
+                i += 1;
+            }
+            idx.block_start_lines.push(idx.total_lines);
+            idx.total_lines += rel.len();
+            idx.blocks.push(LineBlock { base, rel });
+        }
+        idx
+    }
+
+    /// 结构变更（分裂/删块/插块）后重算块级行号前缀，O(块数)
+    fn rebuild_prefix(&mut self) {
+        self.block_start_lines.clear();
+        let mut acc = 0usize;
+        for blk in &self.blocks {
+            self.block_start_lines.push(acc);
+            acc += blk.rel.len();
+        }
+        self.total_lines = acc;
     }
 
     fn len(&self) -> usize {
-        self.line_starts.len()
+        self.total_lines
+    }
+
+    /// 定位包含指定全局行号的块下标
+    #[inline]
+    fn block_of_line(&self, line_idx: usize) -> Option<usize> {
+        if line_idx >= self.total_lines {
+            return None;
+        }
+        let b = self.block_start_lines.partition_point(|&s| s <= line_idx);
+        Some(b - 1)
     }
 
     /// 获取指定行的起始字节偏移
     pub fn line_start(&self, line_idx: usize) -> Option<usize> {
-        self.line_starts.get(line_idx).copied()
+        let b = self.block_of_line(line_idx)?;
+        let local = line_idx - self.block_start_lines[b];
+        Some(self.blocks[b].abs(local))
     }
 
-    /// 在指定位置插入新的行起始偏移，O(K + N) 其中 K=new_starts.len(), N=尾部移动量
-    /// 比重建整个 Vec 高效：避免重新分配和前半部分复制
+    /// 找到起始偏移 <= byte 的最后一行（等价于旧 Vec binary_search 的
+    /// Ok(idx)=>idx / Err(idx)=>idx-1 语义）
+    fn line_containing_byte(&self, byte: usize) -> usize {
+        if self.blocks.is_empty() {
+            return 0;
+        }
+        // 块级：最后一个首行偏移 <= byte 的块
+        let b = self
+            .blocks
+            .partition_point(|blk| blk.abs(0) <= byte)
+            .saturating_sub(1);
+        let blk = &self.blocks[b];
+        if byte < blk.base {
+            return self.block_start_lines[b];
+        }
+        let target = byte - blk.base;
+        // 块内：最后一个 rel <= target 的行
+        let local = blk
+            .rel
+            .partition_point(|&r| r as usize <= target)
+            .saturating_sub(1);
+        self.block_start_lines[b] + local
+    }
+
+    /// 将块 b 在 local 处分裂为两块（不维护前缀，调用方负责 rebuild_prefix）
+    fn split_block_at_raw(&mut self, b: usize, local: usize) {
+        let tail = self.blocks[b].rel.split_off(local);
+        let first = tail[0];
+        let new_base = self.blocks[b].base + first as usize;
+        let rel: Vec<u32> = tail.into_iter().map(|r| r - first).collect();
+        self.blocks.insert(
+            b + 1,
+            LineBlock {
+                base: new_base,
+                rel,
+            },
+        );
+    }
+
+    /// 从 b 开始检查块尺寸上限，超限则对半分裂（不维护前缀）
+    fn split_oversized_raw(&mut self, mut b: usize) {
+        while b < self.blocks.len() && self.blocks[b].rel.len() > LINE_BLOCK_MAX {
+            let mid = self.blocks[b].rel.len() / 2;
+            self.split_block_at_raw(b, mid);
+            b += 1;
+        }
+    }
+
+    /// 在指定行位置插入新的行起始偏移。
+    /// O(K + 块大小 + 块数)，K=new_starts.len()
     fn splice_insert(&mut self, insert_at: usize, new_starts: Vec<usize>) {
-        self.line_starts.splice(insert_at..insert_at, new_starts);
+        if new_starts.is_empty() {
+            return;
+        }
+        if self.blocks.is_empty() {
+            *self = Self::from_line_starts(new_starts);
+            return;
+        }
+        let insert_at = insert_at.min(self.total_lines);
+        let b = if insert_at >= self.total_lines {
+            self.blocks.len() - 1
+        } else {
+            match self.block_of_line(insert_at) {
+                Some(b) => b,
+                None => return,
+            }
+        };
+        let local = insert_at - self.block_start_lines[b];
+        // 新行的字节偏移位于“行 insert_at 旧内容”之前（后继行已被 shift_from 后移），
+        // 若正好落在块 b 首部，则必须归入前一块尾部，否则相对偏移对块 b 基址为负
+        let (b, local) = if local == 0 && b > 0 {
+            (b - 1, self.blocks[b - 1].rel.len())
+        } else {
+            (b, local)
+        };
+        let base = self.blocks[b].base;
+        // 相对偏移必须落进 u32；插入点位于块中间时由相邻已有元素保证可容纳，
+        // 追加到最后一块尾部时可能超出 —— 超出部分切到独立新块
+        let mut fit: Vec<u32> = Vec::with_capacity(new_starts.len());
+        for &s in &new_starts {
+            match s.checked_sub(base) {
+                Some(o) if o <= u32::MAX as usize => fit.push(o as u32),
+                _ => break,
+            }
+        }
+        let fit_len = fit.len();
+        self.blocks[b].rel.splice(local..local, fit);
+        if fit_len < new_starts.len() {
+            let tail = Self::from_line_starts(new_starts[fit_len..].to_vec());
+            for (i, blk) in tail.blocks.into_iter().enumerate() {
+                self.blocks.insert(b + 1 + i, blk);
+            }
+        }
+        self.split_oversized_raw(b);
+        self.rebuild_prefix();
     }
 
-    /// 从指定行开始，所有行起始偏移加上 delta（增量调整，O(N-tail)）
+    /// 从指定行开始，所有行起始偏移加上 delta。
+    /// O(块内尾部 + 块数)，替代旧实现的 O(总行数)
     fn shift_from(&mut self, from_line: usize, delta: usize) {
-        for start in &mut self.line_starts[from_line..] {
-            *start += delta;
+        if delta == 0 || from_line >= self.total_lines {
+            return;
+        }
+        let b = match self.block_of_line(from_line) {
+            Some(b) => b,
+            None => return,
+        };
+        let local = from_line - self.block_start_lines[b];
+        let mut tail_start = b + 1;
+        if local == 0 {
+            // 整块平移：只动基址
+            self.blocks[b].base += delta;
+        } else {
+            let max_after = *self.blocks[b].rel.last().unwrap() as u64 + delta as u64;
+            if max_after > u32::MAX as u64 {
+                // 平移后相对偏移溢出 u32：在平移点分裂，后块走基址平移
+                self.split_block_at_raw(b, local);
+                self.rebuild_prefix();
+                self.blocks[b + 1].base += delta;
+                tail_start = b + 2;
+            } else {
+                for r in &mut self.blocks[b].rel[local..] {
+                    *r += delta as u32;
+                }
+            }
+        }
+        for blk in &mut self.blocks[tail_start..] {
+            blk.base += delta;
+        }
+    }
+
+    /// 从指定行开始，所有行起始偏移减去 delta（用于删除后调整）。
+    /// 调用方保证平移后的偏移不小于删除区间起点，块内 u32 减法不会下溢。
+    fn shift_from_sub(&mut self, from_line: usize, delta: usize) {
+        if delta == 0 || from_line >= self.total_lines {
+            return;
+        }
+        let b = match self.block_of_line(from_line) {
+            Some(b) => b,
+            None => return,
+        };
+        let local = from_line - self.block_start_lines[b];
+        if local == 0 {
+            let blk = &mut self.blocks[b];
+            if blk.base < delta {
+                // drain 后 base 可能远小于首行绝对偏移，先归一再减，避免下溢
+                blk.rebase();
+            }
+            blk.base = blk.base.saturating_sub(delta);
+        } else {
+            for r in &mut self.blocks[b].rel[local..] {
+                *r -= delta as u32;
+            }
+        }
+        for blk in &mut self.blocks[b + 1..] {
+            if blk.base < delta {
+                blk.rebase();
+            }
+            blk.base = blk.base.saturating_sub(delta);
         }
     }
 
     /// 删除指定行范围的起始偏移 [start_line, end_line)
     fn drain_range(&mut self, start_line: usize, end_line: usize) {
-        if start_line < end_line && end_line <= self.line_starts.len() {
-            self.line_starts.drain(start_line..end_line);
+        if start_line >= end_line || start_line >= self.total_lines {
+            return;
         }
-    }
-
-    /// 从指定行开始，所有行起始偏移减去 delta（用于删除后调整）
-    fn shift_from_sub(&mut self, from_line: usize, delta: usize) {
-        for start in &mut self.line_starts[from_line..] {
-            *start -= delta;
+        let end_line = end_line.min(self.total_lines);
+        let mut b = match self.block_of_line(start_line) {
+            Some(b) => b,
+            None => return,
+        };
+        let mut local = start_line - self.block_start_lines[b];
+        let mut remaining = end_line - start_line;
+        while remaining > 0 && b < self.blocks.len() {
+            let avail = self.blocks[b].rel.len() - local;
+            let take = avail.min(remaining);
+            self.blocks[b].rel.drain(local..local + take);
+            remaining -= take;
+            if self.blocks[b].rel.is_empty() {
+                self.blocks.remove(b);
+            } else {
+                b += 1;
+            }
+            local = 0;
         }
+        self.rebuild_prefix();
     }
 
     /// 获取指定行的结束字节偏移（即下一行的起始，或文本末尾）
     fn line_end(&self, line_idx: usize, total_bytes: usize) -> Option<usize> {
-        if line_idx + 1 < self.line_starts.len() {
-            self.line_starts.get(line_idx + 1).copied()
-        } else if line_idx < self.line_starts.len() {
+        if line_idx + 1 < self.total_lines {
+            self.line_start(line_idx + 1)
+        } else if line_idx < self.total_lines {
             Some(total_bytes)
         } else {
             None
@@ -708,8 +953,7 @@ impl PieceTable {
             current_byte += piece.len;
         }
 
-        self.line_index.clear();
-        self.line_index.line_starts = line_starts;
+        self.line_index = LineIndex::from_line_starts(line_starts);
 
         // 同步重建 piece 偏移前缀和缓存
         self.rebuild_piece_offset_cache();
@@ -1073,6 +1317,127 @@ mod tests {
         pt.delete(0, 1);
         assert_eq!(pt.full_text(), "ello!\nworld");
     }
+
+    #[test]
+    fn test_line_index_block_split_on_large_paste() {
+        let mut pt = PieceTable::from_string("a\nb\n".to_string());
+        // 一次性粘贴 10000 行，超过 LINE_BLOCK_MAX，触发块分裂路径
+        let mut paste = String::new();
+        for i in 0..10000 {
+            paste.push_str(&format!("p{}\n", i));
+        }
+        pt.insert(2, &paste);
+        assert_eq!(pt.len_lines(), 10003);
+        assert_eq!(pt.get_line(0), Some("a".to_string()));
+        assert_eq!(pt.get_line(1), Some("p0".to_string()));
+        assert_eq!(pt.get_line(10000), Some("p9999".to_string()));
+        assert_eq!(pt.get_line(10001), Some("b".to_string()));
+        let reference = PieceTable::from_string(pt.get_all_text());
+        assert_eq!(pt.len_lines(), reference.len_lines());
+        for i in (0..pt.len_lines()).step_by(97) {
+            assert_eq!(pt.get_line(i), reference.get_line(i), "line {}", i);
+        }
+    }
+
+    #[test]
+    fn test_line_index_cross_block_delete() {
+        let mut text = String::new();
+        for i in 0..9000 {
+            text.push_str(&format!("{}\n", i));
+        }
+        let mut pt = PieceTable::from_string(text);
+        assert_eq!(pt.len_lines(), 9001);
+        // 删除跨越多个 4096 行块的大范围 [行100, 行8500)
+        let start = pt.line_start_byte(100);
+        let end = pt.line_start_byte(8500);
+        pt.delete(start, end);
+        assert_eq!(pt.len_lines(), 9001 - 8400);
+        assert_eq!(pt.get_line(99), Some("99".to_string()));
+        assert_eq!(pt.get_line(100), Some("8500".to_string()));
+        let reference = PieceTable::from_string(pt.get_all_text());
+        for i in 0..pt.len_lines() {
+            assert_eq!(pt.get_line(i), reference.get_line(i), "line {}", i);
+        }
+    }
+
+    #[test]
+    fn test_line_index_edits_near_block_boundary() {
+        // 在块边界（4096）附近反复插入/删除，验证块内尾部平移与前缀维护
+        let mut text = String::new();
+        for i in 0..5000 {
+            text.push_str(&format!("{}\n", i));
+        }
+        let mut pt = PieceTable::from_string(text);
+        for round in 0..5 {
+            let pos = pt.line_start_byte(4095 + round);
+            pt.insert(pos, "X\nY\n");
+        }
+        let reference = PieceTable::from_string(pt.get_all_text());
+        assert_eq!(pt.len_lines(), reference.len_lines());
+        for i in 0..pt.len_lines() {
+            assert_eq!(pt.get_line(i), reference.get_line(i), "line {}", i);
+        }
+        // 再删回去
+        let start = pt.line_start_byte(4090);
+        let end = pt.line_start_byte(4110);
+        pt.delete(start, end);
+        let reference = PieceTable::from_string(pt.get_all_text());
+        assert_eq!(pt.len_lines(), reference.len_lines());
+        for i in 0..pt.len_lines() {
+            assert_eq!(pt.get_line(i), reference.get_line(i), "line {}", i);
+        }
+    }
+
+    #[test]
+    fn test_random_edits_line_index_consistency() {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        let mut text = String::new();
+        for i in 0..9000 {
+            text.push_str(&format!("line {}\n", i));
+        }
+        let mut pt = PieceTable::from_string(text);
+        for step in 0..300 {
+            let len = pt.len_bytes();
+            if rng.gen_bool(0.6) || len < 10 {
+                let pos = rng.gen_range(0..=len);
+                let ins = match rng.gen_range(0..3) {
+                    0 => "x",
+                    1 => "\n",
+                    _ => "ab\ncd\nef\n",
+                };
+                pt.insert(pos, ins);
+            } else {
+                let start = rng.gen_range(0..len);
+                let end = (start + rng.gen_range(1..40)).min(len);
+                pt.delete(start, end);
+            }
+            if step % 60 == 0 {
+                let reference = PieceTable::from_string(pt.get_all_text());
+                assert_eq!(pt.len_lines(), reference.len_lines(), "step {}", step);
+                for i in 0..pt.len_lines() {
+                    assert_eq!(
+                        pt.get_line(i),
+                        reference.get_line(i),
+                        "step {} line {}",
+                        step,
+                        i
+                    );
+                }
+            }
+        }
+        let reference = PieceTable::from_string(pt.get_all_text());
+        assert_eq!(pt.len_lines(), reference.len_lines());
+        for i in 0..pt.len_lines() {
+            assert_eq!(pt.get_line(i), reference.get_line(i), "line {}", i);
+        }
+        // byte_to_line_col / line_col_to_byte 往返一致性抽查
+        use super::super::text_buffer::TextBuffer;
+        for line in (0..pt.len_lines()).step_by(53) {
+            let byte = pt.line_col_to_byte(line, 0);
+            assert_eq!(pt.byte_to_line_col(byte).0, line, "line {}", line);
+        }
+    }
 }
 
 // ============================================================================
@@ -1203,11 +1568,10 @@ impl TextBuffer for PieceTable {
     fn line_col_to_byte(&self, line: usize, col: usize) -> usize {
         // C-20: 使用 line_index 实现 O(1) 查找，替代 O(n) 逐行扫描
         let line_start = self.line_index.line_start(line).unwrap_or(0);
-        let line_end = if line + 1 < self.line_index.line_starts.len() {
-            self.line_index.line_starts[line + 1]
-        } else {
-            self.len_bytes()
-        };
+        let line_end = self
+            .line_index
+            .line_start(line + 1)
+            .unwrap_or_else(|| self.len_bytes());
         // 行长度（不含换行符）
         let line_len = if line_end > line_start {
             // 减去换行符字节（1 或 2 字节 CRLF）
@@ -1241,19 +1605,13 @@ impl TextBuffer for PieceTable {
         let total_bytes = self.len_bytes();
         // CORE-C03: 缓冲区末尾光标是合法位置，不应被 clamp 到上一行
         if byte >= total_bytes {
-            // 光标在文本末尾之后，返回最后一行末尾位置
             let last_line = self.len_lines.saturating_sub(1);
             let line_start = self.line_index.line_start(last_line).unwrap_or(0);
             return (last_line, total_bytes.saturating_sub(line_start));
         }
-        match self.line_index.line_starts.binary_search(&byte) {
-            Ok(idx) => (idx, 0),
-            Err(idx) => {
-                let line = idx.saturating_sub(1);
-                let line_start = self.line_index.line_start(line).unwrap_or(0);
-                (line, byte - line_start)
-            }
-        }
+        let line = self.line_index.line_containing_byte(byte);
+        let line_start = self.line_index.line_start(line).unwrap_or(0);
+        (line, byte - line_start)
     }
 
     fn create_snapshot(&self) -> Box<dyn TextBufferSnapshot> {
@@ -1462,13 +1820,9 @@ impl PieceTable {
         self.line_index.line_start(line).unwrap_or(0)
     }
 
-    /// 将字节偏移转换为行号 - O(log n) 二分查找
+    /// 将字节偏移转换为行号 - O(log n) 两级二分查找
     fn byte_to_line(&self, byte: usize) -> usize {
-        // 使用行索引二分查找
-        match self.line_index.line_starts.binary_search(&byte) {
-            Ok(idx) => idx,
-            Err(idx) => idx.saturating_sub(1),
-        }
+        self.line_index.line_containing_byte(byte)
     }
 
     /// 合并相邻的同 Source piece，减少碎片

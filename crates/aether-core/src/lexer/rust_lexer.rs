@@ -11,15 +11,7 @@ impl RustLexer {
 
     fn lex_next(&self, bytes: &[u8], pos: usize) -> (LexemeSpan, usize) {
         if pos >= bytes.len() {
-            return (
-                LexemeSpan {
-                    start: pos,
-                    len: 0,
-                    kind: TokenKind::EOF,
-                    flags: 0,
-                },
-                pos,
-            );
+            return (LexemeSpan::new(pos, 0, TokenKind::EOF), pos);
         }
 
         let ch = bytes[pos];
@@ -27,25 +19,9 @@ impl RustLexer {
         match ch {
             b' ' | b'\t' | b'\r' => {
                 let end = skip_whitespace(bytes, pos);
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::Whitespace,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, TokenKind::Whitespace), end)
             }
-            b'\n' => (
-                LexemeSpan {
-                    start: pos,
-                    len: 1,
-                    kind: TokenKind::Newline,
-                    flags: 0,
-                },
-                pos + 1,
-            ),
+            b'\n' => (LexemeSpan::new(pos, 1, TokenKind::Newline), pos + 1),
             b'/' => {
                 if pos + 1 < bytes.len() {
                     match bytes[pos + 1] {
@@ -59,26 +35,10 @@ impl RustLexer {
                                 } else {
                                     TokenKind::LineComment
                                 };
-                                (
-                                    LexemeSpan {
-                                        start: pos,
-                                        len: end - pos,
-                                        kind,
-                                        flags: 0,
-                                    },
-                                    end,
-                                )
+                                (LexemeSpan::new(pos, end - pos, kind), end)
                             } else {
                                 let end = skip_line_comment(bytes, pos);
-                                (
-                                    LexemeSpan {
-                                        start: pos,
-                                        len: end - pos,
-                                        kind: TokenKind::LineComment,
-                                        flags: 0,
-                                    },
-                                    end,
-                                )
+                                (LexemeSpan::new(pos, end - pos, TokenKind::LineComment), end)
                             }
                         }
                         b'*' => {
@@ -92,70 +52,25 @@ impl RustLexer {
                             } else {
                                 TokenKind::BlockComment
                             };
-                            (
-                                LexemeSpan {
-                                    start: pos,
-                                    len: end - pos,
-                                    kind,
-                                    flags: 0,
-                                },
-                                end,
-                            )
+                            (LexemeSpan::new(pos, end - pos, kind), end)
                         }
-                        b'=' => (
-                            LexemeSpan {
-                                start: pos,
-                                len: 2,
-                                kind: TokenKind::Operator,
-                                flags: 0,
-                            },
-                            pos + 2,
-                        ),
-                        _ => (
-                            LexemeSpan {
-                                start: pos,
-                                len: 1,
-                                kind: TokenKind::Operator,
-                                flags: 0,
-                            },
-                            pos + 1,
-                        ),
+                        b'=' => (LexemeSpan::new(pos, 2, TokenKind::Operator), pos + 2),
+                        _ => (LexemeSpan::new(pos, 1, TokenKind::Operator), pos + 1),
                     }
                 } else {
-                    (
-                        LexemeSpan {
-                            start: pos,
-                            len: 1,
-                            kind: TokenKind::Operator,
-                            flags: 0,
-                        },
-                        pos + 1,
-                    )
+                    (LexemeSpan::new(pos, 1, TokenKind::Operator), pos + 1)
                 }
             }
             b'#' => {
                 // 属性
                 let end = skip_attribute(bytes, pos);
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::Attribute,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, TokenKind::Attribute), end)
             }
             b'"' => {
                 // 字符串字面量（Rust 没有三引号语法）
                 let end = skip_quoted(bytes, pos, b'"');
                 (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::StringLiteral,
-                        flags: 0,
-                    },
+                    LexemeSpan::new(pos, end - pos, TokenKind::StringLiteral),
                     end,
                 )
             }
@@ -164,67 +79,30 @@ impl RustLexer {
                 // CORE-H03: 反斜杠后必为转义字符字面量（如 '\n', '\t'），不会误分类为生命周期
                 if pos + 1 < bytes.len() && bytes[pos + 1] == b'\\' {
                     let end = skip_quoted(bytes, pos, b'\'');
-                    (
-                        LexemeSpan {
-                            start: pos,
-                            len: end - pos,
-                            kind: TokenKind::CharLiteral,
-                            flags: 0,
-                        },
-                        end,
-                    )
+                    (LexemeSpan::new(pos, end - pos, TokenKind::CharLiteral), end)
                 } else if pos + 2 < bytes.len()
                     && bytes[pos + 1] != b'\''
                     && bytes[pos + 2] == b'\''
                 {
                     // 单字符字面量: 'a', 'x', 'z'（格式为 'X'）
                     let end = skip_quoted(bytes, pos, b'\'');
-                    (
-                        LexemeSpan {
-                            start: pos,
-                            len: end - pos,
-                            kind: TokenKind::CharLiteral,
-                            flags: 0,
-                        },
-                        end,
-                    )
+                    (LexemeSpan::new(pos, end - pos, TokenKind::CharLiteral), end)
                 } else if pos + 1 < bytes.len()
                     && bytes[pos + 1].is_ascii_alphabetic()
                     && bytes[pos + 1].is_ascii_lowercase()
                 {
                     // 生命周期: 'a, 'static
                     let end = skip_lifetime(bytes, pos);
-                    (
-                        LexemeSpan {
-                            start: pos,
-                            len: end - pos,
-                            kind: TokenKind::Lifetime,
-                            flags: 0,
-                        },
-                        end,
-                    )
+                    (LexemeSpan::new(pos, end - pos, TokenKind::Lifetime), end)
                 } else {
                     let end = skip_quoted(bytes, pos, b'\'');
-                    (
-                        LexemeSpan {
-                            start: pos,
-                            len: end - pos,
-                            kind: TokenKind::CharLiteral,
-                            flags: 0,
-                        },
-                        end,
-                    )
+                    (LexemeSpan::new(pos, end - pos, TokenKind::CharLiteral), end)
                 }
             }
             b'0'..=b'9' => {
                 let end = skip_number(bytes, pos);
                 (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::NumberLiteral,
-                        flags: 0,
-                    },
+                    LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral),
                     end,
                 )
             }
@@ -240,15 +118,7 @@ impl RustLexer {
                 } else {
                     TokenKind::Identifier
                 };
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, kind), end)
             }
             b'!' => {
                 // 宏调用检测: ident!
@@ -256,81 +126,25 @@ impl RustLexer {
                     let prev = bytes[pos - 1];
                     if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b')' || prev == b']'
                     {
-                        (
-                            LexemeSpan {
-                                start: pos,
-                                len: 1,
-                                kind: TokenKind::Macro,
-                                flags: 0,
-                            },
-                            pos + 1,
-                        )
+                        (LexemeSpan::new(pos, 1, TokenKind::Macro), pos + 1)
                     } else if pos + 1 < bytes.len() && bytes[pos + 1] == b'=' {
-                        (
-                            LexemeSpan {
-                                start: pos,
-                                len: 2,
-                                kind: TokenKind::Operator,
-                                flags: 0,
-                            },
-                            pos + 2,
-                        )
+                        (LexemeSpan::new(pos, 2, TokenKind::Operator), pos + 2)
                     } else {
-                        (
-                            LexemeSpan {
-                                start: pos,
-                                len: 1,
-                                kind: TokenKind::Operator,
-                                flags: 0,
-                            },
-                            pos + 1,
-                        )
+                        (LexemeSpan::new(pos, 1, TokenKind::Operator), pos + 1)
                     }
                 } else {
-                    (
-                        LexemeSpan {
-                            start: pos,
-                            len: 1,
-                            kind: TokenKind::Operator,
-                            flags: 0,
-                        },
-                        pos + 1,
-                    )
+                    (LexemeSpan::new(pos, 1, TokenKind::Operator), pos + 1)
                 }
             }
             b'+' | b'-' | b'*' | b'%' | b'=' | b'<' | b'>' | b'&' | b'|' | b'^' | b'~' => {
                 let end = skip_operator(bytes, pos);
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::Operator,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, TokenKind::Operator), end)
             }
             b'(' | b')' | b'{' | b'}' | b'[' | b']' | b',' | b';' | b':' | b'.' | b'?' | b'@'
-            | b'$' => (
-                LexemeSpan {
-                    start: pos,
-                    len: 1,
-                    kind: TokenKind::Punctuation,
-                    flags: 0,
-                },
-                pos + 1,
-            ),
+            | b'$' => (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1),
             _ => {
                 let len = crate::lexer::utf8_char_len(bytes[pos]);
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len,
-                        kind: TokenKind::Unknown,
-                        flags: 0,
-                    },
-                    pos + len,
-                )
+                (LexemeSpan::new(pos, len, TokenKind::Unknown), pos + len)
             }
         }
     }

@@ -41,7 +41,7 @@ impl EditorState {
         let line_height = self.text_renderer.line_height();
         let editor_region = self.layout.editor_content_region(self.show_tab_bar());
         let height = editor_region.height.max(line_height);
-        let total_lines = self.content.cached_lines.len().max(1);
+        let total_lines = self.content.buffer.len_lines().max(1);
         let start_line = (self.content.scroll_y / line_height) as usize;
         let visible_lines = (height / line_height) as usize + 2;
         let end_line = (start_line + visible_lines).min(total_lines);
@@ -59,11 +59,11 @@ impl EditorState {
         let line_height = self.text_renderer.line_height();
         let start_line = (self.content.scroll_y / line_height) as usize;
         let visible_lines = ((editor_region.height / line_height) as usize + 2).max(1);
-        let end_line = (start_line + visible_lines).min(self.content.cached_lines.len().max(1));
+        let end_line = (start_line + visible_lines).min(self.content.buffer.len_lines().max(1));
 
         let mut max_line_chars: usize = 0;
         for line_idx in start_line..end_line {
-            if let Some(text) = self.content.cached_lines.get(line_idx) {
+            if let Some(text) = self.content.cached_line(line_idx) {
                 let chars = text.chars().map(unicode_char_width).sum::<usize>();
                 if chars > max_line_chars {
                     max_line_chars = chars;
@@ -91,8 +91,17 @@ impl EditorState {
         let text_visible_width = (editor_region.width - 60.0 - 5.0).max(1.0);
 
         // 光标在当前行的字符列
-        let cursor_char_col =
-            if let Some(text) = self.content.cached_lines.get(self.content.cursor_line) {
+        // P0-A: 光标行可能在缓存窗口外（如跳转后未重建），回退 buffer.get_line
+        let cursor_char_col = {
+            let line_owned;
+            let text_opt = match self.content.cached_line(self.content.cursor_line) {
+                Some(t) => Some(t),
+                None => {
+                    line_owned = self.content.buffer.get_line(self.content.cursor_line);
+                    line_owned.as_deref()
+                }
+            };
+            if let Some(text) = text_opt {
                 let byte_pos = text.floor_char_boundary(self.content.cursor_col.min(text.len()));
                 text[..byte_pos]
                     .chars()
@@ -100,7 +109,8 @@ impl EditorState {
                     .sum::<usize>()
             } else {
                 0
-            };
+            }
+        };
         let cursor_x = cursor_char_col as f32 * char_width;
 
         let left = self.content.scroll_x;
@@ -184,13 +194,18 @@ impl EditorState {
     pub fn scroll_sidebar(&mut self, delta_y: f32) {
         match &self.sidebar_content {
             crate::layout::SidebarContent::FileTree => {
-                let node_height = 16.0;
+                let node_height = crate::layout::FILE_TREE_ROW_HEIGHT;
                 let estimated_nodes = if let Some(tree) = &self.file_tree {
-                    tree.len() as f32
+                    if self.file_tree_root_expanded {
+                        tree.len() as f32
+                    } else {
+                        0.0
+                    }
                 } else {
                     0.0
                 };
-                let total_height = estimated_nodes * node_height + 20.0;
+                // +1 行：根目录行（工作区文件夹名）
+                let total_height = (estimated_nodes + 1.0) * node_height + 20.0;
                 let sidebar_region = self.layout.sidebar_region();
                 let visible_height = sidebar_region.height;
                 let max_scroll = (total_height - visible_height).max(0.0);

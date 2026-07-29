@@ -1,43 +1,8 @@
 use super::*;
 
 impl EditorState {
-    pub(super) fn get_file_icon(&self, name: &str) -> &'static str {
-        let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-        match ext.as_str() {
-            "rs" => "🦀",
-            "js" => "📜",
-            "ts" => "📘",
-            "tsx" => "⚛",
-            "jsx" => "⚛",
-            "json" => "📋",
-            "html" | "htm" => "🌐",
-            "css" | "scss" | "sass" | "less" => "🎨",
-            "md" | "markdown" => "📝",
-            "py" | "pyw" | "pyi" => "🐍",
-            "c" | "cpp" | "h" | "hpp" | "cc" | "cxx" => "🔧",
-            "toml" => "⚙",
-            "yaml" | "yml" => "⚙",
-            "lock" => "🔒",
-            "ps1" | "sh" | "bash" | "zsh" => "📜",
-            "exe" | "dll" => "⚙",
-            "java" | "kt" => "☕",
-            "go" => "🐹",
-            "rb" => "💎",
-            "php" => "🐘",
-            "swift" => "🍎",
-            "sql" => "🗄",
-            "lua" => "🌙",
-            "xml" => "📃",
-            "csv" => "📊",
-            "dockerfile" => "🐳",
-            "vue" => "🌿",
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg" => "🖼",
-            _ => "📄",
-        }
-    }
-
-    /// 为常用文件类型返回矢量图标（避免 emoji 字体差异）。
-    /// 命中 .py/.java/.txt 等常见扩展时返回对应 IconKind，渲染时将替代 emoji 占位。
+    /// 为文件类型返回矢量图标（避免 emoji 字体差异）。
+    /// 命中常见扩展名时返回对应 IconKind，未命中时由调用方回退到通用 File 图标。
     pub(super) fn get_file_vector_icon(&self, name: &str) -> Option<crate::icons::IconKind> {
         use crate::icons::IconKind;
         // Dockerfile 无扩展名特殊处理
@@ -172,11 +137,8 @@ impl EditorState {
                 }
 
                 // 优先使用缓存的行文本，避免重复调用 buffer.get_line()
-                let cached_line = if line_idx < self.content.cached_lines.len() {
-                    Some(self.content.cached_lines[line_idx].as_str())
-                } else {
-                    None
-                };
+                // P0-A: 窗口化缓存，窗口外返回 None（可见行必在窗口内）
+                let cached_line = self.content.cached_line(line_idx);
 
                 // Selection highlight — Glass 模式下使用柔和光晕
                 if let (Some((sel_start_line, sel_start_col)), Some((sel_end_line, sel_end_col))) =
@@ -254,25 +216,12 @@ impl EditorState {
                     target.FillRectangle(&hl_rect, &hl_brush);
                 }
 
-                // 行号（DrawText）—— 使用预缓存的 UTF-16 编码，避免每帧 format! + encode_utf16
-                let ln_wide: &[u16] = if line_idx < self.cached_line_numbers.len()
-                    && !self.cached_line_numbers[line_idx].is_empty()
-                {
-                    &self.cached_line_numbers[line_idx]
-                } else {
-                    &[]
-                };
-                // 如果缓存未命中，回退到动态生成
-                let fallback_ln: Vec<u16>;
-                let ln_wide_final: &[u16] = if ln_wide.is_empty() {
-                    fallback_ln = format!("{}", line_idx + 1)
-                        .encode_utf16()
-                        .chain(Some(0))
-                        .collect();
-                    &fallback_ln
-                } else {
-                    ln_wide
-                };
+                // 行号（DrawText）—— P1-A: 可见行现场生成 UTF-16（栈上几十字节，
+                // 纳秒级），替代原全文件 Vec<Vec<u16>> 预缓存（百万行文件 24MB+ 堆开销）
+                let ln_wide_final: Vec<u16> = format!("{}", line_idx + 1)
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .collect();
                 let ln_rect_draw = D2D_RECT_F {
                     left: x + 5.0,
                     top: line_y,
@@ -280,7 +229,7 @@ impl EditorState {
                     bottom: line_y + line_height,
                 };
                 target.DrawText(
-                    ln_wide_final,
+                    &ln_wide_final,
                     &ln_format,
                     &ln_rect_draw,
                     &ln_fg_brush,
@@ -291,7 +240,12 @@ impl EditorState {
                 // 代码文本（使用缓存的 tokens + DrawText）
                 // 优化：合并相邻同色 token 段，减少 DrawText 调用次数
                 if let Some(line_text) = cached_line {
-                    let tokens = &self.content.cached_tokens[line_idx];
+                    let tokens: &[aether_core::lexer::LexemeSpan] = self
+                        .content
+                        .cached_tokens
+                        .get(line_idx)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]);
                     // P0-3: 应用水平滚动偏移；用 PushAxisAlignedClip 裁剪文本区域，
                     // 防止横向滚动后文本溢出到行号区域
                     let text_x = x + line_number_width + 5.0 - self.content.scroll_x;
@@ -319,17 +273,19 @@ impl EditorState {
 
                         if token_idx < tokens.len() {
                             let token = &tokens[token_idx];
-                            if token.start <= current_byte && current_byte < token.start + token.len
-                            {
+                            // LexemeSpan 字段已压缩为 u32，比较/运算前转回 usize
+                            let t_start = token.start as usize;
+                            let t_end = t_start + token.len as usize;
+                            if t_start <= current_byte && current_byte < t_end {
                                 token_color = self.theme.color_for_token(token.kind);
-                                token_len = (token.start + token.len - current_byte)
-                                    .min(line_text.len() - current_byte);
-                                if current_byte + token_len >= token.start + token.len {
+                                token_len =
+                                    (t_end - current_byte).min(line_text.len() - current_byte);
+                                if current_byte + token_len >= t_end {
                                     token_idx += 1;
                                 }
-                            } else if token.start > current_byte {
-                                token_len = (token.start - current_byte)
-                                    .min(line_text.len() - current_byte);
+                            } else if t_start > current_byte {
+                                token_len =
+                                    (t_start - current_byte).min(line_text.len() - current_byte);
                             } else {
                                 token_idx += 1;
                                 continue;
@@ -487,7 +443,7 @@ impl EditorState {
             // UI-H04: 使用字符宽度累加而非简单 char count * char_width，
             // 支持 CJK 等双宽度字符的正确光标定位
             let cursor_char_col = if let Some(text) =
-                self.content.cached_lines.get(self.content.cursor_line)
+                self.content.cached_line(self.content.cursor_line)
             {
                 let byte_pos = text.floor_char_boundary(self.content.cursor_col.min(text.len()));
                 text[..byte_pos]
@@ -691,7 +647,7 @@ impl EditorState {
             };
 
             let cursor_char_col = if let Some(text) =
-                self.content.cached_lines.get(self.content.cursor_line)
+                self.content.cached_line(self.content.cursor_line)
             {
                 let byte_pos = text.floor_char_boundary(self.content.cursor_col.min(text.len()));
                 text[..byte_pos]

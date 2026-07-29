@@ -577,8 +577,7 @@ impl EditorState {
             let start_byte = self.line_byte_start(first_line) + first_col;
             let end_byte = self.line_byte_start(last_line) + last_col;
 
-            let before_pieces = self.content.buffer.get_pieces();
-            let before_add_len = self.content.buffer.add_buffer_len();
+            let old_text = self.content.buffer.get_text(start_byte, end_byte);
             let cursor_before =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
@@ -597,14 +596,12 @@ impl EditorState {
             self.content.cursor_col = new_col;
             let cursor_after =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
+            self.content.history.record_replace(
+                start_byte,
+                old_text,
+                code,
                 cursor_before,
                 cursor_after,
-                OpType::Insert,
-                start_byte,
-                code.len(),
             );
 
             self.clear_selection();
@@ -614,8 +611,6 @@ impl EditorState {
             return true;
         }
         let pos = self.cursor_byte_pos();
-        let before_pieces = self.content.buffer.get_pieces();
-        let before_add_len = self.content.buffer.add_buffer_len();
         let cursor_before = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
 
         self.content.buffer.insert(pos, code);
@@ -633,15 +628,9 @@ impl EditorState {
                 .unwrap_or(0);
         }
         let cursor_after = CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
-        self.content.history.record(
-            before_pieces,
-            before_add_len,
-            cursor_before,
-            cursor_after,
-            OpType::Insert,
-            pos,
-            code.len(),
-        );
+        self.content
+            .history
+            .record_insert(pos, code, cursor_before, cursor_after);
 
         self.content.is_dirty = true;
         self.content.buffer_version += 1;
@@ -720,8 +709,6 @@ impl EditorState {
             };
 
             // 记录 undo history，使 AI 工作区编辑可通过 Ctrl+Z 逐文件撤销
-            let before_pieces = self.content.buffer.get_pieces();
-            let before_add_len = self.content.buffer.add_buffer_len();
             let cursor_before =
                 CursorPosition::new(self.content.cursor_line, self.content.cursor_col);
             let len = self.content.buffer.len_bytes();
@@ -731,14 +718,12 @@ impl EditorState {
             self.content.cursor_line = 0;
             self.content.cursor_col = 0;
             let cursor_after = CursorPosition::new(0, 0);
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
+            self.content.history.record_replace(
+                0,
+                old_text.clone(),
+                &new_text,
                 cursor_before,
                 cursor_after,
-                OpType::Insert,
-                0,
-                new_text.len(),
             );
             self.content.buffer_version += 1;
 

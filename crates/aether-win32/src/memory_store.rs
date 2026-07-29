@@ -118,6 +118,12 @@ pub trait MemoryStore: Send + Sync {
 
     fn flush(&self) -> Result<(), String>;
 
+    // ---- 内存回收（冰冻态调用；无能力的实现可忽略）----
+    /// 释放底层存储的可回收内存（如 SQLite 页缓存）
+    fn shrink_memory(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     // ---- 混合检索（FTS5 关键词 + 向量，RRF 融合；默认退化为纯向量）----
     fn hybrid_search_messages(
         &self,
@@ -694,6 +700,12 @@ impl MemoryStore for SqliteMemoryStore {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);")
             .map_err(|e| format!("WAL checkpoint 失败: {}", e))
+    }
+
+    fn shrink_memory(&self) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("PRAGMA shrink_memory;")
+            .map_err(|e| format!("shrink_memory 失败: {}", e))
     }
 
     fn hybrid_search_messages(

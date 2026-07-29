@@ -112,6 +112,13 @@ impl WarmDataStore {
         }
     }
 
+    /// 冰冻态：收缩底层 SQLite 页缓存，释放可回收内存
+    pub fn shrink_memory(&self) {
+        if let Err(e) = self.store.shrink_memory() {
+            tracing::warn!("SQLite shrink_memory 失败: {}", e);
+        }
+    }
+
     /// 启用 ACE Reflector（用当前 AI 配置在归档后自动反思沉淀策略条目）
     pub fn enable_reflector(&self, settings: &aether_shared::settings::AiSettings) {
         if settings.api_key.is_empty() {

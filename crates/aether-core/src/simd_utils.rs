@@ -1,249 +1,46 @@
 //! SIMD加速的文本处理工具
 //!
-//! 使用 128 位（16字节）和 64 位（8字节）批量处理，模拟 SIMD 效果
-//! 在稳定版 Rust 中无需外部依赖即可实现
+//! P0-D: 换行计数与字节查找委托给 bytecount / memchr（内置 AVX2/SSE2
+//! 运行时分派，比手写 SWAR 快 4-8 倍）；空白跳过保留 SWAR 实现但改用
+//! chunks_exact 消除逐字节索引的边界检查，便于编译器向量化。
+//! 函数签名保持不变，调用方零改动。
 
-/// 快速计算字节数组中的换行符数量
-///
-/// 使用 16 字节批量处理（u128），比 8 字节版本快 ~2 倍
-/// CORE-C01: 修复 SWAR 跨字节借位导致的误计 — 使用 has_zero_byte 做快速跳过，
-/// 在有换行符的块内逐字节精确计数，避免 borrow artifact
+/// 快速计算字节数组中的换行符数量（bytecount：AVX2 运行时分派）
+#[inline]
 pub fn count_newlines_simd(data: &[u8]) -> u32 {
-    let mut count = 0u32;
-    let len = data.len();
-    let mut i = 0;
-
-    // 16 字节批量处理（u128）
-    while i + 16 <= len {
-        let chunk = u128::from_le_bytes([
-            data[i],
-            data[i + 1],
-            data[i + 2],
-            data[i + 3],
-            data[i + 4],
-            data[i + 5],
-            data[i + 6],
-            data[i + 7],
-            data[i + 8],
-            data[i + 9],
-            data[i + 10],
-            data[i + 11],
-            data[i + 12],
-            data[i + 13],
-            data[i + 14],
-            data[i + 15],
-        ]);
-
-        let xor_result = chunk ^ 0x0A0A0A0A0A0A0A0A0A0A0A0A0A0A0A0Au128;
-        // has_zero_byte 仅用于快速检测（可能有 borrow artifact，不能直接 count_ones）
-        if has_zero_byte_u128(xor_result) != 0 {
-            // 块内有换行符 — 逐字节精确计数，避免借位传播误计
-            for j in 0..16 {
-                if data[i + j] == b'\n' {
-                    count += 1;
-                }
-            }
-        }
-        i += 16;
-    }
-
-    // 8 字节处理剩余部分
-    while i + 8 <= len {
-        let chunk = u64::from_le_bytes([
-            data[i],
-            data[i + 1],
-            data[i + 2],
-            data[i + 3],
-            data[i + 4],
-            data[i + 5],
-            data[i + 6],
-            data[i + 7],
-        ]);
-        let xor_result = chunk ^ 0x0A0A0A0A0A0A0A0Au64;
-        if has_zero_byte(xor_result) != 0 {
-            for j in 0..8 {
-                if data[i + j] == b'\n' {
-                    count += 1;
-                }
-            }
-        }
-        i += 8;
-    }
-
-    // 处理剩余字节
-    while i < len {
-        if data[i] == b'\n' {
-            count += 1;
-        }
-        i += 1;
-    }
-
-    count
+    bytecount::count(data, b'\n') as u32
 }
 
-/// 快速查找字节在数组中的位置
-///
-/// 使用 16 字节批量比较加速
-/// H-14: SWAR `has_zero_byte` 在特定字节组合下可能产生假阳性，
-/// 命中后必须逐字节验证实际匹配位置，避免返回错误偏移。
+/// 快速查找字节在数组中的位置（memchr：AVX2 运行时分派）
+#[inline]
 pub fn find_byte_simd(data: &[u8], target: u8) -> Option<usize> {
-    let len = data.len();
-    let mut i = 0;
-
-    // 16 字节批量处理
-    let pattern_128 = u128::from_le_bytes([target; 16]);
-
-    while i + 16 <= len {
-        let chunk = u128::from_le_bytes([
-            data[i],
-            data[i + 1],
-            data[i + 2],
-            data[i + 3],
-            data[i + 4],
-            data[i + 5],
-            data[i + 6],
-            data[i + 7],
-            data[i + 8],
-            data[i + 9],
-            data[i + 10],
-            data[i + 11],
-            data[i + 12],
-            data[i + 13],
-            data[i + 14],
-            data[i + 15],
-        ]);
-
-        let xor_result = chunk ^ pattern_128;
-        let is_zero = has_zero_byte_u128(xor_result);
-
-        if is_zero != 0 {
-            // H-14 / C-01: SWAR 对高字节可能产生假阳性，逐字节验证返回首个真实匹配；
-            // 若未命中则继续扫描下一个 chunk。
-            for j in 0..16 {
-                if data[i + j] == target {
-                    return Some(i + j);
-                }
-            }
-        }
-
-        i += 16;
-    }
-
-    // 8 字节批量处理
-    let pattern_64 = u64::from_le_bytes([target; 8]);
-
-    while i + 8 <= len {
-        let chunk = u64::from_le_bytes([
-            data[i],
-            data[i + 1],
-            data[i + 2],
-            data[i + 3],
-            data[i + 4],
-            data[i + 5],
-            data[i + 6],
-            data[i + 7],
-        ]);
-
-        let xor_result = chunk ^ pattern_64;
-        let is_zero = has_zero_byte(xor_result);
-
-        if is_zero != 0 {
-            // H-14 / C-01: SWAR 对高字节可能产生假阳性，逐字节验证
-            for j in 0..8 {
-                if data[i + j] == target {
-                    return Some(i + j);
-                }
-            }
-        }
-
-        i += 8;
-    }
-
-    // 处理剩余字节
-    while i < len {
-        if data[i] == target {
-            return Some(i);
-        }
-        i += 1;
-    }
-
-    None
+    memchr::memchr(target, data)
 }
 
-/// 快速跳过空白字符
+/// 快速跳过空白字符（空格、制表符、回车）
 ///
-/// 16 字节批量检查空格、制表符、回车
+/// 16 字节 SWAR 批量检测；使用 chunks_exact 让编译器生成无边界检查的向量加载
 pub fn skip_whitespace_simd(data: &[u8], start: usize) -> usize {
     let len = data.len();
     let mut i = start;
 
-    // 16 字节批量检测
-    while i + 16 <= len {
-        let chunk = u128::from_le_bytes([
-            data[i],
-            data[i + 1],
-            data[i + 2],
-            data[i + 3],
-            data[i + 4],
-            data[i + 5],
-            data[i + 6],
-            data[i + 7],
-            data[i + 8],
-            data[i + 9],
-            data[i + 10],
-            data[i + 11],
-            data[i + 12],
-            data[i + 13],
-            data[i + 14],
-            data[i + 15],
-        ]);
+    // 16 字节批量检测：整块全为空白才整块跳过
+    for chunk in data[start.min(len)..].chunks_exact(16) {
+        let v = u128::from_le_bytes(chunk.try_into().unwrap());
 
-        let is_space = chunk ^ 0x20202020202020202020202020202020u128;
-        let is_tab = chunk ^ 0x09090909090909090909090909090909u128;
-        let is_cr = chunk ^ 0x0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0Du128;
+        let is_space = v ^ 0x20202020202020202020202020202020u128;
+        let is_tab = v ^ 0x09090909090909090909090909090909u128;
+        let is_cr = v ^ 0x0D0D0D0D0D0D0D0D0D0D0D0D0D0D0D0Du128;
 
-        let zero_space = has_zero_byte_u128(is_space);
-        let zero_tab = has_zero_byte_u128(is_tab);
-        let zero_cr = has_zero_byte_u128(is_cr);
-
-        let is_whitespace = zero_space | zero_tab | zero_cr;
+        let is_whitespace =
+            has_zero_byte_u128(is_space) | has_zero_byte_u128(is_tab) | has_zero_byte_u128(is_cr);
 
         if is_whitespace != 0x80808080808080808080808080808080u128 {
-            // 不是所有字节都是空白，逐个处理
+            // 不是所有字节都是空白，退出批量路径逐个处理
             break;
         }
 
         i += 16;
-    }
-
-    // 8 字节批量检测
-    while i + 8 <= len {
-        let chunk = u64::from_le_bytes([
-            data[i],
-            data[i + 1],
-            data[i + 2],
-            data[i + 3],
-            data[i + 4],
-            data[i + 5],
-            data[i + 6],
-            data[i + 7],
-        ]);
-
-        let is_space = chunk ^ 0x2020202020202020u64;
-        let is_tab = chunk ^ 0x0909090909090909u64;
-        let is_cr = chunk ^ 0x0D0D0D0D0D0D0D0Du64;
-
-        let zero_space = has_zero_byte(is_space);
-        let zero_tab = has_zero_byte(is_tab);
-        let zero_cr = has_zero_byte(is_cr);
-
-        let is_whitespace = zero_space | zero_tab | zero_cr;
-
-        if is_whitespace != 0x8080808080808080u64 {
-            break;
-        }
-
-        i += 8;
     }
 
     // 逐个处理剩余字节
@@ -265,78 +62,15 @@ fn has_zero_byte_u128(x: u128) -> u128 {
     sub & not_x & 0x80808080808080808080808080808080u128
 }
 
-/// 检测64位整数中是否有0字节
-#[inline(always)]
-fn has_zero_byte(x: u64) -> u64 {
-    let sub = x.wrapping_sub(0x0101010101010101u64);
-    let not_x = !x;
-    sub & not_x & 0x8080808080808080u64
-}
-
 /// 快速字符串前缀匹配（用于关键字检测）
 ///
-/// 使用 8 字节批量比较（升级为 64 位）
+/// 前缀通常很短（关键字 2-8 字节），切片比较由标准库向量化
+#[inline]
 pub fn starts_with_simd(data: &[u8], prefix: &[u8]) -> bool {
-    if data.len() < prefix.len() {
-        return false;
-    }
-
-    let prefix_len = prefix.len();
-    let mut i = 0;
-
-    // 8 字节批量比较
-    while i + 8 <= prefix_len {
-        let data_chunk = u64::from_le_bytes([
-            data[i],
-            data[i + 1],
-            data[i + 2],
-            data[i + 3],
-            data[i + 4],
-            data[i + 5],
-            data[i + 6],
-            data[i + 7],
-        ]);
-        let prefix_chunk = u64::from_le_bytes([
-            prefix[i],
-            prefix[i + 1],
-            prefix[i + 2],
-            prefix[i + 3],
-            prefix[i + 4],
-            prefix[i + 5],
-            prefix[i + 6],
-            prefix[i + 7],
-        ]);
-        if data_chunk != prefix_chunk {
-            return false;
-        }
-        i += 8;
-    }
-
-    // 4 字节批量比较
-    while i + 4 <= prefix_len {
-        let data_chunk = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-        let prefix_chunk =
-            u32::from_le_bytes([prefix[i], prefix[i + 1], prefix[i + 2], prefix[i + 3]]);
-        if data_chunk != prefix_chunk {
-            return false;
-        }
-        i += 4;
-    }
-
-    // 比较剩余字节
-    while i < prefix_len {
-        if data[i] != prefix[i] {
-            return false;
-        }
-        i += 1;
-    }
-
-    true
+    data.len() >= prefix.len() && &data[..prefix.len()] == prefix
 }
 
 /// 快速计算字符串长度（到下一个换行符）
-///
-/// 使用SIMD批量查找换行符
 pub fn line_length_simd(data: &[u8], start: usize) -> usize {
     match find_byte_simd(&data[start..], b'\n') {
         Some(pos) => pos,
@@ -351,28 +85,8 @@ pub fn line_length_simd(data: &[u8], start: usize) -> usize {
 #[allow(dead_code)]
 pub fn classify_chars_simd(data: &[u8], start: usize, out: &mut [u8]) {
     let len = data.len().saturating_sub(start).min(out.len());
-    let mut i = 0;
-
-    // 16 字节批量分类
-    while i + 16 <= len {
-        for j in 0..16 {
-            out[i + j] = classify_byte(data[start + i + j]);
-        }
-        i += 16;
-    }
-
-    // 8 字节批量分类
-    while i + 8 <= len {
-        for j in 0..8 {
-            out[i + j] = classify_byte(data[start + i + j]);
-        }
-        i += 8;
-    }
-
-    // 处理剩余字节
-    while i < len {
-        out[i] = classify_byte(data[start + i]);
-        i += 1;
+    for (o, &b) in out[..len].iter_mut().zip(&data[start..start + len]) {
+        *o = classify_byte(b);
     }
 }
 
@@ -412,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_find_byte_simd_non_ascii() {
-        // C-01: 验证高字节（CJK、带音标字符）不会触发 SWAR 假阳性
+        // C-01: 验证高字节（CJK、带音标字符）不会误报
         // 中(3)文(3)测(3)试(3)内(3)容(3) = 18 字节，\n 位于索引 18
         let data = "中文测试内容\n下一行".as_bytes();
         assert_eq!(find_byte_simd(data, b'\n'), Some(18));
@@ -470,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_count_newlines_large() {
-        // 测试大数据（> 32 字节，确保 16 字节路径生效）
+        // 测试大数据（> 32 字节，确保向量路径生效）
         let mut data = vec![b'a'; 128];
         data[15] = b'\n';
         data[31] = b'\n';
@@ -488,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_count_newlines_8byte_boundary() {
-        // 8 字节路径：长度 8-15
+        // 短数据路径：长度 8-15
         let data = b"abcdefg\n";
         assert_eq!(count_newlines_simd(data), 1);
         let data2 = b"abc\ndef\n";

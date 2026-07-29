@@ -77,6 +77,7 @@ pub enum IconKind {
     Plus,
     ChevronLeft,
     ChevronRight,
+    ChevronDown,
     // 品牌与 AI 助手
     EmojiSheep,
     Bot,
@@ -114,7 +115,7 @@ pub enum IconKind {
 
 impl IconKind {
     /// 所有图标变体索引（与 SVG_DEFS 数组下标对应）
-    pub const ALL: [IconKind; 67] = [
+    pub const ALL: [IconKind; 68] = [
         IconKind::OpenFolder,
         IconKind::NewFile,
         IconKind::Clone,
@@ -182,6 +183,7 @@ impl IconKind {
         IconKind::FileKotlin,
         IconKind::FileDocker,
         IconKind::PanelRight,
+        IconKind::ChevronDown,
     ];
 
     /// 索引到 SVG_DEFS 数组下标
@@ -322,10 +324,10 @@ impl IconCache {
 mod tests {
     use super::IconKind;
 
-    /// 验证 ALL 数组长度为 67
+    /// 验证 ALL 数组长度与 SVG_DEFS 一致
     #[test]
-    fn all_icons_count_is_67() {
-        assert_eq!(IconKind::ALL.len(), 67);
+    fn all_icons_count_matches() {
+        assert_eq!(IconKind::ALL.len(), 68);
     }
 
     /// 验证 ALL 数组中无重复项

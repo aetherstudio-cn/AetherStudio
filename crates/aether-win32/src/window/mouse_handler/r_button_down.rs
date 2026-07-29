@@ -9,7 +9,6 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 
 use super::super::{get_and_set_state, invalidate_window};
 use crate::activity_bar_context_menu::ActivityBarContextMenuState;
-use crate::editor::EditorState;
 use crate::layout::SidebarContent;
 use crate::tab_context_menu::TabContextMenuState;
 
@@ -37,10 +36,10 @@ pub(crate) unsafe fn on_r_button_down(
 
     let mut st = state.borrow_mut();
 
-    // 记录用户右键那一帧的文件树列表起始 Y（含内联输入框偏移）。
+    // 记录用户右键那一帧的树节点列表起始 Y（根目录行之下，含内联输入框偏移）。
     // 必须在 cancel_file_tree_input 之前读取：用户是按屏幕上已渲染的
-    // （带输入框、节点整体下移）布局点击的，若取消后再算偏移会错位约两行。
-    let list_start_y = st.file_tree_list_start_y();
+    //（带输入框、节点整体下移）布局点击的，若取消后再算偏移会错位约两行。
+    let nodes_start_y = st.file_tree_nodes_start_y();
 
     // 若正在内联输入，右键先取消输入（与左键逻辑一致）
     if st.file_tree_input.is_some() {
@@ -157,24 +156,19 @@ pub(crate) unsafe fn on_r_button_down(
     let sidebar_width = st.layout.sidebar_width;
 
     // 命中文件/文件夹节点 → 弹出文件节点上下文菜单（携带节点类型，文件夹额外提供新建入口）
-    let hit_node: Option<(u32, bool)> = st.file_tree.as_ref().and_then(|tree| {
-        let mut current_y = list_start_y;
-        EditorState::find_tree_click_target(
-            tree,
-            u32::MAX,
-            sidebar_rel_x,
-            sidebar_rel_y,
-            sidebar_width,
-            st.dpi_scale,
-            &mut current_y,
-        )
-        .map(|(node_idx, kind, _)| {
-            (
-                node_idx,
-                kind == aether_core::workspace::file_tree::FileKind::Directory,
-            )
-        })
-    });
+    // 根目录行折叠时节点不可见，跳过节点命中检测
+    let hit_node: Option<(u32, bool)> = if st.file_tree_root_expanded {
+        // P5-1: O(1) 行定位命中测试，替代递归遍历
+        st.file_tree_hit_test(sidebar_rel_x, sidebar_rel_y, nodes_start_y, sidebar_width)
+            .map(|(node_idx, kind, _)| {
+                (
+                    node_idx,
+                    kind == aether_core::workspace::file_tree::FileKind::Directory,
+                )
+            })
+    } else {
+        None
+    };
 
     if let Some((node_idx, is_dir)) = hit_node {
         // 节点命中：选中节点，关闭旧菜单，弹出节点级上下文菜单

@@ -40,8 +40,6 @@ pub struct FileNode {
     pub is_loading: bool,
     pub is_git_tracked: bool,
     pub is_git_modified: bool,
-    pub file_size: u64,
-    pub modified_time: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -104,8 +102,6 @@ impl FileTree {
             is_loading: false,
             is_git_tracked: false,
             is_git_modified: false,
-            file_size: 0,
-            modified_time: 0,
         });
 
         // 更新父节点的first_child链表 - O(1) 尾指针插入

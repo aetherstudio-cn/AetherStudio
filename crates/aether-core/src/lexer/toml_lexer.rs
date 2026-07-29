@@ -11,15 +11,7 @@ impl TomlLexer {
 
     fn lex_next(&self, bytes: &[u8], pos: usize) -> (LexemeSpan, usize) {
         if pos >= bytes.len() {
-            return (
-                LexemeSpan {
-                    start: pos,
-                    len: 0,
-                    kind: TokenKind::EOF,
-                    flags: 0,
-                },
-                pos,
-            );
+            return (LexemeSpan::new(pos, 0, TokenKind::EOF), pos);
         }
 
         let ch = bytes[pos];
@@ -27,36 +19,12 @@ impl TomlLexer {
         match ch {
             b' ' | b'\t' | b'\r' => {
                 let end = skip_whitespace(bytes, pos);
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::Whitespace,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, TokenKind::Whitespace), end)
             }
-            b'\n' => (
-                LexemeSpan {
-                    start: pos,
-                    len: 1,
-                    kind: TokenKind::Newline,
-                    flags: 0,
-                },
-                pos + 1,
-            ),
+            b'\n' => (LexemeSpan::new(pos, 1, TokenKind::Newline), pos + 1),
             b'#' => {
                 let end = skip_line_comment(bytes, pos);
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::LineComment,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, TokenKind::LineComment), end)
             }
             b'[' => {
                 // 检测表头 [[table]] 或 [table]
@@ -74,49 +42,26 @@ impl TomlLexer {
                 } else if i < bytes.len() {
                     i += 1;
                 }
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: i - pos,
-                        kind: TokenKind::TomlTable,
-                        flags: 0,
-                    },
-                    i,
-                )
+                (LexemeSpan::new(pos, i - pos, TokenKind::TomlTable), i)
             }
             b'"' => {
                 let end = skip_quoted(bytes, pos, b'"');
                 (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::StringLiteral,
-                        flags: 0,
-                    },
+                    LexemeSpan::new(pos, end - pos, TokenKind::StringLiteral),
                     end,
                 )
             }
             b'\'' => {
                 let end = skip_literal_string(bytes, pos);
                 (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::StringLiteral,
-                        flags: 0,
-                    },
+                    LexemeSpan::new(pos, end - pos, TokenKind::StringLiteral),
                     end,
                 )
             }
             b'0'..=b'9' => {
                 let end = skip_number_or_date(bytes, pos);
                 (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::NumberLiteral,
-                        flags: 0,
-                    },
+                    LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral),
                     end,
                 )
             }
@@ -126,24 +71,11 @@ impl TomlLexer {
                 if pos + 1 < bytes.len() && bytes[pos + 1].is_ascii_digit() {
                     let end = skip_number_or_date(bytes, pos);
                     (
-                        LexemeSpan {
-                            start: pos,
-                            len: end - pos,
-                            kind: TokenKind::NumberLiteral,
-                            flags: 0,
-                        },
+                        LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral),
                         end,
                     )
                 } else {
-                    (
-                        LexemeSpan {
-                            start: pos,
-                            len: 1,
-                            kind: TokenKind::Punctuation,
-                            flags: 0,
-                        },
-                        pos + 1,
-                    )
+                    (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1)
                 }
             }
             b't' | b'f' => {
@@ -154,58 +86,18 @@ impl TomlLexer {
                 } else {
                     TokenKind::Identifier
                 };
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, kind), end)
             }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let end = skip_identifier(bytes, pos);
                 // CORE-L01: TOML 键统一使用 Identifier 替代 JsonKey
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::Identifier,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, TokenKind::Identifier), end)
             }
-            b'=' | b'.' | b',' => (
-                LexemeSpan {
-                    start: pos,
-                    len: 1,
-                    kind: TokenKind::Punctuation,
-                    flags: 0,
-                },
-                pos + 1,
-            ),
-            b'{' | b'}' => (
-                LexemeSpan {
-                    start: pos,
-                    len: 1,
-                    kind: TokenKind::Punctuation,
-                    flags: 0,
-                },
-                pos + 1,
-            ),
+            b'=' | b'.' | b',' => (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1),
+            b'{' | b'}' => (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1),
             _ => {
                 let len = crate::lexer::utf8_char_len(bytes[pos]);
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len,
-                        kind: TokenKind::Unknown,
-                        flags: 0,
-                    },
-                    pos + len,
-                )
+                (LexemeSpan::new(pos, len, TokenKind::Unknown), pos + len)
             }
         }
     }

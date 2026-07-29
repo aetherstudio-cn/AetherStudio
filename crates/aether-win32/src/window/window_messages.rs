@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use super::{
     compute_cursor_for_pos, create_editor_window, get_and_set_state, invalidate_window,
     AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HIGHLIGHT_TIMER_ID,
-    HOVER_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, TERM_TIMER_ID, UI_ANIM_TIMER_ID,
+    HOVER_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, TERM_TIMER_ID, UI_ANIM_TIMER_ID,
 };
 use crate::auto_save::{AUTOSAVE_DEBOUNCE_TIMER_ID, AUTOSAVE_PERIODIC_TIMER_ID};
 
@@ -48,6 +48,24 @@ pub(crate) unsafe fn on_timer(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LP
     }
     if wparam.0 == UI_ANIM_TIMER_ID {
         return on_timer_ui_anim(hwnd);
+    }
+    if wparam.0 == POWER_TIMER_ID {
+        return on_timer_power(hwnd);
+    }
+    LRESULT(0)
+}
+
+/// 冰冻看门狗：低频检查空闲时长，满足「失焦 + 空闲超阈」时进入冰冻态释放内存
+unsafe fn on_timer_power(hwnd: HWND) -> LRESULT {
+    if let Some(state) = get_and_set_state(hwnd) {
+        if let Ok(mut st) = state.try_borrow_mut() {
+            if !st.power.frozen
+                && !st.focus_manager.is_window_focused()
+                && st.power.idle_secs() >= crate::power::IDLE_FREEZE_SECS
+            {
+                st.enter_frozen();
+            }
+        }
     }
     LRESULT(0)
 }
@@ -104,14 +122,18 @@ unsafe fn on_timer_hover(hwnd: HWND) -> LRESULT {
 /// 终端刷新：周期性重绘以显示异步到达的 shell 输出。
 unsafe fn on_timer_term_refresh(hwnd: HWND) -> LRESULT {
     // render() 内部会调用 flush_output 拉取子进程输出。
-    // 底部终端面板不可见时自动停止定时器，避免空转。
-    let still_visible = EDITOR_STATE.with(|s| {
+    // 底部终端面板不可见时自动停止定时器，避免空转；
+    // 冰冻态下终端输出消费交由无头泵（AI 定时器）驱动，本定时器同样停止。
+    let (still_visible, frozen) = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().layout.bottom_panel_visible)
-            .unwrap_or(false)
+            .map(|state| {
+                let st = state.borrow();
+                (st.layout.bottom_panel_visible, st.power.frozen)
+            })
+            .unwrap_or((false, false))
     });
-    if !still_visible {
+    if !still_visible || frozen {
         let _ = KillTimer(hwnd, TERM_TIMER_ID);
     } else if get_and_set_state(hwnd).is_some() {
         invalidate_window(hwnd);
@@ -120,16 +142,36 @@ unsafe fn on_timer_term_refresh(hwnd: HWND) -> LRESULT {
 }
 
 /// AI 后台刷新：流式生成或测试连接期间周期性重绘，两者均结束后自动停止。
+/// 冰冻态：转为无头泵——继续消费 AI 流与 Agent 终端命令回环但不触发重绘，
+/// 保证最小化/长期空闲期间 AI 生成与文件落盘不中断，全部结束后自杀。
 unsafe fn on_timer_ai_refresh(hwnd: HWND) -> LRESULT {
-    let active = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| {
-                let st = state.borrow();
-                st.ai_panel.any_generating() || st.settings_panel.is_testing
+    let Some(state) = get_and_set_state(hwnd) else {
+        let _ = KillTimer(hwnd, AI_TIMER_ID);
+        return LRESULT(0);
+    };
+    let frozen = state
+        .try_borrow()
+        .map(|st| st.power.frozen)
+        .unwrap_or(false);
+    if frozen {
+        let keep = state
+            .try_borrow_mut()
+            .map(|mut st| {
+                st.pump_background_tasks();
+                st.ai_panel.any_generating()
+                    || st.settings_panel.is_testing
+                    || st.terminal_panel.has_agent_activity()
             })
-            .unwrap_or(false)
-    });
+            .unwrap_or(true);
+        if !keep {
+            let _ = KillTimer(hwnd, AI_TIMER_ID);
+        }
+        return LRESULT(0);
+    }
+    let active = state
+        .try_borrow()
+        .map(|st| st.ai_panel.any_generating() || st.settings_panel.is_testing)
+        .unwrap_or(false);
     if active {
         invalidate_window(hwnd);
     } else {
@@ -485,8 +527,17 @@ pub(crate) unsafe fn on_size(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
         if let Some(state) = get_and_set_state(hwnd) {
             let mut st = state.borrow_mut();
             st.is_maximized = is_max;
-            if !is_min {
+            if is_min {
+                // 最小化：立即进入冰冻态释放内存（AI/Agent 经无头泵保活）
+                st.power.minimized = true;
+                st.enter_frozen();
+            } else {
+                st.power.minimized = false;
                 st.resize(width, height);
+                // 从最小化恢复：解冻（全量重绘 + 懒重建 D2D 资源）
+                if st.power.frozen {
+                    st.exit_frozen();
+                }
             }
             drop(st);
             if !is_min {
@@ -705,6 +756,11 @@ pub(crate) unsafe fn on_set_focus(
         if let Some(state) = s.borrow().as_ref() {
             if let Ok(mut st) = state.try_borrow_mut() {
                 st.focus_manager.on_set_focus();
+                st.power.note_input();
+                // 冰冻态获焦（非最小化）：立即解冻
+                if st.power.frozen && !st.power.minimized {
+                    st.exit_frozen();
+                }
             }
         }
     });

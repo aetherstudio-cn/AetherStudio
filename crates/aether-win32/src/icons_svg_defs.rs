@@ -386,6 +386,12 @@ const UI_CHEVRON_RIGHT: SvgDef = SvgDef {
     shapes: &[SvgShape::Path("m9 18 6-6-6-6", None)],
 };
 
+/// Lucide "chevron-down" - 下折角（文件树展开态）
+const UI_CHEVRON_DOWN: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 24.0, 24.0),
+    shapes: &[SvgShape::Path("m6 9 6 6 6-6", None)],
+};
+
 /// Lucide "bot" - 机器人（AI 助手）
 const UI_BOT: SvgDef = SvgDef {
     viewbox: (0.0, 0.0, 24.0, 24.0),
@@ -900,4 +906,5 @@ pub(crate) const SVG_DEFS: &[SvgDef] = &[
     /* 64 FileKotlin    */ FILE_KOTLIN,
     /* 65 FileDocker    */ FILE_DOCKER,
     /* 66 PanelRight    */ UI_PANEL_RIGHT,
+    /* 67 ChevronDown   */ UI_CHEVRON_DOWN,
 ];

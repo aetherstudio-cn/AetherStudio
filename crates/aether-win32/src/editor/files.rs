@@ -87,7 +87,12 @@ impl EditorState {
                 });
                 self.emit_event(crate::events::EditorEvent::StatusBarChanged);
                 // 接线 LSP：通知服务器文档已打开（按需启动 server），激活补全/悬停/诊断
-                self.lsp.notify_open(&self.content);
+                // 冰冻态：先解冻重启语言服务器（解冻路径内已 notify_open 当前文档）
+                if self.lsp.frozen {
+                    self.thaw_lsp_on_demand();
+                } else {
+                    self.lsp.notify_open(&self.content);
+                }
 
                 // 启动高亮刷新定时器：tree-sitter 语言且非大文件时，后台高亮在工作线程
                 // 完成后需要一次重绘才能着色。此定时器周期性重绘直至高亮到达，随后自动停止，
@@ -473,6 +478,8 @@ impl EditorState {
         self.content.selection_end = None;
         self.content.is_dirty = false;
         self.content.cached_lines.clear();
+        self.content.line_cache_versions.clear();
+        self.content.cache_window_start = 0;
         self.content.cached_tokens.clear();
         self.content.language = Language::PlainText;
         self.tab_bar.tabs.clear();

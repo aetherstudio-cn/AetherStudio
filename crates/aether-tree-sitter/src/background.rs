@@ -3,14 +3,18 @@
 //! 将 Tree-sitter 解析和高亮移到后台线程，避免阻塞 UI 输入。
 //!
 //! 工作流程：
-//! 1. 主线程调用 `request()` 发送高亮请求（文档全文 + 语言）
-//! 2. 后台线程接收请求，调用 `highlight_document` 进行增量解析
+//! 1. 主线程调用 `request()` 发送高亮请求（轻量缓冲区快照 + 语言）
+//! 2. 后台线程接收请求，在后台物化全文后调用 `highlight_document`
 //! 3. 主线程在渲染帧中调用 `poll_result()` 非阻塞检查结果
 //! 4. 结果未就绪时使用上一帧的缓存（无卡顿）
+//!
+//! P1-C: 请求携带 `TextBufferSnapshot`（Arc 共享的 piece 列表，轻量）而非
+//! 全文 String，避免每次编辑在 UI 线程上做全文拷贝；文本物化移到后台线程。
 
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 
+use aether_core::buffer::text_buffer::TextBufferSnapshot;
 use aether_core::lexer::LexemeSpan;
 
 use crate::highlighter::TreeSitterHighlighter;
@@ -19,7 +23,8 @@ use crate::highlighter::TreeSitterHighlighter;
 struct HighlightRequest {
     doc_id: String,
     language: String,
-    full_text: String,
+    /// 缓冲区快照（UI 线程零拷贝，后台线程物化全文）
+    snapshot: Box<dyn TextBufferSnapshot>,
 }
 
 /// 高亮结果
@@ -53,8 +58,10 @@ impl BackgroundHighlighter {
             let mut highlighter = TreeSitterHighlighter::new();
 
             for req in req_rx {
+                // P1-C: 在后台线程物化全文，UI 线程只付出轻量快照拷贝
+                let full_text = req.snapshot.full_text();
                 let token_lines =
-                    highlighter.highlight_document(&req.doc_id, &req.language, &req.full_text);
+                    highlighter.highlight_document(&req.doc_id, &req.language, &full_text);
                 // 结果发送失败表示主线程已关闭，退出循环
                 if res_tx
                     .send(HighlightResult {
@@ -80,14 +87,14 @@ impl BackgroundHighlighter {
     ///
     /// 如果已有待处理请求，跳过避免排队堆积。
     /// 后台线程会处理最新一次请求。
-    pub fn request(&mut self, doc_id: &str, language: &str, full_text: &str) {
+    pub fn request(&mut self, doc_id: &str, language: &str, snapshot: Box<dyn TextBufferSnapshot>) {
         if self.pending {
             return;
         }
         let _ = self.request_tx.send(HighlightRequest {
             doc_id: doc_id.to_string(),
             language: language.to_string(),
-            full_text: full_text.to_string(),
+            snapshot,
         });
         self.pending = true;
     }

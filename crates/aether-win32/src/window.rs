@@ -49,6 +49,8 @@ pub(crate) const HIGHLIGHT_TIMER_ID: usize = 0xA006;
 pub(crate) const AI_ARCHIVE_TIMER_ID: usize = 0xA007;
 /// UI 动画定时器 ID（历史记录下拉面板展开/收起动画，动画结束后自动停止）
 pub(crate) const UI_ANIM_TIMER_ID: usize = 0xA008;
+/// 冰冻看门狗定时器 ID（低频检查空闲时长，满足条件进入 Frozen 冰冻态，见 power.rs）
+pub(crate) const POWER_TIMER_ID: usize = 0xA009;
 /// AI 归档检查间隔（毫秒）：每 5 秒检查一次是否满足「空闲 30 秒」归档条件
 pub(crate) const AI_ARCHIVE_MS: u32 = 5000;
 /// 长按阈值（毫秒）
@@ -318,6 +320,11 @@ unsafe fn init_editor_state(hwnd: HWND, is_main_window: bool) {
         tracing::error!("[P0-3] 键盘钩子安装失败！终端里的汉字将无法用 Backspace 删除");
     }
 
+    // 冰冻看门狗：低频检查空闲时长，满足「失焦 + 空闲超阈」时进入冰冻态释放内存
+    SetTimer(hwnd, POWER_TIMER_ID, crate::power::POWER_CHECK_MS, None);
+    // 启动完成后记录内存基线（遥测）
+    crate::power::log_memory_usage("startup");
+
     // 将状态存储到窗口的用户数据区，以便窗口过程可以访问
     // 使用 GWLP_USERDATA 来存储 Rc<RefCell<EditorState>> 的指针
     let state_ptr = Rc::into_raw(state_rc) as *mut RefCell<EditorState> as isize;
@@ -329,10 +336,31 @@ unsafe fn init_editor_state(hwnd: HWND, is_main_window: bool) {
 
 // ===== 窗口过程 =====
 
+/// 用户输入活跃标记：刷新空闲计时；处于冰冻态（非最小化）时立即解冻。
+/// 使用 try_borrow_mut 避免与模态对话框消息循环重入冲突。
+unsafe fn note_user_input(hwnd: HWND) {
+    if let Some(state) = get_and_set_state(hwnd) {
+        if let Ok(mut st) = state.try_borrow_mut() {
+            st.power.note_input();
+            if st.power.frozen && !st.power.minimized {
+                st.exit_frozen();
+            }
+        }
+    }
+}
+
 extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // C-01: WndProc 是 FFI 边界（extern "system"），任何 panic 穿越此边界均为未定义行为。
     // 使用 catch_unwind 包裹整个函数体，panic 时回退到 DefWindowProcW 以保证进程稳定。
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        // 空闲冰冻：用户输入刷新空闲计时；冰冻态下任意输入立即解冻
+        match msg {
+            WM_LBUTTONDOWN | WM_MBUTTONDOWN | WM_RBUTTONDOWN | WM_LBUTTONUP | WM_MOUSEMOVE
+            | WM_MOUSEWHEEL | WM_MOUSEHWHEEL | WM_KEYDOWN | WM_CHAR | WM_IME_COMPOSITION => {
+                note_user_input(hwnd);
+            }
+            _ => {}
+        }
         // UI-M06: 从窗口 GWLP_USERDATA 获取状态，同步到 thread_local，
         // 防止多窗口消息交错时键盘输入路由到错误窗口
         match msg {

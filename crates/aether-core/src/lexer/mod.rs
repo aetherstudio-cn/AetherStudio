@@ -68,12 +68,27 @@ pub enum TokenKind {
 }
 
 /// 词法单元跨度
+///
+/// P0-A: 压缩从 24B 到 12B，单行内偏移不超过 4GB，单 token 长度不超过 4GB
 #[derive(Clone, Debug, PartialEq)]
 pub struct LexemeSpan {
-    pub start: usize,
-    pub len: usize,
+    pub start: u32,
+    pub len: u32,
     pub kind: TokenKind,
     pub flags: u8,
+}
+
+impl LexemeSpan {
+    /// 便捷构造：接受 usize 自动截断为 u32（单行不可能超过 4GB）
+    #[inline]
+    pub fn new(start: usize, len: usize, kind: TokenKind) -> Self {
+        Self {
+            start: start as u32,
+            len: len as u32,
+            kind,
+            flags: 0,
+        }
+    }
 }
 
 /// 语言类型
@@ -205,12 +220,7 @@ impl Lexer for PlainTextLexer {
         if text.is_empty() {
             return Vec::new();
         }
-        vec![LexemeSpan {
-            start: 0,
-            len: text.len(),
-            kind: TokenKind::Unknown,
-            flags: 0,
-        }]
+        vec![LexemeSpan::new(0, text.len(), TokenKind::Unknown)]
     }
 }
 

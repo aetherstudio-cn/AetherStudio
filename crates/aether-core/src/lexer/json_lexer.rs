@@ -11,15 +11,7 @@ impl JsonLexer {
 
     fn lex_next(&self, bytes: &[u8], pos: usize) -> (LexemeSpan, usize) {
         if pos >= bytes.len() {
-            return (
-                LexemeSpan {
-                    start: pos,
-                    len: 0,
-                    kind: TokenKind::EOF,
-                    flags: 0,
-                },
-                pos,
-            );
+            return (LexemeSpan::new(pos, 0, TokenKind::EOF), pos);
         }
 
         let ch = bytes[pos];
@@ -27,15 +19,7 @@ impl JsonLexer {
         match ch {
             b' ' | b'\t' | b'\r' | b'\n' => {
                 let end = skip_whitespace(bytes, pos);
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::Whitespace,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, TokenKind::Whitespace), end)
             }
             b'"' => {
                 // 检测是否为键（后面跟着 :）
@@ -46,25 +30,12 @@ impl JsonLexer {
                 } else {
                     TokenKind::StringLiteral
                 };
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, kind), end)
             }
             b'-' | b'0'..=b'9' => {
                 let end = skip_number(bytes, pos);
                 (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::NumberLiteral,
-                        flags: 0,
-                    },
+                    LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral),
                     end,
                 )
             }
@@ -75,36 +46,14 @@ impl JsonLexer {
                     "true" | "false" | "null" => TokenKind::Keyword,
                     _ => TokenKind::Identifier,
                 };
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind,
-                        flags: 0,
-                    },
-                    end,
-                )
+                (LexemeSpan::new(pos, end - pos, kind), end)
             }
-            b'{' | b'}' | b'[' | b']' | b',' | b':' => (
-                LexemeSpan {
-                    start: pos,
-                    len: 1,
-                    kind: TokenKind::Punctuation,
-                    flags: 0,
-                },
-                pos + 1,
-            ),
+            b'{' | b'}' | b'[' | b']' | b',' | b':' => {
+                (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1)
+            }
             _ => {
                 let len = crate::lexer::utf8_char_len(bytes[pos]);
-                (
-                    LexemeSpan {
-                        start: pos,
-                        len,
-                        kind: TokenKind::Unknown,
-                        flags: 0,
-                    },
-                    pos + len,
-                )
+                (LexemeSpan::new(pos, len, TokenKind::Unknown), pos + len)
             }
         }
     }

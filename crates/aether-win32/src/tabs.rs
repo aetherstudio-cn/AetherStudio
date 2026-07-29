@@ -28,8 +28,16 @@ pub struct TabContent {
     /// 自动保存：检测到外部修改后置位，暂停自动保存；手动保存后复位
     pub auto_save_conflict: bool,
     // 渲染缓存（同crate内可访问）
+    // P0-A: 行文本缓存改为滑动窗口（仅覆盖可见行±缓冲），
+    // 内存从 O(文件行数) 降到 O(视口行数)；
+    // cached_tokens 仍为全文件索引（后台 tree-sitter 高亮结果整体接管，
+    // LexemeSpan 压缩后内存可接受）
+    /// 窗口首行对应的全局行号
+    pub(crate) cache_window_start: usize,
+    /// 窗口内每行文本（下标 = 全局行号 - cache_window_start）
     pub(crate) cached_lines: Vec<String>,
     pub(crate) cached_tokens: Vec<Vec<LexemeSpan>>,
+    /// 窗口内每行的缓存版本（与 cached_lines 平行）
     pub(crate) line_cache_versions: Vec<u64>,
     pub(crate) buffer_version: u64,
     /// REQ-P2-01: 上次 rebuild_cache 的签名，用于跳过无变化的缓存重建
@@ -40,6 +48,8 @@ pub struct TabContent {
     pub(crate) line_y_offsets: Vec<f32>,
     /// P3.1: 当前内联补全建议
     pub(crate) inline_completion: Option<crate::inline_completion::InlineCompletion>,
+    /// 冰冻态标记：cached_tokens 已被裁剪，需强制重新请求后台高亮
+    pub(crate) tokens_trimmed: bool,
     // 语言类型
     pub(crate) language: Language,
 }
@@ -60,6 +70,7 @@ impl TabContent {
             last_saved_buffer_version: 0,
             last_known_mtime: None,
             auto_save_conflict: false,
+            cache_window_start: 0,
             cached_lines: Vec::new(),
             cached_tokens: Vec::new(),
             line_cache_versions: Vec::new(),
@@ -68,6 +79,7 @@ impl TabContent {
             is_large_file: false,
             line_y_offsets: Vec::new(),
             inline_completion: None,
+            tokens_trimmed: false,
             language: Language::PlainText,
         }
     }
@@ -92,6 +104,7 @@ impl TabContent {
             last_saved_buffer_version: 1,
             last_known_mtime,
             auto_save_conflict: false,
+            cache_window_start: 0,
             cached_lines: Vec::new(),
             cached_tokens: Vec::new(),
             line_cache_versions: Vec::new(),
@@ -100,6 +113,7 @@ impl TabContent {
             is_large_file: false,
             line_y_offsets: Vec::new(),
             inline_completion: None,
+            tokens_trimmed: false,
             language,
         })
     }
@@ -132,6 +146,7 @@ impl TabContent {
             last_saved_buffer_version: if is_dirty { 0 } else { buffer_version },
             last_known_mtime: None,
             auto_save_conflict: false,
+            cache_window_start: 0,
             cached_lines: Vec::new(),
             cached_tokens: Vec::new(),
             line_cache_versions: Vec::new(),
@@ -140,27 +155,68 @@ impl TabContent {
             is_large_file: false,
             line_y_offsets: Vec::new(),
             inline_completion: None,
+            tokens_trimmed: false,
             language,
         }
     }
 
-    pub fn rebuild_cache(&mut self) {
-        let total_lines = self.buffer.len_lines().max(1);
-        let lang = self.language;
-        if self.cached_lines.len() != total_lines {
-            self.cached_lines.resize_with(total_lines, String::new);
-            self.cached_tokens.resize_with(total_lines, Vec::new);
-            self.line_cache_versions.resize(total_lines, 0);
+    /// 冰冻态：释放渲染缓存（行文本/高亮 token/行偏移），PieceTable 本体保留。
+    /// 唤醒后由 rebuild_cache 签名机制按可见窗口自动重建；
+    /// tokens_trimmed 置位使 tree-sitter 语言强制重新请求后台高亮。
+    pub(crate) fn trim_caches(&mut self) {
+        self.cache_window_start = 0;
+        self.cached_lines = Vec::new();
+        self.cached_tokens = Vec::new();
+        self.line_cache_versions = Vec::new();
+        self.line_y_offsets = Vec::new();
+        self.last_cache_signature = (0, 0, 0, 0);
+        self.tokens_trimmed = true;
+    }
+
+    /// 渲染缓存的近似字节数（内存遥测用）
+    pub(crate) fn cache_bytes(&self) -> usize {
+        let lines: usize = self.cached_lines.iter().map(|l| l.len()).sum();
+        let tokens: usize = self
+            .cached_tokens
+            .iter()
+            .map(|t| t.len() * std::mem::size_of::<LexemeSpan>())
+            .sum();
+        lines + tokens + self.line_y_offsets.len() * std::mem::size_of::<f32>()
+    }
+
+    /// 读取缓存窗口内指定全局行的文本；窗口外返回 None（调用方回退 buffer.get_line）
+    #[inline]
+    pub(crate) fn cached_line(&self, line_idx: usize) -> Option<&str> {
+        let slot = line_idx.checked_sub(self.cache_window_start)?;
+        self.cached_lines.get(slot).map(|s| s.as_str())
+    }
+
+    /// 将缓存窗口平移到 [new_start, new_start + new_len)，重叠部分直接搬移（避免重建），
+    /// 新进入的槽位置空并将版本标记为 0（下次重建时填充）
+    pub(crate) fn slide_cache_window(&mut self, new_start: usize, new_len: usize) {
+        if self.cache_window_start == new_start && self.cached_lines.len() == new_len {
+            return;
         }
-        for i in 0..total_lines {
-            if self.line_cache_versions[i] != self.buffer_version {
-                let line = self.buffer.get_line(i).unwrap_or_default();
-                let tokens = lang.lex_full(&line);
-                self.cached_lines[i] = line;
-                self.cached_tokens[i] = tokens;
-                self.line_cache_versions[i] = self.buffer_version;
+        let old_start = self.cache_window_start;
+        let old_len = self.cached_lines.len();
+        let mut old_lines = std::mem::take(&mut self.cached_lines);
+        let old_vers = std::mem::take(&mut self.line_cache_versions);
+
+        let mut new_lines: Vec<String> = Vec::with_capacity(new_len);
+        let mut new_vers: Vec<u64> = Vec::with_capacity(new_len);
+        for gi in new_start..new_start + new_len {
+            if gi >= old_start && gi < old_start + old_len {
+                let oi = gi - old_start;
+                new_lines.push(std::mem::take(&mut old_lines[oi]));
+                new_vers.push(old_vers[oi]);
+            } else {
+                new_lines.push(String::new());
+                new_vers.push(0);
             }
         }
+        self.cached_lines = new_lines;
+        self.line_cache_versions = new_vers;
+        self.cache_window_start = new_start;
     }
 
     pub fn mark_dirty(&mut self) {
@@ -262,12 +318,6 @@ impl Tab {
         }
     }
 
-    pub fn rebuild_cache(&mut self) {
-        if let Tab::File(content) = self {
-            content.rebuild_cache();
-        }
-    }
-
     pub fn mark_dirty(&mut self) {
         if let Tab::File(content) = self {
             content.mark_dirty();
@@ -354,21 +404,34 @@ mod tests {
     }
 
     #[test]
-    fn test_tab_from_file_and_rebuild_cache() {
+    fn test_tab_from_file_and_cache_window() {
         let dir = std::env::temp_dir().join(format!("aether_tab_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sample.rs");
-        std::fs::write(&path, "fn main() {}\n").unwrap();
+        std::fs::write(&path, "fn main() {}\nlet x = 1;\n").unwrap();
 
         let mut tab = Tab::from_file(path.clone()).unwrap();
         assert_eq!(tab.file_path(), Some(&path));
         assert_eq!(tab.file_name(), "sample.rs");
         assert!(tab.is_file());
 
-        tab.rebuild_cache();
-        assert!(!tab.as_file().unwrap().cached_lines.is_empty());
-        assert_eq!(tab.as_file().unwrap().cached_lines[0], "fn main() {}");
+        // 窗口化缓存：建窗 -> 填充 -> 读取
+        let content = tab.as_file_mut().unwrap();
+        content.slide_cache_window(0, 2);
+        assert_eq!(content.cached_lines.len(), 2);
+        content.cached_lines[0] = content.buffer.get_line(0).unwrap_or_default();
+        content.cached_lines[1] = content.buffer.get_line(1).unwrap_or_default();
+        assert_eq!(content.cached_line(0), Some("fn main() {}"));
+        assert_eq!(content.cached_line(1), Some("let x = 1;"));
+        assert_eq!(content.cached_line(5), None);
+
+        // 平移窗口：重叠行保留，新行空白待重建
+        let content = tab.as_file_mut().unwrap();
+        content.slide_cache_window(1, 2);
+        assert_eq!(content.cached_line(0), None);
+        assert_eq!(content.cached_line(1), Some("let x = 1;"));
+        assert_eq!(content.cached_line(2), Some(""));
 
         tab.clear_dirty();
         assert!(!tab.is_dirty());

@@ -437,6 +437,63 @@ impl LspState {
 }
 
 impl EditorState {
+    /// 冰冻态：关停全部 LSP 服务器子进程释放内存（rust-analyzer 可达 GB 级）。
+    /// 诊断/补全数据一并清空（预期行为，重启后自动恢复）。
+    pub(crate) fn freeze_lsp(&mut self) {
+        if self.lsp.frozen {
+            return;
+        }
+        self.lsp.frozen = true;
+        // legacy 工作区级客户端（rust-analyzer）优雅关停
+        if let (Some(client), Some(runtime)) = (
+            self.lsp.legacy_lsp_client.clone(),
+            self.lsp.legacy_runtime.as_ref(),
+        ) {
+            runtime.spawn(async move {
+                let _ = client.shutdown_all().await;
+            });
+        }
+        // 按文档启动的服务器优雅关停
+        let client = self.lsp.client.clone();
+        self.lsp.tokio_runtime.spawn(async move {
+            let _ = client.shutdown_all().await;
+        });
+        // 清空诊断与补全状态（避免显示过期信息并释放内存）
+        self.diagnostics.clear();
+        self.lsp.diagnostics.clear();
+        self.lsp.completion_items.clear();
+        self.lsp.completion_visible = false;
+        tracing::info!("LSP 已冰冻：语言服务器子进程关停");
+    }
+
+    /// 冰冻后的首次编辑/打开文件：延迟重启语言服务器并提示状态栏。
+    /// rust-analyzer 索引期间避免用户误以为补全/诊断功能损坏，
+    /// ServerReady 事件到达后状态栏自动替换为就绪提示。
+    pub(crate) fn thaw_lsp_on_demand(&mut self) {
+        if !self.lsp.frozen {
+            return;
+        }
+        self.lsp.frozen = false;
+        self.status_message = "语言服务恢复中…".to_string();
+        // 工作区级 rust-analyzer 重新初始化（内部按需拉起）
+        if let Some(folder) = self.current_folder.clone() {
+            self.lsp.init(&folder);
+        }
+        // 重新宣告当前文档（按需启动 server + 全量 did_open）
+        self.lsp.notify_open(&self.content);
+        tracing::info!("LSP 解冻：语言服务器延迟重启已触发");
+    }
+
+    /// 编辑后通知 LSP；冰冻态先解冻重启服务器。
+    /// 解冻路径内 notify_open 已全量宣告最新内容，无需再发 did_change。
+    pub(crate) fn lsp_notify_change_thawed(&mut self) {
+        if self.lsp.frozen {
+            self.thaw_lsp_on_demand();
+            return;
+        }
+        self.lsp.notify_change(&self.content);
+    }
+
     /// 接受当前选中的补全项（Enter 键）。
     /// 将光标移回触发位置，删除已输入的过滤文本，插入补全项的 insert_text 或 label。
     pub(crate) fn completion_accept(&mut self) {

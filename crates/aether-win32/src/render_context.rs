@@ -222,4 +222,11 @@ impl RenderContext {
         self.brush_cache.clear();
         self.text_format_cache.clear();
     }
+
+    /// 冰冻态资源释放：复用设备丢失路径清空 target/画刷/文本格式缓存，
+    /// 并额外清空 TextLayout 缓存。唤醒后由渲染路径按需重建。
+    pub fn release_for_suspend(&mut self) {
+        self.handle_device_lost();
+        self.text_layout_cache.clear();
+    }
 }

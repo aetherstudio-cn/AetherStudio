@@ -104,8 +104,7 @@ impl FindState {
         let pos = content.buffer.line_start_byte(line) + col;
         let end_pos = pos + self.query.len();
 
-        let before_pieces = content.buffer.get_pieces();
-        let before_add_len = content.buffer.add_buffer_len();
+        let old_text = content.buffer.get_text(pos, end_pos);
         let cursor_before = CursorPosition::new(content.cursor_line, content.cursor_col);
 
         content.buffer.delete(pos, end_pos);
@@ -116,14 +115,12 @@ impl FindState {
         content.cursor_line = line;
         content.cursor_col = col + self.replace_text.len();
         let cursor_after = CursorPosition::new(content.cursor_line, content.cursor_col);
-        content.history.record(
-            before_pieces,
-            before_add_len,
+        content.history.record_replace(
+            pos,
+            old_text,
+            &self.replace_text,
             cursor_before,
             cursor_after,
-            OpType::Insert,
-            pos,
-            self.replace_text.len(),
         );
 
         // 重新查找
@@ -202,22 +199,19 @@ impl EditorState {
         for pos in global_offsets {
             let end_pos = pos + query_len;
 
-            // REQ-P0-02: 每次替换前记录缓冲区状态
-            let before_pieces = self.content.buffer.get_pieces();
-            let before_add_len = self.content.buffer.add_buffer_len();
+            // REQ-P0-02: 捕获被替换的原文本，供差分撤销使用
+            let old_text = self.content.buffer.get_text(pos, end_pos);
 
             self.content.buffer.delete(pos, end_pos);
             self.content.buffer.insert(pos, &replace_text);
 
             // REQ-P0-02: 记录每次替换的编辑历史
-            self.content.history.record(
-                before_pieces,
-                before_add_len,
-                cursor_before,
-                cursor_before,
-                OpType::Replace,
+            self.content.history.record_replace(
                 pos,
-                replace_text.len(),
+                old_text,
+                &replace_text,
+                cursor_before,
+                cursor_before,
             );
         }
 

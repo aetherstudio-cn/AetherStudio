@@ -479,7 +479,8 @@ unsafe fn omm_file_tree_hover(
         }
     } else {
         let old = st.hover_file_node.take();
-        old.is_some()
+        let old_root = std::mem::take(&mut st.hover_file_tree_root);
+        old.is_some() || old_root
     }
 }
 

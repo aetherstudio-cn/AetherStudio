@@ -10,30 +10,14 @@ impl MarkdownLexer {
 
     fn lex_next(&self, bytes: &[u8], pos: usize) -> (LexemeSpan, usize) {
         if pos >= bytes.len() {
-            return (
-                LexemeSpan {
-                    start: pos,
-                    len: 0,
-                    kind: TokenKind::EOF,
-                    flags: 0,
-                },
-                pos,
-            );
+            return (LexemeSpan::new(pos, 0, TokenKind::EOF), pos);
         }
 
         let ch = bytes[pos];
 
         // 处理换行符
         if ch == b'\n' {
-            return (
-                LexemeSpan {
-                    start: pos,
-                    len: 1,
-                    kind: TokenKind::Newline,
-                    flags: 0,
-                },
-                pos + 1,
-            );
+            return (LexemeSpan::new(pos, 1, TokenKind::Newline), pos + 1);
         }
 
         // 检测标题
@@ -47,8 +31,8 @@ impl MarkdownLexer {
                 let end = skip_to_line_end(bytes, i);
                 return (
                     LexemeSpan {
-                        start: pos,
-                        len: end - pos,
+                        start: pos as u32,
+                        len: (end - pos) as u32,
                         kind: TokenKind::MdHeading,
                         flags: level as u8,
                     },
@@ -60,44 +44,20 @@ impl MarkdownLexer {
         // 检测代码块标记 ```
         if ch == b'`' && pos + 2 < bytes.len() && bytes[pos + 1] == b'`' && bytes[pos + 2] == b'`' {
             let end = skip_to_line_end(bytes, pos);
-            return (
-                LexemeSpan {
-                    start: pos,
-                    len: end - pos,
-                    kind: TokenKind::MdCode,
-                    flags: 0,
-                },
-                end,
-            );
+            return (LexemeSpan::new(pos, end - pos, TokenKind::MdCode), end);
         }
 
         // 检测行内代码 `
         if ch == b'`' {
             let end = skip_inline_code(bytes, pos);
-            return (
-                LexemeSpan {
-                    start: pos,
-                    len: end - pos,
-                    kind: TokenKind::MdCode,
-                    flags: 0,
-                },
-                end,
-            );
+            return (LexemeSpan::new(pos, end - pos, TokenKind::MdCode), end);
         }
 
         // 检测链接 [text](url)
         if ch == b'[' {
             let end = skip_link(bytes, pos);
             if end > pos + 1 {
-                return (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::MdLink,
-                        flags: 0,
-                    },
-                    end,
-                );
+                return (LexemeSpan::new(pos, end - pos, TokenKind::MdLink), end);
             }
         }
 
@@ -114,8 +74,8 @@ impl MarkdownLexer {
                 if end > pos + count * 2 {
                     return (
                         LexemeSpan {
-                            start: pos,
-                            len: end - pos,
+                            start: pos as u32,
+                            len: (end - pos) as u32,
                             kind: TokenKind::MdEmphasis,
                             flags: count as u8,
                         },
@@ -131,15 +91,7 @@ impl MarkdownLexer {
             && bytes[pos + 1] == b' '
         {
             let end = skip_to_line_end(bytes, pos);
-            return (
-                LexemeSpan {
-                    start: pos,
-                    len: end - pos,
-                    kind: TokenKind::Punctuation,
-                    flags: 0,
-                },
-                end,
-            );
+            return (LexemeSpan::new(pos, end - pos, TokenKind::Punctuation), end);
         }
 
         // 检测有序列表 1. 2. 等
@@ -150,15 +102,7 @@ impl MarkdownLexer {
             }
             if i < bytes.len() && bytes[i] == b'.' && i + 1 < bytes.len() && bytes[i + 1] == b' ' {
                 let end = skip_to_line_end(bytes, pos);
-                return (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::Punctuation,
-                        flags: 0,
-                    },
-                    end,
-                );
+                return (LexemeSpan::new(pos, end - pos, TokenKind::Punctuation), end);
             }
         }
 
@@ -166,29 +110,13 @@ impl MarkdownLexer {
         if ch == b'<' {
             let end = skip_html_tag(bytes, pos);
             if end > pos + 1 {
-                return (
-                    LexemeSpan {
-                        start: pos,
-                        len: end - pos,
-                        kind: TokenKind::MdCode,
-                        flags: 0,
-                    },
-                    end,
-                );
+                return (LexemeSpan::new(pos, end - pos, TokenKind::MdCode), end);
             }
         }
 
         // 默认：普通文本
         let end = skip_plain_text(bytes, pos);
-        (
-            LexemeSpan {
-                start: pos,
-                len: end - pos,
-                kind: TokenKind::Unknown,
-                flags: 0,
-            },
-            end,
-        )
+        (LexemeSpan::new(pos, end - pos, TokenKind::Unknown), end)
     }
 }
 

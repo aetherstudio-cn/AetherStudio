@@ -40,6 +40,7 @@ pub mod memory_store;
 pub mod menu_bar;
 pub mod new_project_dialog;
 pub mod open_tabs;
+pub mod power;
 pub mod recent_projects;
 pub mod reflector;
 pub mod render;
