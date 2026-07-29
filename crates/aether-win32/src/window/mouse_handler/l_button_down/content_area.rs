@@ -519,18 +519,20 @@ unsafe fn lbd_right_panel_tabs(
                 .unwrap_or(false)
         };
         if clear_hit {
-            let mut st = state.borrow_mut();
+            // 注意：MessageBoxW 是模态的，会运行内部消息循环并向主窗口分发
+            // WM_PAINT 等消息（触发 state.borrow()）。因此必须在弹框「之前」
+            // 释放所有 RefCell 借用，否则会 already-borrowed panic 导致闪退。
             if crate::dialogs::Dialogs::confirm_yes_no(
                 hwnd,
                 "清空历史记录",
                 "确定清空全部历史对话吗？此操作不可恢复。",
             ) {
+                let mut st = state.borrow_mut();
                 match st.ai_panel.clear_all_history() {
                     Ok(n) => st.status_message = format!("已清空 {} 条历史记录", n),
                     Err(e) => st.status_message = format!("清空历史失败: {}", e),
                 }
             }
-            drop(st);
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
@@ -619,20 +621,23 @@ unsafe fn lbd_right_panel_tabs(
             }
         };
         if let Some(i) = del_hit {
-            let mut st = state.borrow_mut();
-            let title = st
-                .ai_panel
-                .history
-                .get(i)
-                .map(|m| m.title.clone())
-                .unwrap_or_default();
+            // 先在短借用作用域内取出标题，随后释放借用再弹模态框
+            // （MessageBoxW 会跑消息循环触发 borrow，持有借用弹框会 panic 闪退）。
+            let title = {
+                let st = state.borrow();
+                st.ai_panel
+                    .history
+                    .get(i)
+                    .map(|m| m.title.clone())
+                    .unwrap_or_default()
+            };
             let msg = format!("确定删除这条历史对话吗？\n\n{}", title);
             if crate::dialogs::Dialogs::confirm_yes_no(hwnd, "删除历史记录", &msg) {
+                let mut st = state.borrow_mut();
                 if let Err(e) = st.ai_panel.delete_history_item(i) {
                     st.status_message = format!("删除历史失败: {}", e);
                 }
             }
-            drop(st);
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
@@ -697,20 +702,22 @@ unsafe fn lbd_right_panel_tabs(
             }
         };
         if let Some(i) = del_hit {
-            let mut st = state.borrow_mut();
-            let content = st
-                .ai_panel
-                .playbook_items
-                .get(i)
-                .map(|b| b.content.clone())
-                .unwrap_or_default();
+            // 同上：先取内容并释放借用，再弹模态框，避免 already-borrowed 闪退。
+            let content = {
+                let st = state.borrow();
+                st.ai_panel
+                    .playbook_items
+                    .get(i)
+                    .map(|b| b.content.clone())
+                    .unwrap_or_default()
+            };
             let msg = format!("确定删除这条策略吗？\n\n{}", content);
             if crate::dialogs::Dialogs::confirm_yes_no(hwnd, "删除策略条目", &msg) {
+                let mut st = state.borrow_mut();
                 if let Err(e) = st.ai_panel.delete_playbook_item(i) {
                     st.status_message = format!("删除策略失败: {}", e);
                 }
             }
-            drop(st);
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
@@ -805,10 +812,19 @@ unsafe fn lbd_right_panel_ai_controls(
         if hit {
             // 弹出系统文件夹选择对话框
             if let Some(path) = Dialogs::open_folder_dialog(hwnd, "选择工作区文件夹") {
-                let mut st = state.borrow_mut();
-                st.open_folder(path.clone());
-                st.status_message = format!("已打开: {}", path.display());
-                drop(st);
+                // 信任确认框（模态）必须在获取 borrow_mut 之前弹出：
+                // 模态消息循环会触发 WM_PAINT→渲染再次 state.borrow()，
+                // 若此时已持有 borrow_mut 会导致 RefCell 双重借用 panic → 静默崩溃。
+                if !EditorState::ensure_folder_trusted(hwnd, &path) {
+                    let mut st = state.borrow_mut();
+                    st.status_message = "已取消打开不受信任的工作区".to_string();
+                    drop(st);
+                } else {
+                    let mut st = state.borrow_mut();
+                    st.open_folder(path.clone());
+                    st.status_message = format!("已打开: {}", path.display());
+                    drop(st);
+                }
             }
             invalidate_window(hwnd);
             return Some(LRESULT(0));

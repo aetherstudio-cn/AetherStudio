@@ -72,7 +72,7 @@ impl EditorState {
             let user_bg_brush = match self
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.13, 0.19, 0.28, 1.0))
+                .get_brush(target, &color_f(0.125, 0.204, 0.306, 1.0))
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -80,7 +80,7 @@ impl EditorState {
             let assistant_bg_brush = match self
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.16, 0.17, 0.20, 1.0))
+                .get_brush(target, &color_f(0.129, 0.141, 0.161, 1.0))
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -88,7 +88,7 @@ impl EditorState {
             let input_bg_brush = match self
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.11, 0.12, 0.14, 1.0))
+                .get_brush(target, &color_f(0.102, 0.110, 0.125, 1.0))
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -96,7 +96,7 @@ impl EditorState {
             let sep_brush = match self
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.22, 0.24, 0.28, 1.0))
+                .get_brush(target, &color_f(0.173, 0.188, 0.220, 1.0))
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -104,7 +104,7 @@ impl EditorState {
             let accent_brush = match self
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
+                .get_brush(target, &color_f(0.239, 0.545, 0.992, 1.0))
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -128,7 +128,7 @@ impl EditorState {
             let code_bg_brush = match self
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.08, 0.08, 0.09, 1.0))
+                .get_brush(target, &color_f(0.082, 0.090, 0.106, 1.0))
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -185,9 +185,9 @@ impl EditorState {
                     bottom: hb_y + hb_h,
                 };
                 let hb_bg = if self.ai_panel.history_open {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    color_f(0.239, 0.545, 0.992, 1.0)
                 } else {
-                    color_f(0.20, 0.21, 0.24, 1.0)
+                    color_f(0.165, 0.180, 0.208, 1.0)
                 };
                 if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &hb_bg) {
                     fill_round_rect(target, &hb_rect, 4.0, &b);
@@ -223,9 +223,9 @@ impl EditorState {
                     bottom: pb_y + pb_h,
                 };
                 let pb_bg = if self.ai_panel.playbook_open {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    color_f(0.239, 0.545, 0.992, 1.0)
                 } else {
-                    color_f(0.20, 0.21, 0.24, 1.0)
+                    color_f(0.165, 0.180, 0.208, 1.0)
                 };
                 if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &pb_bg) {
                     fill_round_rect(target, &pb_rect, 4.0, &b);
@@ -424,7 +424,7 @@ impl EditorState {
                 let n = self.ai_panel.playbook_items.len().min(max_items);
                 let list_h = header_h + n as f32 * item_h + 8.0;
                 // 面板背景与边框
-                let pb_bg = color_f(0.12, 0.12, 0.14, 1.0);
+                let pb_bg = color_f(0.102, 0.110, 0.125, 1.0);
                 let panel_rect = D2D_RECT_F {
                     left: x + margin,
                     top: pb_y,
@@ -541,7 +541,7 @@ impl EditorState {
             // ===== 欢迎页/空工作区提示 =====
             let has_workspace = self.current_folder.is_some() || self.content.file_path.is_some();
             if !has_workspace {
-                let hint_bg_color = color_f(0.15, 0.15, 0.17, 1.0);
+                let hint_bg_color = color_f(0.129, 0.141, 0.161, 1.0);
                 let hint_bg_brush = match self
                     .render_ctx
                     .brush_cache
@@ -591,7 +591,7 @@ impl EditorState {
                 let open_btn_brush = match self
                     .render_ctx
                     .brush_cache
-                    .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
+                    .get_brush(target, &color_f(0.239, 0.545, 0.992, 1.0))
                 {
                     Ok(b) => b,
                     Err(_) => return,
@@ -1041,7 +1041,7 @@ impl EditorState {
                                             if let Ok(pb) = self
                                                 .render_ctx
                                                 .brush_cache
-                                                .get_brush(target, &color_f(0.12, 0.12, 0.14, 1.0))
+                                                .get_brush(target, &color_f(0.102, 0.110, 0.125, 1.0))
                                             {
                                                 fill_round_rect(
                                                     target,
@@ -1355,7 +1355,7 @@ impl EditorState {
                 let apply_bg_color = if self.ai_panel.hover_apply_button {
                     color_f(0.0, 0.55, 0.95, 1.0)
                 } else {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    color_f(0.239, 0.545, 0.992, 1.0)
                 };
                 let apply_bg_brush = match self
                     .render_ctx
@@ -1437,7 +1437,7 @@ impl EditorState {
 
             // 卡片描边：聚焦时切换为强调色，提供明确的焦点视觉反馈
             let card_border_color = if self.ai_panel.input_focused {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                color_f(0.239, 0.545, 0.992, 1.0)
             } else {
                 color_f(0.24, 0.26, 0.30, 1.0)
             };
@@ -1605,12 +1605,12 @@ impl EditorState {
             // 4. 底部工具栏
             let toolbar_y = toolbar_sep_y + 4.0;
             let toolbar_h = 26.0f32;
-            let btn_bg = color_f(0.18, 0.18, 0.20, 1.0);
+            let btn_bg = color_f(0.165, 0.180, 0.208, 1.0);
             let btn_bg_brush = match self.render_ctx.brush_cache.get_brush(target, &btn_bg) {
                 Ok(b) => b,
                 Err(_) => return,
             };
-            let btn_hover_bg = color_f(0.25, 0.25, 0.28, 1.0);
+            let btn_hover_bg = color_f(0.216, 0.231, 0.263, 1.0);
             let _btn_hover_brush =
                 match self.render_ctx.brush_cache.get_brush(target, &btn_hover_bg) {
                     Ok(b) => b,
@@ -1707,7 +1707,7 @@ impl EditorState {
                     let menu_h = models.len() as f32 * item_h + 8.0;
                     let menu_top = menu_bottom - menu_h;
                     // 弹层背景 + 边框
-                    let menu_bg = color_f(0.15, 0.15, 0.17, 1.0);
+                    let menu_bg = color_f(0.129, 0.141, 0.161, 1.0);
                     if let Ok(menu_bg_brush) =
                         self.render_ctx.brush_cache.get_brush(target, &menu_bg)
                     {
@@ -1794,7 +1794,7 @@ impl EditorState {
                 right: send_btn_x + send_btn_size,
                 bottom: send_btn_y + send_btn_size,
             };
-            let send_bg = color_f(0.0, 0.47, 0.83, 1.0);
+            let send_bg = color_f(0.239, 0.545, 0.992, 1.0);
             let send_bg_brush = match self.render_ctx.brush_cache.get_brush(target, &send_bg) {
                 Ok(b) => b,
                 Err(_) => return,
@@ -1970,7 +1970,7 @@ impl EditorState {
                     if let Ok(hb) = self
                         .render_ctx
                         .brush_cache
-                        .get_brush(target, &color_f(0.12, 0.12, 0.14, 1.0))
+                        .get_brush(target, &color_f(0.102, 0.110, 0.125, 1.0))
                     {
                         target.FillRectangle(&hist_rect, &hb);
                     }
@@ -2005,7 +2005,7 @@ impl EditorState {
                             if let Ok(b) = self
                                 .render_ctx
                                 .brush_cache
-                                .get_brush(target, &color_f(0.20, 0.21, 0.24, 1.0))
+                                .get_brush(target, &color_f(0.165, 0.180, 0.208, 1.0))
                             {
                                 target.FillRectangle(
                                     &D2D_RECT_F {
@@ -2264,9 +2264,9 @@ impl EditorState {
                                 let bw = 34.0f32;
                                 let active = self.ai_panel.history_time_filter == *f;
                                 let bg = if active {
-                                    color_f(0.0, 0.47, 0.83, 1.0)
+                                    color_f(0.239, 0.545, 0.992, 1.0)
                                 } else {
-                                    color_f(0.20, 0.21, 0.24, 1.0)
+                                    color_f(0.165, 0.180, 0.208, 1.0)
                                 };
                                 if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &bg) {
                                     target.FillRectangle(
@@ -2314,9 +2314,9 @@ impl EditorState {
                                 let bw = 38.0f32;
                                 let active = self.ai_panel.history_type_filter.as_deref() == *tf;
                                 let bg = if active {
-                                    color_f(0.0, 0.47, 0.83, 1.0)
+                                    color_f(0.239, 0.545, 0.992, 1.0)
                                 } else {
-                                    color_f(0.20, 0.21, 0.24, 1.0)
+                                    color_f(0.165, 0.180, 0.208, 1.0)
                                 };
                                 if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &bg) {
                                     target.FillRectangle(
@@ -2514,7 +2514,7 @@ impl EditorState {
                             let prev_enabled = self.ai_panel.history_page > 0;
                             let px = panel_left + 4.0;
                             let prev_bg = if prev_enabled {
-                                color_f(0.20, 0.21, 0.24, 1.0)
+                                color_f(0.165, 0.180, 0.208, 1.0)
                             } else {
                                 color_f(0.14, 0.14, 0.16, 1.0)
                             };
@@ -2584,7 +2584,7 @@ impl EditorState {
                             let next_enabled = page < pc;
                             let nx = panel_right - 4.0 - pw;
                             let next_bg = if next_enabled {
-                                color_f(0.20, 0.21, 0.24, 1.0)
+                                color_f(0.165, 0.180, 0.208, 1.0)
                             } else {
                                 color_f(0.14, 0.14, 0.16, 1.0)
                             };

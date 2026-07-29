@@ -71,7 +71,11 @@ unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
 /// AI 温数据归档：周期检查空闲会话并异步归档进 MemoryStore（SQLite）
 unsafe fn on_timer_ai_archive(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
-        state.borrow_mut().ai_panel.trigger_warm_archive();
+        // try_borrow_mut：定时器可能在模态框消息循环期间触发，此时主流程正持有借用，
+        // 用 borrow_mut() 会双重借用 panic。归档非关键，重入时跳过本次即可。
+        if let Ok(mut st) = state.try_borrow_mut() {
+            st.ai_panel.trigger_warm_archive();
+        }
     }
     LRESULT(0)
 }
@@ -647,11 +651,16 @@ pub(crate) unsafe fn on_paint(hwnd: HWND, _msg: u32, _wparam: WPARAM, _lparam: L
 
     // REQ-P1-??: Windows 触发 WM_PAINT（如 InvalidateRect）时，若内部脏区追踪为空，
     // 强制标记全窗口重绘。否则 render() 会跳过绘制，导致上一帧内容残留（重影）。
+    //
+    // 使用 try_borrow_mut() 防止模态对话框/消息循环重入时 panic（同 on_set_focus 范式）：
+    // 若某处正持有 EditorState 借用时触发了嵌套消息分发（如模态框弹出→WM_PAINT），
+    // borrow_mut() 会 RefCell 双重借用 panic。重入时跳过脏区标记即可，本次绘制照常进行。
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            let mut st = state.borrow_mut();
-            if !st.dirty_tracker.has_dirty() {
-                st.dirty_tracker.mark_full_window();
+            if let Ok(mut st) = state.try_borrow_mut() {
+                if !st.dirty_tracker.has_dirty() {
+                    st.dirty_tracker.mark_full_window();
+                }
             }
         }
     });
@@ -662,7 +671,10 @@ pub(crate) unsafe fn on_paint(hwnd: HWND, _msg: u32, _wparam: WPARAM, _lparam: L
     let render_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().render();
+                // try_borrow_mut：模态框/消息循环重入时跳过本次渲染，避免双重借用 panic。
+                if let Ok(mut st) = state.try_borrow_mut() {
+                    st.render();
+                }
             }
         });
     }));

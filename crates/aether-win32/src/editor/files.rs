@@ -298,6 +298,29 @@ impl EditorState {
             }
         }
     }
+    /// 确保文件夹已被信任：未信任则弹出模态确认框。
+    /// 返回 true 表示已信任（或用户本次选择信任），false 表示用户拒绝。
+    ///
+    /// 关键：本函数**不接收 `&self`**，也不触碰任何 `RefCell<EditorState>`。
+    /// 因为内部 `confirm_yes_no` 会启动模态消息循环，期间 WM_PAINT 会让渲染再次
+    /// `state.borrow()`。调用方必须在**未持有** state 借用时调用本函数，
+    /// 否则会触发 RefCell 双重借用 panic（panic=abort 下表现为静默崩溃）。
+    pub fn ensure_folder_trusted(hwnd: HWND, path: &std::path::Path) -> bool {
+        if crate::dialogs::trusted_folders::is_trusted(path) {
+            return true;
+        }
+        let title = "工作区信任";
+        let msg = format!(
+            "是否信任此文件夹中的代码作者？\n\n{}\n\n\
+             信任后将允许执行 Git 检测、LSP、插件等可能运行该目录中代码的功能。",
+            path.display()
+        );
+        if !Dialogs::confirm_yes_no(hwnd, title, &msg) {
+            return false;
+        }
+        crate::dialogs::trusted_folders::add_trusted(path);
+        true
+    }
     pub fn open_folder(&mut self, path: PathBuf) {
         // 异步扫描：先快速同步验证路径可读，再启动后台线程扫描根层
         // 同步预检避免无效路径白白启动线程
@@ -308,19 +331,13 @@ impl EditorState {
             return;
         }
 
-        // 工作区信任检查：未信任目录先弹窗询问
-        if !crate::dialogs::trusted_folders::is_trusted(&path) {
-            let title = "工作区信任";
-            let msg = format!(
-                "是否信任此文件夹中的代码作者？\n\n{}\n\n\
-                 信任后将允许执行 Git 检测、LSP、插件等可能运行该目录中代码的功能。",
-                path.display()
-            );
-            if !Dialogs::confirm_yes_no(self.hwnd, title, &msg) {
-                self.status_message = "已取消打开不受信任的工作区".to_string();
-                return;
-            }
-            crate::dialogs::trusted_folders::add_trusted(&path);
+        // 工作区信任检查：未信任目录先弹窗询问。
+        // 注意：ensure_folder_trusted 内部可能弹出模态框，仅当调用方未持有 state 借用时安全。
+        // 交互式入口（AI 面板浏览按钮等）应在获取借用前先调用 ensure_folder_trusted；
+        // 此处保留作为其它调用路径（启动恢复/克隆/刷新）的信任兜底。
+        if !Self::ensure_folder_trusted(self.hwnd, &path) {
+            self.status_message = "已取消打开不受信任的工作区".to_string();
+            return;
         }
 
         // 设置 loading 状态，立即重绘显示 spinner
