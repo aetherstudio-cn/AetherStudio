@@ -65,7 +65,7 @@ impl EditorState {
                 .unwrap();
 
             // 整体背景（右侧内容区）
-            let content_bg = color_f(0.12, 0.12, 0.12, 1.0);
+            let content_bg = color_f(0.129, 0.141, 0.161, 1.0);
             let content_bg_brush = self
                 .render_ctx
                 .brush_cache
@@ -86,7 +86,7 @@ impl EditorState {
             let nav_h = height;
 
             // 导航栏背景（稍亮，与右侧区分）
-            let nav_bg = color_f(0.10, 0.10, 0.10, 1.0);
+            let nav_bg = color_f(0.086, 0.094, 0.125, 1.0);
             let nav_bg_brush = self
                 .render_ctx
                 .brush_cache
@@ -101,7 +101,7 @@ impl EditorState {
             target.FillRectangle(&nav_bg_rect, &nav_bg_brush);
 
             // 右侧分隔线
-            let sep_color = color_f(0.2, 0.2, 0.2, 1.0);
+            let sep_color = color_f(0.173, 0.188, 0.220, 1.0);
             let sep_brush = self
                 .render_ctx
                 .brush_cache
@@ -117,7 +117,7 @@ impl EditorState {
 
             // 调整手柄：悬停或拖拽时高亮
             if self.settings_panel.hover_nav_resize || self.settings_panel.nav_resizing {
-                let handle_color = color_f(0.0, 0.47, 0.83, 1.0);
+                let handle_color = color_f(0.239, 0.545, 0.992, 1.0);
                 let handle_brush = self
                     .render_ctx
                     .brush_cache
@@ -170,11 +170,11 @@ impl EditorState {
                 let is_hover = self.settings_panel.hover_tab == Some(*tab);
 
                 let item_bg = if is_active {
-                    color_f(0.18, 0.30, 0.45, 1.0)
+                    color_f(0.125, 0.204, 0.306, 1.0)
                 } else if is_hover {
-                    color_f(0.20, 0.20, 0.22, 1.0)
+                    color_f(0.165, 0.180, 0.208, 1.0)
                 } else {
-                    color_f(0.10, 0.10, 0.10, 0.0)
+                    color_f(0.086, 0.094, 0.125, 0.0)
                 };
                 let item_bg_brush = self
                     .render_ctx
@@ -191,7 +191,7 @@ impl EditorState {
 
                 // 激活状态左侧高亮条
                 if is_active {
-                    let accent = color_f(0.0, 0.47, 0.83, 1.0);
+                    let accent = color_f(0.239, 0.545, 0.992, 1.0);
                     let accent_brush = self
                         .render_ctx
                         .brush_cache
@@ -472,7 +472,7 @@ impl EditorState {
             cy += 40.0;
 
             // 分隔线
-            let sep_color = color_f(0.2, 0.2, 0.2, 1.0);
+            let sep_color = color_f(0.173, 0.188, 0.220, 1.0);
             let sep_brush = self
                 .render_ctx
                 .brush_cache

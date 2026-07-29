@@ -41,7 +41,7 @@ impl EditorState {
 
             // 信息卡片：左侧强调色条 + 说明文字（对比度提高，两行自适应）
             let card_h = 56.0_f32;
-            let card_bg = color_f(0.16, 0.18, 0.22, 1.0);
+            let card_bg = color_f(0.129, 0.141, 0.161, 1.0);
             let card_bg_brush = self
                 .render_ctx
                 .brush_cache
@@ -54,7 +54,7 @@ impl EditorState {
                 bottom: cy + card_h,
             };
             target.FillRectangle(&card_rect, &card_bg_brush);
-            let accent = color_f(0.0, 0.47, 0.83, 1.0);
+            let accent = color_f(0.239, 0.545, 0.992, 1.0);
             let accent_brush = self
                 .render_ctx
                 .brush_cache
@@ -160,14 +160,14 @@ impl EditorState {
             cy += label_h;
             let apikey_focused =
                 self.settings_panel.active_field == Some(crate::settings::SettingsField::ApiKey);
-            let apikey_bg = color_f(0.18, 0.18, 0.18, 1.0);
+            let apikey_bg = color_f(0.165, 0.180, 0.208, 1.0);
             let apikey_bg_brush = self
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &apikey_bg)
                 .unwrap();
             let apikey_border = if apikey_focused {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                color_f(0.239, 0.545, 0.992, 1.0)
             } else {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
@@ -287,7 +287,7 @@ impl EditorState {
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
                 cy += label_h;
-                let baseurl_bg = color_f(0.18, 0.18, 0.18, 1.0);
+                let baseurl_bg = color_f(0.165, 0.180, 0.208, 1.0);
                 let baseurl_bg_brush = self
                     .render_ctx
                     .brush_cache
@@ -296,7 +296,7 @@ impl EditorState {
                 let baseurl_border = if self.settings_panel.active_field
                     == Some(crate::settings::SettingsField::BaseUrl)
                 {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    color_f(0.239, 0.545, 0.992, 1.0)
                 } else {
                     color_f(0.3, 0.3, 0.3, 1.0)
                 };
@@ -418,9 +418,9 @@ impl EditorState {
                 let box_y = cy;
                 let checked = self.settings_panel.thinking;
                 let box_bg = if checked {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    color_f(0.239, 0.545, 0.992, 1.0)
                 } else {
-                    color_f(0.18, 0.18, 0.18, 1.0)
+                    color_f(0.165, 0.180, 0.208, 1.0)
                 };
                 if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &box_bg) {
                     target.FillRectangle(
@@ -532,7 +532,7 @@ impl EditorState {
                 },
                 &track_bg_brush,
             );
-            let track_fill = color_f(0.0, 0.47, 0.83, 1.0);
+            let track_fill = color_f(0.239, 0.545, 0.992, 1.0);
             let track_fill_brush = self
                 .render_ctx
                 .brush_cache
@@ -594,12 +594,12 @@ impl EditorState {
             let maxin_bg_brush = self
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.18, 0.18, 0.18, 1.0))
+                .get_brush(target, &color_f(0.165, 0.180, 0.208, 1.0))
                 .unwrap();
             let maxin_border = if !maxin_valid {
                 color_f(0.85, 0.30, 0.30, 1.0)
             } else if maxin_focused {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                color_f(0.239, 0.545, 0.992, 1.0)
             } else {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
@@ -713,7 +713,7 @@ impl EditorState {
             cy += label_h;
             let maxtok_focused =
                 self.settings_panel.active_field == Some(crate::settings::SettingsField::MaxTokens);
-            let maxtok_bg = color_f(0.18, 0.18, 0.18, 1.0);
+            let maxtok_bg = color_f(0.165, 0.180, 0.208, 1.0);
             let maxtok_bg_brush = self
                 .render_ctx
                 .brush_cache
@@ -722,7 +722,7 @@ impl EditorState {
             let maxtok_border = if !maxtok_valid {
                 color_f(0.85, 0.30, 0.30, 1.0)
             } else if maxtok_focused {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                color_f(0.239, 0.545, 0.992, 1.0)
             } else {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
@@ -831,7 +831,7 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
             cy += label_h;
-            let sysp_bg = color_f(0.18, 0.18, 0.18, 1.0);
+            let sysp_bg = color_f(0.165, 0.180, 0.208, 1.0);
             let sysp_bg_brush = self
                 .render_ctx
                 .brush_cache
@@ -840,7 +840,7 @@ impl EditorState {
             let sysp_border = if self.settings_panel.active_field
                 == Some(crate::settings::SettingsField::SystemPrompt)
             {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                color_f(0.239, 0.545, 0.992, 1.0)
             } else {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
@@ -951,7 +951,7 @@ impl EditorState {
             } else if save_hover {
                 color_f(0.0, 0.55, 0.95, 1.0)
             } else {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                color_f(0.239, 0.545, 0.992, 1.0)
             };
             let save_bg_brush = self
                 .render_ctx
@@ -1167,14 +1167,14 @@ impl EditorState {
             let cy = cy + label_h + 4.0;
 
             // 下拉框背景
-            let input_bg = color_f(0.18, 0.18, 0.18, 1.0);
+            let input_bg = color_f(0.165, 0.180, 0.208, 1.0);
             let input_bg_brush = self
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg)
                 .unwrap();
             let input_border = if is_open {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                color_f(0.239, 0.545, 0.992, 1.0)
             } else {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
@@ -1272,20 +1272,20 @@ impl EditorState {
             // 如果展开，渲染下拉项
             if is_open {
                 let item_h = 28.0f32;
-                let item_bg = color_f(0.22, 0.22, 0.24, 1.0);
+                let item_bg = color_f(0.165, 0.180, 0.208, 1.0);
                 let item_bg_brush = self
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &item_bg)
                     .unwrap();
-                let selected_color = color_f(0.14, 0.30, 0.45, 1.0);
+                let selected_color = color_f(0.125, 0.204, 0.306, 1.0);
                 let selected_brush = self
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &selected_color)
                     .unwrap();
                 // 当前已选项的强调色（左侧竖条），与主题强调蓝一致
-                let accent_color = color_f(0.0, 0.47, 0.83, 1.0);
+                let accent_color = color_f(0.239, 0.545, 0.992, 1.0);
                 let accent_brush = self
                     .render_ctx
                     .brush_cache

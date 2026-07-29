@@ -308,6 +308,21 @@ mod tests {
             assert!(trusted_folders::is_trusted(path));
         });
     }
+
+    #[test]
+    fn test_ensure_folder_trusted_shortcircuit() {
+        // ensure_folder_trusted 对已信任目录应直接返回 true，不触发任何模态框。
+        // 这是关键回归测试：必须确保信任检查在借用 state 之前即可完成。
+        // 使用 HWND::default() 是安全的，因为已信任路径不会使用 hwnd 参数。
+        with_temp_appdata(|| {
+            let path = std::path::Path::new("D:\\Trusted\\Project2");
+            trusted_folders::add_trusted(path);
+            assert!(crate::editor::EditorState::ensure_folder_trusted(
+                windows::Win32::Foundation::HWND::default(),
+                path,
+            ));
+        });
+    }
 }
 
 /// 上次打开的文件夹持久化（与 recent_projects 共用 APPDATA/Aether 目录）
