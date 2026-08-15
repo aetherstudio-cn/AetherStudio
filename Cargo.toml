@@ -4,13 +4,17 @@ members = [
     "crates/aether-render",
     "crates/aether-win32",
     "crates/aether-lsp",
-    "crates/aether-tree-sitter",
     "crates/aether-dap",
     "crates/aether-plugin",
     "crates/aether-remote",
     "crates/aether-ai",
     "crates/aether-shared",
     "crates/aether-cli",
+    "crates/aether-editor",
+    "crates/aether-ai-panel",
+    "crates/aether-terminal",
+    "crates/aether-ui",
+    "crates/aether-render-win",
 ]
 resolver = "2"
 

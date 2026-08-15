@@ -45,7 +45,7 @@ pub(crate) unsafe fn on_char(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
             let ime_composing = EDITOR_STATE.with(|s| {
                 s.borrow()
                     .as_ref()
-                    .map(|state| state.borrow().composition.is_some())
+                    .map(|state| state.borrow().editor.composition.is_some())
                     .unwrap_or(false)
             });
             if ime_composing {
@@ -102,26 +102,25 @@ unsafe fn oc_file_tree_input(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().file_tree_input.is_some())
+            .map(|state| state.borrow().fs.file_tree_input.is_some())
             .unwrap_or(false)
     });
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
                 let mut st = state.borrow_mut();
-                let region = st.layout.sidebar_region().clone();
-                if let Some(input) = st.file_tree_input.as_mut() {
+                let region = st.ui.layout.sidebar_region().clone();
+                if let Some(input) = st.fs.file_tree_input.as_mut() {
                     input.value.push(c);
                     input.caret_visible = true;
                 }
-                st.dirty_tracker.mark_region(
+                st.win.dirty_tracker.mark_region(
                     region.x,
                     region.y,
                     region.width,
                     region.height,
                     crate::dirty_rect::DirtyRegionType::Sidebar,
                 );
-                drop(st);
                 invalidate_window(hwnd);
             }
         });
@@ -136,13 +135,13 @@ unsafe fn oc_settings_field(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().settings_panel.active_field.is_some())
+            .map(|state| state.borrow().ui.settings_panel.active_field.is_some())
             .unwrap_or(false)
     });
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().settings_panel.input_char(c);
+                state.borrow_mut().ui.settings_panel.input_char(c);
                 invalidate_window(hwnd);
             }
         });
@@ -157,13 +156,13 @@ unsafe fn oc_sandbox_field(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().sandbox_eval.active_field.is_some())
+            .map(|state| state.borrow().ui.sandbox_eval.active_field.is_some())
             .unwrap_or(false)
     });
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().sandbox_eval.input_char(c);
+                state.borrow_mut().ui.sandbox_eval.input_char(c);
                 invalidate_window(hwnd);
             }
         });
@@ -178,13 +177,13 @@ unsafe fn oc_search_panel(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().search_panel.visible)
+            .map(|state| state.borrow().ui.search_panel.visible)
             .unwrap_or(false)
     });
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().search_panel.input_char(c);
+                state.borrow_mut().ui.search_panel.input_char(c);
                 invalidate_window(hwnd);
             }
         });
@@ -241,14 +240,14 @@ unsafe fn oc_new_project(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().new_project_dialog.visible)
+            .map(|state| state.borrow().ui.new_project_dialog.visible)
             .unwrap_or(false)
     });
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().new_project_dialog.project_name.push(c);
-                state.borrow_mut().new_project_dialog.error_message = None;
+                state.borrow_mut().ui.new_project_dialog.project_name.push(c);
+                state.borrow_mut().ui.new_project_dialog.error_message = None;
                 invalidate_window(hwnd);
             }
         });
@@ -264,7 +263,7 @@ unsafe fn oc_ssh_manager(hwnd: HWND, c: char) -> Option<LRESULT> {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().sidebar_content == crate::layout::SidebarContent::RemoteManagerPanel
+                state.borrow().ui.sidebar_content == crate::layout::SidebarContent::RemoteManagerPanel
                     && state.borrow().remote.ssh_manager_panel.editing
             })
             .unwrap_or(false)
@@ -283,7 +282,6 @@ unsafe fn oc_ssh_manager(hwnd: HWND, c: char) -> Option<LRESULT> {
                     _ => &mut st.remote.ssh_manager_panel.form_name,
                 };
                 field_str.push(c);
-                drop(st);
                 invalidate_window(hwnd);
             }
         });
@@ -298,13 +296,13 @@ unsafe fn oc_command_palette(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().command_palette.visible)
+            .map(|state| state.borrow().ui.command_palette.visible)
             .unwrap_or(false)
     });
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().command_palette.append_query(c);
+                state.borrow_mut().ui.command_palette.append_query(c);
                 invalidate_window(hwnd);
             }
         });
@@ -320,34 +318,34 @@ unsafe fn oc_find_replace(hwnd: HWND, c: char) -> Option<LRESULT> {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().find.visible
-                    && state.borrow().find.focus != crate::editor::FindReplaceFocus::None
+                state.borrow().editor.find.visible
+                    && state.borrow().editor.find.focus != crate::editor::FindReplaceFocus::None
             })
             .unwrap_or(false)
     });
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                let focus = state.borrow().find.focus;
+                let focus = state.borrow().editor.find.focus;
                 match focus {
                     crate::editor::FindReplaceFocus::FindQuery => {
                         {
                             let st = &mut *state.borrow_mut();
-                            st.find.query.push(c);
-                            st.find.find_all(&st.content);
-                            st.find.active_index = 0;
+                            st.editor.find.query.push(c);
+                            st.editor.find.find_all(&st.editor.content);
+                            st.editor.find.active_index = 0;
                         }
-                        if !state.borrow().find.results.is_empty() {
-                            let (line, col) = state.borrow().find.results[0];
-                            state.borrow_mut().content.cursor_line = line;
-                            state.borrow_mut().content.cursor_col = col;
-                            state.borrow_mut().content.selection_start = Some((line, col));
-                            state.borrow_mut().content.selection_end =
-                                Some((line, col + state.borrow().find.query.len()));
+                        if !state.borrow().editor.find.results.is_empty() {
+                            let (line, col) = state.borrow().editor.find.results[0];
+                            state.borrow_mut().editor.content.cursor_line = line;
+                            state.borrow_mut().editor.content.cursor_col = col;
+                            state.borrow_mut().editor.content.selection_start = Some((line, col));
+                            state.borrow_mut().editor.content.selection_end =
+                                Some((line, col + state.borrow().editor.find.query.len()));
                         }
                     }
                     crate::editor::FindReplaceFocus::ReplaceText => {
-                        state.borrow_mut().find.replace_text.push(c);
+                        state.borrow_mut().editor.find.replace_text.push(c);
                     }
                     _ => {}
                 }
@@ -365,7 +363,7 @@ unsafe fn oc_terminal(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().terminal_panel.focused)
+            .map(|state| state.borrow().terminal.terminal_panel.focused)
             .unwrap_or(false)
     });
     tracing::debug!(active, char = %c, "oc_terminal: 检查终端焦点");
@@ -373,17 +371,16 @@ unsafe fn oc_terminal(hwnd: HWND, c: char) -> Option<LRESULT> {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
                 let mut st = state.borrow_mut();
-                st.terminal_panel.send_char(c);
+                st.terminal.terminal_panel.send_char(c);
                 // 标脏底部面板区域：输入回显只需局部重绘终端，避免全窗口重绘导致卡顿
-                let bp = st.layout.bottom_panel_region();
-                st.dirty_tracker.mark_region(
+                let bp = st.ui.layout.bottom_panel_region();
+                st.win.dirty_tracker.mark_region(
                     bp.x,
                     bp.y,
                     bp.width,
                     bp.height,
                     crate::dirty_rect::DirtyRegionType::BottomPanel,
                 );
-                drop(st);
                 invalidate_window(hwnd);
             }
         });
@@ -398,12 +395,12 @@ unsafe fn oc_history_window(hwnd: HWND, c: char) -> Option<LRESULT> {
     let mode = EDITOR_STATE.with(|s| {
         s.borrow().as_ref().and_then(|state| {
             let st = state.borrow();
-            if !st.ai_panel.history_open {
+            if !st.ai.ai_panel.history_open {
                 return None;
             }
-            if st.ai_panel.history_editing_id.is_some() {
+            if st.ai.ai_panel.history_editing_id.is_some() {
                 Some(1u8) // 编辑态
-            } else if st.ai_panel.history_search_focused {
+            } else if st.ai.ai_panel.history_search_focused {
                 Some(2u8) // 搜索态
             } else {
                 None
@@ -414,7 +411,7 @@ unsafe fn oc_history_window(hwnd: HWND, c: char) -> Option<LRESULT> {
         Some(1) => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().ai_panel.history_edit_input_char(c);
+                    state.borrow_mut().ai.ai_panel.history_edit_input_char(c);
                     invalidate_window(hwnd);
                 }
             });
@@ -423,7 +420,7 @@ unsafe fn oc_history_window(hwnd: HWND, c: char) -> Option<LRESULT> {
         Some(2) => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().ai_panel.history_search_input_char(c);
+                    state.borrow_mut().ai.ai_panel.history_search_input_char(c);
                     invalidate_window(hwnd);
                 }
             });
@@ -438,13 +435,13 @@ unsafe fn oc_ai_panel(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().ai_panel.input_focused)
+            .map(|state| state.borrow().ai.ai_panel.input_focused)
             .unwrap_or(false)
     });
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().ai_panel.input_char(c);
+                state.borrow_mut().ai.ai_panel.input_char(c);
                 invalidate_window(hwnd);
             }
         });
@@ -460,13 +457,12 @@ unsafe fn oc_editor_default(hwnd: HWND, c: char) {
         if let Some(state) = s.borrow().as_ref() {
             let mut st = state.borrow_mut();
             // Markdown 预览模式：只读，不响应字符输入
-            if st.content.language == aether_core::lexer::Language::Markdown && st.markdown_preview
+            if st.editor.content.language == aether_core::lexer::Language::Markdown && st.editor.markdown_preview
             {
                 return;
             }
             // P1-1: 多光标模式下广播到所有光标
             st.broadcast_insert_char(c);
-            drop(st);
             invalidate_window(hwnd);
         }
     });

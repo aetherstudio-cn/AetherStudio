@@ -1,0 +1,33 @@
+//! UI 组件：设置面板、欢迎页、命令面板、菜单栏、活动栏、状态栏等
+#![allow(clippy::new_without_default)]
+
+pub mod activity_bar;
+pub mod activity_bar_context_menu;
+pub mod layout;
+pub mod bitmap_loader;
+pub mod command_palette;
+pub mod context_menu;
+pub mod crash_guard;
+pub mod cursor;
+pub mod dialogs;
+pub mod git;
+pub mod hit_test;
+pub mod icons;
+pub(crate) mod icons_svg;
+pub(crate) mod icons_svg_defs;
+pub mod ime;
+pub mod input;
+pub mod logging;
+pub mod menu_bar;
+pub mod new_project_dialog;
+pub mod open_tabs;
+pub mod recent_projects;
+pub mod recycle_bin;
+pub mod search_panel;
+pub mod ssh;
+pub mod status_bar;
+pub mod tab_context_menu;
+pub mod theme;
+pub mod uia;
+pub mod updater;
+pub mod user_menu;

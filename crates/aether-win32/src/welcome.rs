@@ -109,11 +109,11 @@ impl WelcomeLayout {
 
 impl EditorState {
     pub fn show_welcome(&self) -> bool {
-        self.content.file_path.is_none()
-            && self.current_folder.is_none()
-            && self.file_tree.is_none()
-            && !self.content.is_dirty
-            && self.content.buffer.get_all_text().is_empty()
+        self.editor.content.file_path.is_none()
+            && self.fs.current_folder.is_none()
+            && self.fs.file_tree.is_none()
+            && !self.editor.content.is_dirty
+            && self.editor.content.buffer.get_all_text().is_empty()
     }
 
     pub(crate) fn render_empty_placeholder(
@@ -125,15 +125,15 @@ impl EditorState {
         height: f32,
     ) {
         // 确保矢量图标几何已创建
-        self.icons.ensure_created_from_target(target);
+        self.ui.icons.ensure_created_from_target(target);
         // 优先加载 PNG 位图（需要 &mut self，在获取 dwrite 不可变引用之前完成）
         self.ensure_logo_bitmap(target);
-        let dwrite = self.text_renderer.dwrite_factory();
+        let dwrite = self.win.text_renderer.dwrite_factory();
 
         unsafe {
             // 背景统一为编辑区层级色：避免比周围面板更深的"黑洞"观感
             let bg_brush = target
-                .CreateSolidColorBrush(&self.theme.editor_bg, None)
+                .CreateSolidColorBrush(&self.win.theme.editor_bg, None)
                 .unwrap_or_else(|e| {
                     eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
                     panic!("D2D device lost")
@@ -180,7 +180,7 @@ impl EditorState {
             let total_h = logo_size + gap + text_h + hint_block_h;
             let logo_y = center_y - total_h * 0.5;
             // 使用 PNG 位图，加载失败时回退到矢量图标
-            if let Some(ref bitmap) = self.logo_bitmap {
+            if let Some(ref bitmap) = self.win.logo_bitmap {
                 let dest_rect = D2D_RECT_F {
                     left: logo_x,
                     top: logo_y,
@@ -195,7 +195,7 @@ impl EditorState {
                     None,
                 );
             } else {
-                self.icons.draw(
+                self.ui.icons.draw(
                     target,
                     crate::icons::IconKind::EmojiSheep,
                     logo_x,
@@ -328,7 +328,7 @@ impl EditorState {
         width: f32,
         height: f32,
     ) -> Option<WelcomeAction> {
-        let recent_projects = self.recent_projects.list();
+        let recent_projects = self.ui.recent_projects.list();
         let layout = WelcomeLayout::compute(x, y, width, height, recent_projects.len());
         let actions = Self::welcome_actions();
 
@@ -383,12 +383,12 @@ impl EditorState {
         height: f32,
     ) {
         // 确保矢量图标几何已创建（懒加载，仅首次调用时执行）
-        self.icons.ensure_created_from_target(target);
+        self.ui.icons.ensure_created_from_target(target);
         // 优先加载 PNG 位图（需要 &mut self，在获取 dwrite 不可变引用之前完成）
         self.ensure_logo_bitmap(target);
-        let dwrite = self.text_renderer.dwrite_factory();
+        let dwrite = self.win.text_renderer.dwrite_factory();
         let actions = Self::welcome_actions();
-        let recent_projects = self.recent_projects.list();
+        let recent_projects = self.ui.recent_projects.list();
         let has_recent_projects = !recent_projects.is_empty();
         let layout = WelcomeLayout::compute(x, y, width, height, recent_projects.len());
 
@@ -474,7 +474,7 @@ impl EditorState {
             let logo_size = 60.0f32;
             let logo_x = layout.left_col_x;
             let logo_y = y + layout.top_margin;
-            if let Some(ref bitmap) = self.logo_bitmap {
+            if let Some(ref bitmap) = self.win.logo_bitmap {
                 let dest_rect = D2D_RECT_F {
                     left: logo_x,
                     top: logo_y,
@@ -489,7 +489,7 @@ impl EditorState {
                     None,
                 );
             } else {
-                self.icons.draw(
+                self.ui.icons.draw(
                     target,
                     crate::icons::IconKind::EmojiSheep,
                     logo_x,
@@ -622,8 +622,8 @@ impl EditorState {
             for (i, action) in actions.iter().enumerate() {
                 let ay =
                     layout.action_start_y + i as f32 * (layout.action_item_h + layout.action_gap);
-                let is_hovered = self.welcome_hover_action.as_ref() == Some(&action.action);
-                let is_focused = self.welcome_focus_action.as_ref() == Some(&action.action);
+                let is_hovered = self.ui.welcome_hover_action.as_ref() == Some(&action.action);
+                let is_focused = self.ui.welcome_focus_action.as_ref() == Some(&action.action);
 
                 let item_bg = D2D_RECT_F {
                     left: layout.left_col_x,
@@ -657,7 +657,7 @@ impl EditorState {
                         eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
                         panic!("D2D device lost")
                     });
-                self.icons.draw(
+                self.ui.icons.draw(
                     target,
                     action.icon_kind,
                     layout.left_col_x + 8.0,
@@ -832,8 +832,8 @@ impl EditorState {
             for (i, project) in recent_projects.iter().enumerate() {
                 let py = layout.project_start_y + i as f32 * (layout.project_item_h + 8.0);
                 let project_action = WelcomeAction::OpenRecentProject(project.path.clone());
-                let is_hovered = self.welcome_hover_action.as_ref() == Some(&project_action);
-                let is_focused = self.welcome_focus_action.as_ref() == Some(&project_action);
+                let is_hovered = self.ui.welcome_hover_action.as_ref() == Some(&project_action);
+                let is_focused = self.ui.welcome_focus_action.as_ref() == Some(&project_action);
 
                 let proj_bg = D2D_RECT_F {
                     left: layout.right_col_x,
@@ -860,7 +860,7 @@ impl EditorState {
                 } else {
                     &text_brush
                 };
-                self.icons.draw(
+                self.ui.icons.draw(
                     target,
                     crate::icons::IconKind::Folder,
                     layout.right_col_x + 8.0,
@@ -929,7 +929,7 @@ impl EditorState {
                         eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
                         panic!("D2D device lost")
                     });
-                self.icons.draw(
+                self.ui.icons.draw(
                     target,
                     crate::icons::IconKind::Folder,
                     icon_x,
@@ -1027,7 +1027,7 @@ impl EditorState {
                 // 4. "打开文件夹" 按钮：圆角矩形，hover 变亮
                 if let Some((bl, bt, br, bb)) = layout.empty_state_button_rect {
                     let is_btn_hovered =
-                        self.welcome_hover_action.as_ref() == Some(&WelcomeAction::OpenFolder);
+                        self.ui.welcome_hover_action.as_ref() == Some(&WelcomeAction::OpenFolder);
                     let btn_color = if is_btn_hovered {
                         color_f(80.0 / 255.0, 120.0 / 255.0, 200.0 / 255.0, 1.0)
                     } else {
@@ -1079,7 +1079,7 @@ impl EditorState {
 
             if let Some(more_y) = layout.more_y {
                 let is_more_hovered =
-                    self.welcome_hover_action.as_ref() == Some(&WelcomeAction::MoreRecentProjects);
+                    self.ui.welcome_hover_action.as_ref() == Some(&WelcomeAction::MoreRecentProjects);
                 let more_format = dwrite
                     .CreateTextFormat(
                         windows::core::w!("Segoe UI"),
@@ -1142,11 +1142,11 @@ impl EditorState {
             .iter()
             .map(|a| a.action.clone())
             .collect();
-        for p in self.recent_projects.list() {
+        for p in self.ui.recent_projects.list() {
             items.push(WelcomeAction::OpenRecentProject(p.path.clone()));
         }
         // 若有"更多..."链接也加入
-        if !self.recent_projects.list().is_empty() {
+        if !self.ui.recent_projects.list().is_empty() {
             items.push(WelcomeAction::MoreRecentProjects);
         }
         items
@@ -1156,10 +1156,10 @@ impl EditorState {
     pub fn welcome_focus_next(&mut self) {
         let items = self.welcome_focusable_items();
         if items.is_empty() {
-            self.welcome_focus_action = None;
+            self.ui.welcome_focus_action = None;
             return;
         }
-        let new = match &self.welcome_focus_action {
+        let new = match &self.ui.welcome_focus_action {
             None => items.first().cloned(),
             Some(cur) => {
                 let idx = items.iter().position(|a| a == cur);
@@ -1169,17 +1169,17 @@ impl EditorState {
                 }
             }
         };
-        self.welcome_focus_action = new;
+        self.ui.welcome_focus_action = new;
     }
 
     /// Shift+Tab/↑ 退回到上一个可聚焦项
     pub fn welcome_focus_prev(&mut self) {
         let items = self.welcome_focusable_items();
         if items.is_empty() {
-            self.welcome_focus_action = None;
+            self.ui.welcome_focus_action = None;
             return;
         }
-        let new = match &self.welcome_focus_action {
+        let new = match &self.ui.welcome_focus_action {
             None => items.last().cloned(),
             Some(cur) => {
                 let idx = items.iter().position(|a| a == cur);
@@ -1192,7 +1192,7 @@ impl EditorState {
                 }
             }
         };
-        self.welcome_focus_action = new;
+        self.ui.welcome_focus_action = new;
     }
 }
 

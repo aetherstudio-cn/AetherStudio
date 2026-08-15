@@ -11,9 +11,9 @@ impl EditorState {
         text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
     ) {
         unsafe {
-            let s = self.dpi_scale;
+            let s = self.win.dpi_scale;
             let ui_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     12.0 * s,
@@ -23,7 +23,7 @@ impl EditorState {
                 )
                 .unwrap();
             let tree_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     11.0 * s,
@@ -34,19 +34,19 @@ impl EditorState {
                 .unwrap();
             let dir_color = color_f(0.9, 0.9, 0.9, 1.0);
             let dir_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &dir_color)
                 .unwrap();
             let sel_color = color_f(0.0, 0.47, 0.83, 1.0);
             let sel_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &sel_color)
                 .unwrap();
             let hover_color = color_f(0.2, 0.2, 0.2, 1.0);
             let hover_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
@@ -98,7 +98,7 @@ impl EditorState {
                     &hover_brush,
                     &sel_brush,
                     &tree_format,
-                    &self.render_ctx.text_layout_cache,
+                    &self.win.render_ctx.text_layout_cache,
                 );
             } else {
                 let msg: Vec<u16> = "未连接远程服务器".encode_utf16().chain(Some(0)).collect();
@@ -270,7 +270,7 @@ impl EditorState {
 
         unsafe {
             let title_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     14.0,
@@ -280,7 +280,7 @@ impl EditorState {
                 )
                 .unwrap();
             let ui_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -290,7 +290,7 @@ impl EditorState {
                 )
                 .unwrap();
             let label_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -300,7 +300,7 @@ impl EditorState {
                 )
                 .unwrap();
             let btn_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -312,55 +312,55 @@ impl EditorState {
 
             let dim_color = color_f(0.55, 0.55, 0.55, 1.0);
             let dim_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let green_color = color_f(0.3, 0.85, 0.4, 1.0);
             let green_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &green_color)
                 .unwrap();
             let red_color = color_f(0.85, 0.3, 0.3, 1.0);
             let red_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &red_color)
                 .unwrap();
             let hover_color = color_f(0.2, 0.2, 0.2, 1.0);
             let hover_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
             let sel_color = color_f(0.0, 0.47, 0.83, 0.3);
             let sel_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &sel_color)
                 .unwrap();
             let btn_bg_color = color_f(0.15, 0.15, 0.15, 1.0);
             let btn_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg_color)
                 .unwrap();
             let btn_hover_color = color_f(0.25, 0.25, 0.25, 1.0);
             let btn_hover_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
             let input_bg_color = color_f(0.12, 0.12, 0.12, 1.0);
             let input_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
             let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
             let focus_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &focus_color)
                 .unwrap();
@@ -645,7 +645,7 @@ impl EditorState {
                             dim_color
                         };
                         let dot_brush = self
-                            .render_ctx
+    .win.render_ctx
                             .brush_cache
                             .get_brush(target, &dot_color)
                             .unwrap();

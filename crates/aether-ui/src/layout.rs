@@ -1,0 +1,1007 @@
+/// 编辑器布局区域定义
+#[derive(Clone, Debug)]
+pub struct Region {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Region {
+    pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub fn contains(&self, px: f32, py: f32) -> bool {
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
+    }
+
+    pub fn right(&self) -> f32 {
+        self.x + self.width
+    }
+
+    pub fn bottom(&self) -> f32 {
+        self.y + self.height
+    }
+}
+
+/// 活动栏视图类型
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivityBarView {
+    Explorer,
+    SourceControl,
+    Terminal,
+    RemoteManager,
+    AiAssistant,
+}
+
+impl ActivityBarView {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ActivityBarView::Explorer => "资源管理器",
+            ActivityBarView::SourceControl => "源代码管理",
+            ActivityBarView::Terminal => "终端",
+            ActivityBarView::RemoteManager => "远程资源管理器",
+            ActivityBarView::AiAssistant => "AI 助手",
+        }
+    }
+
+    pub fn icon(&self) -> crate::icons::IconKind {
+        match self {
+            ActivityBarView::Explorer => crate::icons::IconKind::Folder,
+            ActivityBarView::SourceControl => crate::icons::IconKind::GitBranch,
+            ActivityBarView::Terminal => crate::icons::IconKind::Terminal,
+            ActivityBarView::RemoteManager => crate::icons::IconKind::Ssh,
+            ActivityBarView::AiAssistant => crate::icons::IconKind::Bot,
+        }
+    }
+
+    /// 稳定字符串标识，用于持久化排序
+    pub fn key(&self) -> &'static str {
+        match self {
+            ActivityBarView::Explorer => "explorer",
+            ActivityBarView::SourceControl => "sourceControl",
+            ActivityBarView::Terminal => "terminal",
+            ActivityBarView::RemoteManager => "remoteManager",
+            ActivityBarView::AiAssistant => "aiAssistant",
+        }
+    }
+
+    /// 默认顺序
+    pub fn default_order() -> Vec<ActivityBarView> {
+        vec![
+            ActivityBarView::Explorer,
+            ActivityBarView::SourceControl,
+            ActivityBarView::RemoteManager,
+        ]
+    }
+
+    /// 从字符串键解析
+    pub fn from_key(key: &str) -> Option<ActivityBarView> {
+        match key {
+            "explorer" => Some(ActivityBarView::Explorer),
+            "sourceControl" => Some(ActivityBarView::SourceControl),
+            "terminal" => None, // 终端已迁移到标题栏按钮
+            "remoteManager" => Some(ActivityBarView::RemoteManager),
+            "openTabs" => Some(ActivityBarView::RemoteManager), // 兼容旧设置
+            "aiAssistant" => None,                              // AI助手已迁移到标题栏按钮
+            _ => None,
+        }
+    }
+}
+
+/// 侧边栏内容类型
+#[derive(Clone, Debug, PartialEq)]
+pub enum SidebarContent {
+    FileTree,
+    SourceControlPanel,
+    TerminalPanel,
+    RemoteManagerPanel,
+    RemoteFileTree,
+    AiAssistantPanel,
+}
+
+impl SidebarContent {
+    pub fn from_view(view: ActivityBarView) -> Self {
+        match view {
+            ActivityBarView::Explorer => SidebarContent::FileTree,
+            ActivityBarView::SourceControl => SidebarContent::SourceControlPanel,
+            ActivityBarView::Terminal => SidebarContent::TerminalPanel,
+            ActivityBarView::RemoteManager => SidebarContent::RemoteManagerPanel,
+            ActivityBarView::AiAssistant => SidebarContent::AiAssistantPanel,
+        }
+    }
+
+    pub fn is_ai_assistant(&self) -> bool {
+        matches!(self, SidebarContent::AiAssistantPanel)
+    }
+}
+
+/// 布局常量
+pub const TITLE_BAR_HEIGHT: f32 = 28.0;
+pub const MENU_BAR_HEIGHT: f32 = 0.0; // 菜单栏合并到标题栏，高度为0
+pub const ACTIVITY_BAR_WIDTH: f32 = 32.0;
+pub const SIDEBAR_WIDTH: f32 = 200.0;
+pub const STATUS_BAR_HEIGHT: f32 = 16.0;
+pub const TAB_BAR_HEIGHT: f32 = 30.0;
+pub const MIN_SIDEBAR_WIDTH: f32 = 150.0;
+pub const MAX_SIDEBAR_WIDTH: f32 = 500.0;
+/// 拐角手柄（两条分割线交点）的命中区域边长
+pub const CORNER_HANDLE_SIZE: f32 = 12.0;
+
+/// 标题栏右侧按钮布局（单一事实源）。
+///
+/// 此前同一套公式在渲染/悬停/点击/菜单定位四处重复手写，
+/// 且已出现 user_btn_size 28/24 不一致的命中错位隐患；
+/// 现在统一从这里计算，改尺寸只动一处。
+#[derive(Clone, Copy, Debug)]
+pub struct TitlebarButtons {
+    /// 窗口控制按钮（最小化/最大化/关闭）宽度
+    pub btn_width: f32,
+    pub close_x: f32,
+    pub maximize_x: f32,
+    pub minimize_x: f32,
+    /// 工具按钮（面板开关/设置/用户等）边长
+    pub tool_btn_size: f32,
+    pub tool_btn_gap: f32,
+    /// 用户头像按钮边长（与工具按钮统一，消除历史不一致）
+    pub user_btn_size: f32,
+    pub user_btn_x: f32,
+    pub settings_btn_x: f32,
+    pub right_panel_btn_x: f32,
+    pub bottom_panel_btn_x: f32,
+    pub left_sidebar_btn_x: f32,
+    pub divider_x: f32,
+    pub forward_btn_x: f32,
+    pub back_btn_x: f32,
+}
+
+impl TitlebarButtons {
+    /// 从标题栏区域的 x/width 计算全部按钮位置（从右往左排列）
+    pub fn compute(titlebar_x: f32, titlebar_width: f32) -> Self {
+        // 紧凑排版：窗控按钮 34px，工具按钮 24px，间距 2px
+        let btn_width = 34.0;
+        let tool_btn_size = 24.0;
+        let tool_btn_gap = 2.0;
+        let user_btn_size = tool_btn_size;
+        let close_x = titlebar_x + titlebar_width - btn_width;
+        let maximize_x = close_x - btn_width;
+        let minimize_x = maximize_x - btn_width;
+        let user_btn_x = minimize_x - tool_btn_gap - user_btn_size;
+        let settings_btn_x = user_btn_x - tool_btn_gap - tool_btn_size;
+        let right_panel_btn_x = settings_btn_x - tool_btn_gap - tool_btn_size;
+        let bottom_panel_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
+        let left_sidebar_btn_x = bottom_panel_btn_x - tool_btn_gap - tool_btn_size;
+        let divider_x = left_sidebar_btn_x - tool_btn_gap - 4.0;
+        let forward_btn_x = divider_x - tool_btn_gap - tool_btn_size;
+        let back_btn_x = forward_btn_x - tool_btn_gap - tool_btn_size;
+        Self {
+            btn_width,
+            close_x,
+            maximize_x,
+            minimize_x,
+            tool_btn_size,
+            tool_btn_gap,
+            user_btn_size,
+            user_btn_x,
+            settings_btn_x,
+            right_panel_btn_x,
+            bottom_panel_btn_x,
+            left_sidebar_btn_x,
+            divider_x,
+            forward_btn_x,
+            back_btn_x,
+        }
+    }
+}
+/// 底部面板最小高度
+pub const MIN_BOTTOM_PANEL_HEIGHT: f32 = 100.0;
+/// 右侧面板最小宽度
+pub const MIN_RIGHT_PANEL_WIDTH: f32 = 150.0;
+/// 侧边栏调整手柄半宽（鼠标悬停检测范围）
+pub const SIDEBAR_RESIZE_GRAB: f32 = 4.0;
+/// 活动栏按钮尺寸
+pub const ACTIVITY_BAR_BUTTON_SIZE: f32 = 40.0;
+/// 文件树行高（逻辑像素，乘 dpi_scale 后使用）。
+/// 渲染、命中测试、滚动高度估算共用同一常量，改行高只动这一处。
+pub const FILE_TREE_ROW_HEIGHT: f32 = 15.0;
+/// 文件树每级缩进宽度（逻辑像素）
+pub const FILE_TREE_INDENT: f32 = 12.0;
+/// 文件树章节标题栏（"资源管理器"）高度（逻辑像素），
+/// 渲染、file_tree_list_start_y、输入框悬停、IME 定位共用。
+/// 与 TAB_BAR_HEIGHT 保持一致，确保资源管理器标题栏、编辑器标签栏、AI面板顶部三区域高度对齐。
+pub const FILE_TREE_HEADER_HEIGHT: f32 = 30.0;
+/// 文件树 chevron/文件图标列宽（逻辑像素），渲染与命中测试共用
+pub const FILE_TREE_ARROW_COL: f32 = 12.0;
+
+/// 布局管理器 - 计算和管理所有 UI 区域的几何布局
+#[derive(Clone, Debug)]
+pub struct LayoutManager {
+    pub window_width: f32,
+    pub window_height: f32,
+    // 各区域尺寸
+    pub title_bar_height: f32,
+    pub menu_bar_height: f32,
+    pub activity_bar_width: f32,
+    pub sidebar_width: f32,
+    pub right_panel_width: f32,
+    pub bottom_panel_height: f32,
+    pub status_bar_height: f32,
+    // 可见性
+    pub title_bar_visible: bool,
+    pub menu_bar_visible: bool,
+    pub activity_bar_visible: bool,
+    pub sidebar_visible: bool,
+    pub right_panel_visible: bool,
+    pub bottom_panel_visible: bool,
+    pub status_bar_visible: bool,
+    pub right_panel_resizing: bool,
+    pub bottom_panel_resizing: bool,
+    pub sidebar_resizing: bool,
+    /// 左下拐角手柄拖拽中（侧边栏右缘 × 底部面板顶缘）
+    pub corner_left_resizing: bool,
+    /// 右下拐角手柄拖拽中（右面板左缘 × 底部面板顶缘）
+    pub corner_right_resizing: bool,
+    /// 侧边栏宽度动画状态（None = 静态无动画）
+    pub sidebar_anim: Option<SidebarAnim>,
+    /// 当前已应用的 DPI 缩放因子（用于 DPI 变化时按比例换算用户可调尺寸）
+    dpi_scale: f32,
+}
+
+/// 侧边栏宽度动画：在 200ms 内线性插值从 start_width 到 end_width。
+/// end_width=0 表示收起（终态置 visible=false），>0 表示展开。
+#[derive(Clone, Copy, Debug)]
+pub struct SidebarAnim {
+    pub start_width: f32,
+    pub end_width: f32,
+    pub start_time: std::time::Instant,
+    pub duration_ms: u32,
+}
+
+impl SidebarAnim {
+    pub const DURATION: u32 = 200;
+
+    pub fn new(start: f32, end: f32) -> Self {
+        Self {
+            start_width: start,
+            end_width: end,
+            start_time: std::time::Instant::now(),
+            duration_ms: Self::DURATION,
+        }
+    }
+
+    /// 计算当前帧的插值宽度和是否完成
+    pub fn tick(&self) -> (f32, bool) {
+        let elapsed = self.start_time.elapsed().as_millis() as f32;
+        let t = (elapsed / self.duration_ms as f32).min(1.0);
+        let width = self.start_width + (self.end_width - self.start_width) * t;
+        (width, t >= 1.0)
+    }
+}
+
+impl LayoutManager {
+    pub fn new(window_width: f32, window_height: f32) -> Self {
+        Self {
+            window_width,
+            window_height,
+            title_bar_height: TITLE_BAR_HEIGHT,
+            menu_bar_height: MENU_BAR_HEIGHT,
+            activity_bar_width: ACTIVITY_BAR_WIDTH,
+            sidebar_width: SIDEBAR_WIDTH,
+            right_panel_width: 0.0,
+            bottom_panel_height: 0.0,
+            status_bar_height: STATUS_BAR_HEIGHT,
+            title_bar_visible: true,
+            menu_bar_visible: true,
+            activity_bar_visible: true,
+            sidebar_visible: true,
+            right_panel_visible: false,
+            bottom_panel_visible: false,
+            status_bar_visible: true,
+            right_panel_resizing: false,
+            bottom_panel_resizing: false,
+            sidebar_resizing: false,
+            corner_left_resizing: false,
+            corner_right_resizing: false,
+            sidebar_anim: None,
+            dpi_scale: 1.0,
+        }
+    }
+
+    /// REQ-P2-07: 应用 DPI 缩放到所有布局常量
+    /// 在窗口初始化和 DPI 变化时调用，确保高 DPI 显示器上 UI 元素尺寸正确
+    pub fn apply_dpi_scale(&mut self, scale: f32) {
+        let old_scale = self.dpi_scale.max(0.01);
+        self.title_bar_height = TITLE_BAR_HEIGHT * scale;
+        self.menu_bar_height = MENU_BAR_HEIGHT * scale;
+        self.activity_bar_width = ACTIVITY_BAR_WIDTH * scale;
+        // P5-3: 侧边栏宽度是用户可调尺寸，按新旧 scale 比例换算，
+        // 不再重置为默认值（原实现会丢失用户拖拽调好的宽度）
+        self.sidebar_width = self.sidebar_width / old_scale * scale;
+        self.status_bar_height = STATUS_BAR_HEIGHT * scale;
+        // 右侧/底部面板同样按比例换算（仅在可见时）
+        if self.right_panel_width > 0.0 {
+            self.right_panel_width = self.right_panel_width / old_scale * scale;
+        }
+        if self.bottom_panel_height > 0.0 {
+            self.bottom_panel_height = self.bottom_panel_height / old_scale * scale;
+        }
+        self.dpi_scale = scale;
+    }
+
+    /// 计算标题栏区域
+    pub fn title_bar_region(&self) -> Region {
+        if !self.title_bar_visible {
+            return Region::new(0.0, 0.0, self.window_width, 0.0);
+        }
+        Region::new(0.0, 0.0, self.window_width, self.title_bar_height)
+    }
+
+    /// 计算菜单栏区域
+    pub fn menu_bar_region(&self) -> Region {
+        if !self.menu_bar_visible {
+            return Region::new(0.0, self.title_bar_height, self.window_width, 0.0);
+        }
+        Region::new(
+            0.0,
+            self.title_bar_height,
+            self.window_width,
+            self.menu_bar_height,
+        )
+    }
+
+    /// 计算活动栏区域
+    pub fn activity_bar_region(&self) -> Region {
+        if !self.activity_bar_visible {
+            return Region::new(0.0, self.top_offset(), 0.0, self.content_height());
+        }
+        Region::new(
+            0.0,
+            self.top_offset(),
+            self.activity_bar_width,
+            self.content_height(),
+        )
+    }
+
+    /// 计算侧边栏区域
+    pub fn sidebar_region(&self) -> Region {
+        // UI-L06: 活动栏隐藏时侧边栏应从 x=0 开始，而非固定偏移 48px
+        let x = if self.activity_bar_visible {
+            self.activity_bar_width
+        } else {
+            0.0
+        };
+        if !self.sidebar_visible {
+            return Region::new(x, self.top_offset(), 0.0, self.content_height());
+        }
+        Region::new(
+            x,
+            self.top_offset(),
+            self.sidebar_width,
+            self.content_height(),
+        )
+    }
+
+    /// 计算编辑器区域（包含标签栏和编辑器内容）
+    pub fn editor_region(&self) -> Region {
+        let x = if self.activity_bar_visible {
+            self.activity_bar_width
+        } else {
+            0.0
+        } + if self.sidebar_visible {
+            self.sidebar_width
+        } else {
+            0.0
+        };
+        let right = if self.right_panel_visible {
+            self.right_panel_width
+        } else {
+            0.0
+        };
+        let width = (self.window_width - x - right).max(0.0);
+        Region::new(x, self.top_offset(), width, self.content_height())
+    }
+
+    /// 计算标签栏区域
+    pub fn tab_bar_region(&self, show_tab_bar: bool) -> Region {
+        let editor = self.editor_region();
+        let height = if show_tab_bar { TAB_BAR_HEIGHT } else { 0.0 };
+        Region::new(editor.x, editor.y, editor.width, height)
+    }
+
+    /// 计算编辑器内容区域（排除标签栏）
+    /// 当底部面板可见时，编辑器内容仅占编辑器区域上半部分（剩余给底部面板）
+    pub fn editor_content_region(&self, show_tab_bar: bool) -> Region {
+        let editor = self.editor_region();
+        let tab_height = if show_tab_bar { TAB_BAR_HEIGHT } else { 0.0 };
+        let bottom_height = if self.bottom_panel_visible {
+            self.bottom_panel_height
+        } else {
+            0.0
+        };
+        let height = (editor.height - tab_height - bottom_height).max(0.0);
+        Region::new(editor.x, editor.y + tab_height, editor.width, height)
+    }
+
+    /// 计算右侧面板区域
+    pub fn right_panel_region(&self) -> Region {
+        if !self.right_panel_visible {
+            return Region::new(
+                self.window_width,
+                self.top_offset(),
+                0.0,
+                self.content_height(),
+            );
+        }
+        Region::new(
+            self.window_width - self.right_panel_width,
+            self.top_offset(),
+            self.right_panel_width,
+            self.content_height(),
+        )
+    }
+
+    /// 计算底部面板区域
+    /// 底部面板位于编辑器区域（居中）的下半部分，不横跨侧边栏/活动栏
+    pub fn bottom_panel_region(&self) -> Region {
+        let editor = self.editor_region();
+        let y = editor.bottom() - self.bottom_panel_height;
+        if !self.bottom_panel_visible {
+            return Region::new(editor.x, editor.bottom(), editor.width, 0.0);
+        }
+        Region::new(editor.x, y, editor.width, self.bottom_panel_height)
+    }
+
+    /// 左下拐角手柄区域（侧边栏右缘 × 底部面板顶缘的交点）。
+    ///
+    /// 拖拽该拐角可同时调整侧边栏宽度（水平）与底部面板高度（垂直）。
+    /// 仅当侧边栏与底部面板同时可见时存在，否则返回 None。
+    pub fn corner_left_handle(&self) -> Option<Region> {
+        if !(self.sidebar_visible && self.bottom_panel_visible) {
+            return None;
+        }
+        let editor = self.editor_region();
+        let cy = self.bottom_panel_region().y;
+        let half = CORNER_HANDLE_SIZE / 2.0;
+        Some(Region::new(
+            editor.x - half,
+            cy - half,
+            CORNER_HANDLE_SIZE,
+            CORNER_HANDLE_SIZE,
+        ))
+    }
+
+    /// 右下拐角手柄区域（右面板左缘 × 底部面板顶缘的交点）。
+    ///
+    /// 拖拽该拐角可同时调整右面板宽度（水平）与底部面板高度（垂直）。
+    /// 仅当右面板与底部面板同时可见时存在，否则返回 None。
+    pub fn corner_right_handle(&self) -> Option<Region> {
+        if !(self.right_panel_visible && self.bottom_panel_visible) {
+            return None;
+        }
+        let editor = self.editor_region();
+        let cy = self.bottom_panel_region().y;
+        let half = CORNER_HANDLE_SIZE / 2.0;
+        Some(Region::new(
+            editor.right() - half,
+            cy - half,
+            CORNER_HANDLE_SIZE,
+            CORNER_HANDLE_SIZE,
+        ))
+    }
+
+    /// 计算状态栏区域
+    pub fn status_bar_region(&self) -> Region {
+        if !self.status_bar_visible {
+            return Region::new(0.0, self.window_height, self.window_width, 0.0);
+        }
+        Region::new(
+            0.0,
+            self.window_height - self.status_bar_height,
+            self.window_width,
+            self.status_bar_height,
+        )
+    }
+
+    /// 顶部偏移（标题栏 + 菜单栏）
+    pub fn top_offset(&self) -> f32 {
+        let mut offset = 0.0;
+        if self.title_bar_visible {
+            offset += self.title_bar_height;
+        }
+        if self.menu_bar_visible {
+            offset += self.menu_bar_height;
+        }
+        offset
+    }
+
+    /// 内容区域高度（排除标题栏、菜单栏、状态栏）
+    /// 注：底部面板现在位于编辑器区域内部，不再从侧边栏/活动栏空间中扣除
+    fn content_height(&self) -> f32 {
+        let mut height = self.window_height;
+        if self.title_bar_visible {
+            height -= self.title_bar_height;
+        }
+        if self.menu_bar_visible {
+            height -= self.menu_bar_height;
+        }
+        if self.status_bar_visible {
+            height -= self.status_bar_height;
+        }
+        // 确保内容区域至少有 0 像素的高度
+        height.max(0.0)
+    }
+
+    /// 调整侧边栏宽度
+    pub fn resize_sidebar(&mut self, delta: f32) {
+        let new_width = (self.sidebar_width + delta).clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+        self.sidebar_width = new_width;
+    }
+
+    /// 拖拽调宽侧边栏（VS Code 行为）：拖拽中实时跟手，低于阈值也只缩小不隐藏，
+    /// 用户松手后由 mouse_up 判断是否启动收起动画，避免拖拽中立即跳变。
+    /// 拖回时自动恢复可见（对应收起后的拖回操作）。
+    pub fn set_sidebar_width_or_collapse(&mut self, desired_width: f32) {
+        const COLLAPSE_THRESHOLD: f32 = MIN_SIDEBAR_WIDTH * 0.5;
+        if desired_width >= COLLAPSE_THRESHOLD {
+            // 超过阈值：恢复可见，钳制宽度
+            self.sidebar_visible = true;
+            self.sidebar_width = desired_width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+        } else {
+            // 低于阈值：拖拽中保持可见但宽度即时跟手（视觉反馈），
+            // 不立即隐藏——松手后由 mouse_up 启动动画平滑收起
+            self.sidebar_width = desired_width.max(0.0);
+        }
+    }
+
+    /// 调整右侧面板宽度
+    /// clamp: 最小 MIN_RIGHT_PANEL_WIDTH，最大 window_width * 0.8
+    pub fn resize_right_panel(&mut self, delta: f32) {
+        let new_width =
+            (self.right_panel_width + delta).clamp(MIN_RIGHT_PANEL_WIDTH, self.window_width * 0.8);
+        self.right_panel_width = new_width;
+    }
+
+    /// 调整底部面板高度
+    /// clamp: 最小 MIN_BOTTOM_PANEL_HEIGHT，最大 window_height * 0.8
+    pub fn resize_bottom_panel(&mut self, delta: f32) {
+        let new_height = (self.bottom_panel_height + delta)
+            .clamp(MIN_BOTTOM_PANEL_HEIGHT, self.window_height * 0.8);
+        self.bottom_panel_height = new_height;
+    }
+
+    /// 切换侧边栏可见性（带动画）
+    pub fn toggle_sidebar(&mut self) {
+        if self.sidebar_visible {
+            // 当前可见 → 启动收起动画
+            self.sidebar_anim = Some(SidebarAnim::new(self.sidebar_width, 0.0));
+        } else {
+            // 当前不可见 → 先置可见（宽度从 0 开始），启动展开动画
+            self.sidebar_visible = true;
+            let target = self.sidebar_width.max(SIDEBAR_WIDTH);
+            self.sidebar_width = 0.0;
+            self.sidebar_anim = Some(SidebarAnim::new(0.0, target));
+        }
+    }
+
+    /// 取消正在进行的侧边栏动画（拖拽开始时打断）
+    pub fn cancel_sidebar_anim(&mut self) {
+        self.sidebar_anim = None;
+    }
+
+    /// 显式设置侧边栏可见性
+    pub fn show_sidebar(&mut self) {
+        self.sidebar_visible = true;
+    }
+
+    /// 切换活动栏可见性
+    pub fn toggle_activity_bar(&mut self) {
+        self.activity_bar_visible = !self.activity_bar_visible;
+    }
+
+    /// 切换状态栏可见性
+    pub fn toggle_status_bar(&mut self) {
+        self.status_bar_visible = !self.status_bar_visible;
+    }
+
+    /// 更新窗口大小
+    pub fn resize_window(&mut self, width: f32, height: f32) {
+        self.window_width = width;
+        self.window_height = height;
+    }
+
+    /// 切换底部面板可见性
+    /// REQ-P2-09: 合并原 toggle_bottom_panel 与 toggle_terminal_panel（两者实现完全相同）
+    pub fn toggle_bottom_panel(&mut self) {
+        self.bottom_panel_visible = !self.bottom_panel_visible;
+        if self.bottom_panel_visible {
+            // 默认占编辑器区域（居中）的下半部分
+            self.bottom_panel_height = (self.content_height() / 2.0)
+                .max(MIN_BOTTOM_PANEL_HEIGHT)
+                .min(self.content_height());
+        } else {
+            self.bottom_panel_height = 0.0;
+        }
+    }
+
+    /// 切换右侧面板可见性
+    pub fn toggle_right_panel(&mut self) {
+        self.right_panel_visible = !self.right_panel_visible;
+        if self.right_panel_visible {
+            self.right_panel_width = 300.0;
+        } else {
+            self.right_panel_width = 0.0;
+        }
+    }
+
+    /// 切换终端面板可见性。
+    /// 终端渲染在底部面板区域，不覆盖主编辑器内容区域。
+    /// REQ-P2-09: 合并到 toggle_bottom_panel，保留别名以兼容调用方
+    pub fn toggle_terminal_panel(&mut self) {
+        self.toggle_bottom_panel();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_region_contains() {
+        let r = Region::new(10.0, 20.0, 100.0, 50.0);
+        assert!(r.contains(10.0, 20.0));
+        assert!(r.contains(109.9, 69.9));
+        assert!(!r.contains(110.0, 30.0));
+        assert!(!r.contains(50.0, 70.0));
+        assert!(!r.contains(9.9, 30.0));
+    }
+
+    #[test]
+    fn test_region_right_and_bottom() {
+        let r = Region::new(5.0, 5.0, 10.0, 20.0);
+        assert_eq!(r.right(), 15.0);
+        assert_eq!(r.bottom(), 25.0);
+    }
+
+    #[test]
+    fn test_activity_bar_view_label_icon_key() {
+        assert_eq!(ActivityBarView::Explorer.label(), "资源管理器");
+        assert_eq!(
+            ActivityBarView::Terminal.icon(),
+            crate::icons::IconKind::Terminal
+        );
+        assert_eq!(ActivityBarView::AiAssistant.key(), "aiAssistant");
+    }
+
+    #[test]
+    fn test_activity_bar_view_default_order() {
+        let order = ActivityBarView::default_order();
+        assert_eq!(
+            order,
+            vec![
+                ActivityBarView::Explorer,
+                ActivityBarView::SourceControl,
+                ActivityBarView::RemoteManager,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_activity_bar_view_from_key() {
+        assert_eq!(
+            ActivityBarView::from_key("explorer"),
+            Some(ActivityBarView::Explorer)
+        );
+        assert_eq!(
+            ActivityBarView::from_key("sourceControl"),
+            Some(ActivityBarView::SourceControl)
+        );
+        assert_eq!(
+            ActivityBarView::from_key("remoteManager"),
+            Some(ActivityBarView::RemoteManager)
+        );
+        assert_eq!(
+            ActivityBarView::from_key("openTabs"),
+            Some(ActivityBarView::RemoteManager)
+        );
+        assert_eq!(ActivityBarView::from_key("terminal"), None);
+        assert_eq!(ActivityBarView::from_key("aiAssistant"), None);
+        assert_eq!(ActivityBarView::from_key("unknown"), None);
+    }
+
+    #[test]
+    fn test_sidebar_content_from_view() {
+        assert_eq!(
+            SidebarContent::from_view(ActivityBarView::Explorer),
+            SidebarContent::FileTree
+        );
+        assert_eq!(
+            SidebarContent::from_view(ActivityBarView::SourceControl),
+            SidebarContent::SourceControlPanel
+        );
+        assert_eq!(
+            SidebarContent::from_view(ActivityBarView::Terminal),
+            SidebarContent::TerminalPanel
+        );
+        assert_eq!(
+            SidebarContent::from_view(ActivityBarView::RemoteManager),
+            SidebarContent::RemoteManagerPanel
+        );
+        assert_eq!(
+            SidebarContent::from_view(ActivityBarView::AiAssistant),
+            SidebarContent::AiAssistantPanel
+        );
+    }
+
+    #[test]
+    fn test_sidebar_content_is_ai_assistant() {
+        assert!(SidebarContent::AiAssistantPanel.is_ai_assistant());
+        assert!(!SidebarContent::FileTree.is_ai_assistant());
+    }
+
+    #[test]
+    fn test_layout_manager_default_regions() {
+        let layout = LayoutManager::new(1280.0, 800.0);
+        let title = layout.title_bar_region();
+        assert_eq!(title.x, 0.0);
+        assert_eq!(title.height, TITLE_BAR_HEIGHT);
+
+        let activity = layout.activity_bar_region();
+        assert_eq!(activity.x, 0.0);
+        assert_eq!(activity.width, ACTIVITY_BAR_WIDTH);
+
+        let sidebar = layout.sidebar_region();
+        assert_eq!(sidebar.x, ACTIVITY_BAR_WIDTH);
+        assert_eq!(sidebar.width, SIDEBAR_WIDTH);
+
+        let editor = layout.editor_region();
+        assert_eq!(editor.x, ACTIVITY_BAR_WIDTH + SIDEBAR_WIDTH);
+        assert!(editor.width > 0.0);
+
+        let status = layout.status_bar_region();
+        assert_eq!(status.y, 800.0 - STATUS_BAR_HEIGHT);
+        assert_eq!(status.height, STATUS_BAR_HEIGHT);
+    }
+
+    #[test]
+    fn test_layout_manager_hidden_activity_bar() {
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        layout.toggle_activity_bar();
+        assert!(!layout.activity_bar_visible);
+
+        let activity = layout.activity_bar_region();
+        assert_eq!(activity.width, 0.0);
+
+        let sidebar = layout.sidebar_region();
+        assert_eq!(sidebar.x, 0.0);
+
+        let editor = layout.editor_region();
+        assert_eq!(editor.x, SIDEBAR_WIDTH);
+    }
+
+    #[test]
+    fn test_layout_manager_hidden_sidebar() {
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        layout.toggle_sidebar();
+        // toggle 启动收起动画——模拟动画终态：跟渲染 tick 又中的逻辑一致
+        if let Some(anim) = layout.sidebar_anim {
+            if anim.end_width <= 0.0 {
+                layout.sidebar_visible = false;
+                layout.sidebar_width = SIDEBAR_WIDTH;
+            }
+            layout.sidebar_anim = None;
+        }
+        assert!(!layout.sidebar_visible);
+
+        let sidebar = layout.sidebar_region();
+        assert_eq!(sidebar.width, 0.0);
+
+        let editor = layout.editor_region();
+        assert_eq!(editor.x, ACTIVITY_BAR_WIDTH);
+    }
+
+    #[test]
+    fn test_layout_manager_right_and_bottom_panels() {
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        layout.toggle_right_panel();
+        let right = layout.right_panel_region();
+        assert_eq!(right.width, 300.0);
+        assert_eq!(right.x, 1280.0 - 300.0);
+        assert_eq!(right.height, layout.content_height());
+
+        layout.toggle_bottom_panel();
+        let bottom = layout.bottom_panel_region();
+        let editor = layout.editor_region();
+        assert_eq!(bottom.x, editor.x);
+        assert_eq!(bottom.width, editor.width);
+        // 默认高度为编辑器区域的一半
+        assert_eq!(bottom.height, editor.height / 2.0);
+        assert_eq!(bottom.y, editor.bottom() - bottom.height);
+
+        let editor = layout.editor_region();
+        assert_eq!(
+            editor.width,
+            1280.0 - ACTIVITY_BAR_WIDTH - SIDEBAR_WIDTH - 300.0
+        );
+    }
+
+    #[test]
+    fn test_corner_handle_geometry() {
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        // 默认侧边栏可见、右面板/底部面板隐藏
+        // 底部面板隐藏时两拐角均不存在
+        assert!(layout.corner_left_handle().is_none());
+        assert!(layout.corner_right_handle().is_none());
+
+        // 打开底部面板：左下拐角出现（侧边栏可见），右下拐角仍无（右面板隐藏）
+        layout.toggle_bottom_panel();
+        let left = layout
+            .corner_left_handle()
+            .expect("侧边栏+底部面板可见时应有左下拐角");
+        assert!(layout.corner_right_handle().is_none());
+
+        let editor = layout.editor_region();
+        let bottom = layout.bottom_panel_region();
+        let half = CORNER_HANDLE_SIZE / 2.0;
+        // 左下拐角中心 = (editor.x, bottom.y)
+        assert_eq!(left.x, editor.x - half);
+        assert_eq!(left.y, bottom.y - half);
+        assert_eq!(left.width, CORNER_HANDLE_SIZE);
+        assert_eq!(left.height, CORNER_HANDLE_SIZE);
+        // 拐角中心点应命中
+        assert!(left.contains(editor.x, bottom.y));
+
+        // 打开右面板：右下拐角出现，中心 = (editor.right(), bottom.y)
+        layout.toggle_right_panel();
+        let right = layout
+            .corner_right_handle()
+            .expect("右面板+底部面板可见时应有右下拐角");
+        let editor = layout.editor_region();
+        let bottom = layout.bottom_panel_region();
+        assert_eq!(right.x, editor.right() - half);
+        assert_eq!(right.y, bottom.y - half);
+        assert!(right.contains(editor.right(), bottom.y));
+
+        // 隐藏侧边栏后左下拐角消失
+        layout.sidebar_visible = false;
+        assert!(layout.corner_left_handle().is_none());
+    }
+
+    #[test]
+    fn test_layout_manager_tab_bar_and_content() {
+        let layout = LayoutManager::new(1280.0, 800.0);
+        let tab_bar = layout.tab_bar_region(true);
+        assert_eq!(tab_bar.height, TAB_BAR_HEIGHT);
+
+        let content = layout.editor_content_region(true);
+        assert_eq!(
+            content.height,
+            layout.editor_region().height - TAB_BAR_HEIGHT
+        );
+        assert_eq!(content.y, layout.editor_region().y + TAB_BAR_HEIGHT);
+    }
+
+    #[test]
+    fn test_layout_manager_editor_content_with_bottom_panel() {
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        layout.toggle_bottom_panel();
+        let editor = layout.editor_region();
+        let bottom = layout.bottom_panel_region();
+        let content = layout.editor_content_region(true);
+
+        // 编辑器内容区 + 标签栏 + 底部面板 = 编辑器区域
+        assert_eq!(
+            content.height + TAB_BAR_HEIGHT + bottom.height,
+            editor.height
+        );
+        assert_eq!(content.x, editor.x);
+        assert_eq!(content.width, editor.width);
+        assert_eq!(bottom.y, content.y + content.height);
+    }
+
+    #[test]
+    fn test_layout_manager_resize_sidebar() {
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        layout.resize_sidebar(100.0);
+        assert_eq!(layout.sidebar_width, SIDEBAR_WIDTH + 100.0);
+
+        layout.resize_sidebar(1000.0);
+        assert_eq!(layout.sidebar_width, MAX_SIDEBAR_WIDTH);
+
+        layout.resize_sidebar(-1000.0);
+        assert_eq!(layout.sidebar_width, MIN_SIDEBAR_WIDTH);
+    }
+
+    #[test]
+    fn test_layout_manager_resize_right_panel_clamp() {
+        // window_width = 1280.0 → 上限 = 1024.0
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        layout.right_panel_width = 300.0;
+
+        // 正常增量
+        layout.resize_right_panel(100.0);
+        assert_eq!(layout.right_panel_width, 400.0);
+
+        // 超过上限 → clamp 到 window_width * 0.8 = 1024.0
+        layout.resize_right_panel(1000.0);
+        assert_eq!(layout.right_panel_width, 1280.0 * 0.8);
+
+        // 低于下限 → clamp 到 MIN_RIGHT_PANEL_WIDTH
+        layout.resize_right_panel(-10000.0);
+        assert_eq!(layout.right_panel_width, MIN_RIGHT_PANEL_WIDTH);
+
+        // 关键：到达最小值后继续拖拽不应使面板更小
+        let min_val = layout.right_panel_width;
+        layout.resize_right_panel(-50.0);
+        assert_eq!(layout.right_panel_width, min_val);
+        layout.resize_right_panel(-50.0);
+        assert_eq!(layout.right_panel_width, min_val);
+    }
+
+    #[test]
+    fn test_layout_manager_resize_bottom_panel_clamp() {
+        // window_height = 800.0 → 上限 = 640.0
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        layout.bottom_panel_height = 200.0;
+
+        // 正常增量
+        layout.resize_bottom_panel(100.0);
+        assert_eq!(layout.bottom_panel_height, 300.0);
+
+        // 超过上限 → clamp 到 window_height * 0.8 = 640.0
+        layout.resize_bottom_panel(1000.0);
+        assert_eq!(layout.bottom_panel_height, 800.0 * 0.8);
+
+        // 低于下限 → clamp 到 MIN_BOTTOM_PANEL_HEIGHT
+        layout.resize_bottom_panel(-10000.0);
+        assert_eq!(layout.bottom_panel_height, MIN_BOTTOM_PANEL_HEIGHT);
+
+        // 关键：到达最小值后继续拖拽不应使面板更小
+        let min_val = layout.bottom_panel_height;
+        layout.resize_bottom_panel(-50.0);
+        assert_eq!(layout.bottom_panel_height, min_val);
+        layout.resize_bottom_panel(-50.0);
+        assert_eq!(layout.bottom_panel_height, min_val);
+    }
+
+    #[test]
+    fn test_layout_manager_resize_window() {
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        layout.resize_window(1920.0, 1080.0);
+        assert_eq!(layout.window_width, 1920.0);
+        assert_eq!(layout.window_height, 1080.0);
+        assert_eq!(layout.title_bar_region().width, 1920.0);
+    }
+
+    #[test]
+    fn test_layout_manager_toggle_status_bar() {
+        let mut layout = LayoutManager::new(1280.0, 800.0);
+        layout.toggle_status_bar();
+        assert!(!layout.status_bar_visible);
+        let status = layout.status_bar_region();
+        assert_eq!(status.height, 0.0);
+        assert_eq!(status.y, 800.0);
+    }
+
+    #[test]
+    fn test_layout_manager_top_offset_and_content_height() {
+        let mut layout = LayoutManager::new(800.0, 600.0);
+        assert_eq!(layout.top_offset(), TITLE_BAR_HEIGHT + MENU_BAR_HEIGHT);
+        assert_eq!(
+            layout.content_height(),
+            600.0 - TITLE_BAR_HEIGHT - STATUS_BAR_HEIGHT
+        );
+
+        layout.toggle_status_bar();
+        assert_eq!(layout.content_height(), 600.0 - TITLE_BAR_HEIGHT);
+
+        // 底部面板现在位于编辑器区域内部，不影响 content_height
+        layout.toggle_bottom_panel();
+        assert_eq!(layout.content_height(), 600.0 - TITLE_BAR_HEIGHT);
+    }
+}

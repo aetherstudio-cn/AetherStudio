@@ -12,18 +12,18 @@ impl EditorState {
         use crate::context_menu::ExplorerContextMenu;
 
         unsafe {
-            let menu_width = self.context_menus.explorer.menu_width();
-            let menu_height = self.context_menus.explorer.menu_height();
-            let menu_x = self.context_menus.explorer.origin_x;
-            let menu_y = self.context_menus.explorer.origin_y;
+            let menu_width = self.ui.context_menus.explorer.menu_width();
+            let menu_height = self.ui.context_menus.explorer.menu_height();
+            let menu_x = self.ui.context_menus.explorer.origin_x;
+            let menu_y = self.ui.context_menus.explorer.origin_y;
 
             // 背景
-            let bg_color = if self.theme.glass_enabled {
-                self.theme.submenu_bg
+            let bg_color = if self.win.theme.glass_enabled {
+                self.win.theme.submenu_bg
             } else {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
-            let bg_brush = match self.render_ctx.brush_cache.get_brush(target, &bg_color) {
+            let bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &bg_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
@@ -36,7 +36,7 @@ impl EditorState {
 
             // 阴影（右侧 + 底部，与 user_menu 一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
                 let shadow_right = D2D_RECT_F {
                     left: menu_rect.right,
                     top: menu_rect.top + 4.0,
@@ -57,12 +57,12 @@ impl EditorState {
 
             // 边框
             let border_color = color_f(0.3, 0.3, 0.3, 1.0);
-            if let Ok(border_brush) = self.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
                 target.DrawRectangle(&menu_rect, &border_brush, 1.0, None);
             }
 
             // 保存菜单区域供 hit_test 使用
-            self.context_menus.explorer.menu_rect = Some(crate::layout::Region::new(
+            self.ui.context_menus.explorer.menu_rect = Some(crate::layout::Region::new(
                 menu_x,
                 menu_y,
                 menu_width,
@@ -70,23 +70,23 @@ impl EditorState {
             ));
 
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
-            let text_brush = match self.render_ctx.brush_cache.get_brush(target, &text_color) {
+            let text_brush = match self.win.render_ctx.brush_cache.get_brush(target, &text_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
             let hover_bg = color_f(0.0, 0.47, 0.83, 1.0);
-            let hover_brush = match self.render_ctx.brush_cache.get_brush(target, &hover_bg) {
+            let hover_brush = match self.win.render_ctx.brush_cache.get_brush(target, &hover_bg) {
                 Ok(b) => b,
                 Err(_) => return,
             };
             let sep_color = color_f(0.3, 0.3, 0.3, 1.0);
-            let sep_brush = match self.render_ctx.brush_cache.get_brush(target, &sep_color) {
+            let sep_brush = match self.win.render_ctx.brush_cache.get_brush(target, &sep_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
 
             let text_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -98,7 +98,7 @@ impl EditorState {
 
             // 从顶部 padding 开始绘制菜单项
             let mut current_y = menu_y + ExplorerContextMenu::TOP_PADDING;
-            for (i, item) in self.context_menus.explorer.items.iter().enumerate() {
+            for (i, item) in self.ui.context_menus.explorer.items.iter().enumerate() {
                 if item.is_separator() {
                     let sep_rect = D2D_RECT_F {
                         left: menu_x + 8.0,
@@ -109,7 +109,7 @@ impl EditorState {
                     target.FillRectangle(&sep_rect, &sep_brush);
                     current_y += ExplorerContextMenu::SEPARATOR_HEIGHT;
                 } else {
-                    let is_hover = self.context_menus.explorer.hover_index == Some(i);
+                    let is_hover = self.ui.context_menus.explorer.hover_index == Some(i);
                     if is_hover {
                         let item_rect = D2D_RECT_F {
                             left: menu_x + 4.0,
@@ -151,18 +151,18 @@ impl EditorState {
         use crate::context_menu::FileNodeContextMenu;
 
         unsafe {
-            let menu_width = self.context_menus.file_node.menu_width();
-            let menu_height = self.context_menus.file_node.menu_height();
-            let menu_x = self.context_menus.file_node.origin_x;
-            let menu_y = self.context_menus.file_node.origin_y;
+            let menu_width = self.ui.context_menus.file_node.menu_width();
+            let menu_height = self.ui.context_menus.file_node.menu_height();
+            let menu_x = self.ui.context_menus.file_node.origin_x;
+            let menu_y = self.ui.context_menus.file_node.origin_y;
 
             // 背景
-            let bg_color = if self.theme.glass_enabled {
-                self.theme.submenu_bg
+            let bg_color = if self.win.theme.glass_enabled {
+                self.win.theme.submenu_bg
             } else {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
-            let bg_brush = match self.render_ctx.brush_cache.get_brush(target, &bg_color) {
+            let bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &bg_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
@@ -175,7 +175,7 @@ impl EditorState {
 
             // 阴影（右侧 + 底部，与 user_menu 一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
                 let shadow_right = D2D_RECT_F {
                     left: menu_rect.right,
                     top: menu_rect.top + 4.0,
@@ -196,12 +196,12 @@ impl EditorState {
 
             // 边框
             let border_color = color_f(0.3, 0.3, 0.3, 1.0);
-            if let Ok(border_brush) = self.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
                 target.DrawRectangle(&menu_rect, &border_brush, 1.0, None);
             }
 
             // 保存菜单区域供 hit_test 使用
-            self.context_menus.file_node.menu_rect = Some(crate::layout::Region::new(
+            self.ui.context_menus.file_node.menu_rect = Some(crate::layout::Region::new(
                 menu_x,
                 menu_y,
                 menu_width,
@@ -209,30 +209,30 @@ impl EditorState {
             ));
 
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
-            let text_brush = match self.render_ctx.brush_cache.get_brush(target, &text_color) {
+            let text_brush = match self.win.render_ctx.brush_cache.get_brush(target, &text_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
             let hover_bg = color_f(0.0, 0.47, 0.83, 1.0);
-            let hover_brush = match self.render_ctx.brush_cache.get_brush(target, &hover_bg) {
+            let hover_brush = match self.win.render_ctx.brush_cache.get_brush(target, &hover_bg) {
                 Ok(b) => b,
                 Err(_) => return,
             };
             let sep_color = color_f(0.3, 0.3, 0.3, 1.0);
-            let sep_brush = match self.render_ctx.brush_cache.get_brush(target, &sep_color) {
+            let sep_brush = match self.win.render_ctx.brush_cache.get_brush(target, &sep_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
             // 危险项（删除）：红色文字；hover 时红底白字，与普通项蓝底区分
             let danger_text = color_f(0.94, 0.42, 0.42, 1.0);
             let danger_text_brush =
-                match self.render_ctx.brush_cache.get_brush(target, &danger_text) {
+                match self.win.render_ctx.brush_cache.get_brush(target, &danger_text) {
                     Ok(b) => b,
                     Err(_) => return,
                 };
             let danger_hover_bg = color_f(0.78, 0.22, 0.22, 1.0);
             let danger_hover_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &danger_hover_bg)
             {
@@ -240,19 +240,19 @@ impl EditorState {
                 Err(_) => return,
             };
             let white = color_f(1.0, 1.0, 1.0, 1.0);
-            let white_brush = match self.render_ctx.brush_cache.get_brush(target, &white) {
+            let white_brush = match self.win.render_ctx.brush_cache.get_brush(target, &white) {
                 Ok(b) => b,
                 Err(_) => return,
             };
             // 快捷键提示：右对齐淡色小字
             let hint_color = color_f(0.55, 0.55, 0.55, 1.0);
-            let hint_brush = match self.render_ctx.brush_cache.get_brush(target, &hint_color) {
+            let hint_brush = match self.win.render_ctx.brush_cache.get_brush(target, &hint_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
 
             let text_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -262,7 +262,7 @@ impl EditorState {
                 )
                 .unwrap();
             let hint_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -274,7 +274,7 @@ impl EditorState {
 
             // 从顶部 padding 开始绘制菜单项
             let mut current_y = menu_y + FileNodeContextMenu::TOP_PADDING;
-            for (i, item) in self.context_menus.file_node.items.iter().enumerate() {
+            for (i, item) in self.ui.context_menus.file_node.items.iter().enumerate() {
                 if item.is_separator() {
                     let sep_rect = D2D_RECT_F {
                         left: menu_x + 8.0,
@@ -285,7 +285,7 @@ impl EditorState {
                     target.FillRectangle(&sep_rect, &sep_brush);
                     current_y += FileNodeContextMenu::SEPARATOR_HEIGHT;
                 } else {
-                    let is_hover = self.context_menus.file_node.hover_index == Some(i);
+                    let is_hover = self.ui.context_menus.file_node.hover_index == Some(i);
                     let is_danger = item.is_danger();
                     if is_hover {
                         let item_rect = D2D_RECT_F {
@@ -361,14 +361,14 @@ impl EditorState {
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
     ) {
         unsafe {
-            let menu_width = self.context_menus.tab.width;
-            let menu_height = self.context_menus.tab.menu_height();
-            let menu_x = self.context_menus.tab.x;
-            let menu_y = self.context_menus.tab.y;
+            let menu_width = self.ui.context_menus.tab.width;
+            let menu_height = self.ui.context_menus.tab.menu_height();
+            let menu_x = self.ui.context_menus.tab.x;
+            let menu_y = self.ui.context_menus.tab.y;
 
             // 背景：圆角半透明矩形
             let bg_color = color_f(40.0 / 255.0, 44.0 / 255.0, 52.0 / 255.0, 240.0 / 255.0);
-            let bg_brush = match self.render_ctx.brush_cache.get_brush(target, &bg_color) {
+            let bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &bg_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
@@ -387,13 +387,13 @@ impl EditorState {
 
             // 边框：1px 细线
             let border_color = color_f(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0, 1.0);
-            if let Ok(border_brush) = self.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
                 target.DrawRoundedRectangle(&rounded_rect, &border_brush, 1.0, None);
             }
 
             // 阴影（右侧 + 底部，与其他菜单一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
                 let shadow_right = D2D_RECT_F {
                     left: menu_rect.right,
                     top: menu_rect.top + 4.0,
@@ -413,7 +413,7 @@ impl EditorState {
             // 文本画刷
             let normal_text_color = color_f(220.0 / 255.0, 220.0 / 255.0, 220.0 / 255.0, 1.0);
             let normal_text_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &normal_text_color)
             {
@@ -422,7 +422,7 @@ impl EditorState {
             };
             let hover_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let hover_text_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &hover_text_color)
             {
@@ -431,7 +431,7 @@ impl EditorState {
             };
             let disabled_text_color = color_f(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 1.0);
             let disabled_text_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &disabled_text_color)
             {
@@ -440,7 +440,7 @@ impl EditorState {
             };
             let hover_bg_color = color_f(80.0 / 255.0, 120.0 / 255.0, 200.0 / 255.0, 200.0 / 255.0);
             let hover_bg_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &hover_bg_color)
             {
@@ -448,13 +448,13 @@ impl EditorState {
                 Err(_) => return,
             };
             let sep_color = color_f(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0, 200.0 / 255.0);
-            let sep_brush = match self.render_ctx.brush_cache.get_brush(target, &sep_color) {
+            let sep_brush = match self.win.render_ctx.brush_cache.get_brush(target, &sep_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
 
             let text_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -465,29 +465,29 @@ impl EditorState {
                 .unwrap();
 
             // 从顶部 padding 开始绘制菜单项
-            let mut current_y = menu_y + self.context_menus.tab.top_padding;
-            for (i, item) in self.context_menus.tab.items.iter().enumerate() {
+            let mut current_y = menu_y + self.ui.context_menus.tab.top_padding;
+            for (i, item) in self.ui.context_menus.tab.items.iter().enumerate() {
                 if item.is_separator() {
                     // 分隔符：1px 水平线
                     let sep_rect = D2D_RECT_F {
                         left: menu_x + 8.0,
-                        top: current_y + (self.context_menus.tab.separator_height - 1.0) / 2.0,
+                        top: current_y + (self.ui.context_menus.tab.separator_height - 1.0) / 2.0,
                         right: menu_x + menu_width - 8.0,
                         bottom: current_y
-                            + (self.context_menus.tab.separator_height - 1.0) / 2.0
+                            + (self.ui.context_menus.tab.separator_height - 1.0) / 2.0
                             + 1.0,
                     };
                     target.FillRectangle(&sep_rect, &sep_brush);
-                    current_y += self.context_menus.tab.separator_height;
+                    current_y += self.ui.context_menus.tab.separator_height;
                 } else {
-                    let is_hover = self.context_menus.tab.hover_index == Some(i);
+                    let is_hover = self.ui.context_menus.tab.hover_index == Some(i);
                     if is_hover {
                         // hover 项背景（圆角）
                         let item_rect = D2D_RECT_F {
                             left: menu_x + 3.0,
                             top: current_y,
                             right: menu_x + menu_width - 3.0,
-                            bottom: current_y + self.context_menus.tab.item_height,
+                            bottom: current_y + self.ui.context_menus.tab.item_height,
                         };
                         let item_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
                             rect: item_rect,
@@ -503,7 +503,7 @@ impl EditorState {
                         left: menu_x + 12.0,
                         top: current_y,
                         right: menu_x + menu_width - 12.0,
-                        bottom: current_y + self.context_menus.tab.item_height,
+                        bottom: current_y + self.ui.context_menus.tab.item_height,
                     };
                     let text_brush = if !item.enabled {
                         &disabled_text_brush
@@ -520,7 +520,7 @@ impl EditorState {
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
-                    current_y += self.context_menus.tab.item_height;
+                    current_y += self.ui.context_menus.tab.item_height;
                 }
             }
         }
@@ -540,14 +540,14 @@ impl EditorState {
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
     ) {
         unsafe {
-            let menu_width = self.context_menus.activity_bar.width;
-            let menu_height = self.context_menus.activity_bar.menu_height();
-            let menu_x = self.context_menus.activity_bar.x;
-            let menu_y = self.context_menus.activity_bar.y;
+            let menu_width = self.ui.context_menus.activity_bar.width;
+            let menu_height = self.ui.context_menus.activity_bar.menu_height();
+            let menu_x = self.ui.context_menus.activity_bar.x;
+            let menu_y = self.ui.context_menus.activity_bar.y;
 
             // 背景：圆角半透明矩形
             let bg_color = color_f(40.0 / 255.0, 44.0 / 255.0, 52.0 / 255.0, 240.0 / 255.0);
-            let bg_brush = match self.render_ctx.brush_cache.get_brush(target, &bg_color) {
+            let bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &bg_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
@@ -566,13 +566,13 @@ impl EditorState {
 
             // 边框：1px 细线
             let border_color = color_f(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0, 1.0);
-            if let Ok(border_brush) = self.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
                 target.DrawRoundedRectangle(&rounded_rect, &border_brush, 1.0, None);
             }
 
             // 阴影（右侧 + 底部，与其他菜单一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
                 let shadow_right = D2D_RECT_F {
                     left: menu_rect.right,
                     top: menu_rect.top + 4.0,
@@ -592,7 +592,7 @@ impl EditorState {
             // 文本画刷
             let normal_text_color = color_f(220.0 / 255.0, 220.0 / 255.0, 220.0 / 255.0, 1.0);
             let normal_text_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &normal_text_color)
             {
@@ -601,7 +601,7 @@ impl EditorState {
             };
             let hover_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let hover_text_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &hover_text_color)
             {
@@ -610,7 +610,7 @@ impl EditorState {
             };
             let disabled_text_color = color_f(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 1.0);
             let disabled_text_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &disabled_text_color)
             {
@@ -619,7 +619,7 @@ impl EditorState {
             };
             let hover_bg_color = color_f(80.0 / 255.0, 120.0 / 255.0, 200.0 / 255.0, 200.0 / 255.0);
             let hover_bg_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &hover_bg_color)
             {
@@ -627,19 +627,19 @@ impl EditorState {
                 Err(_) => return,
             };
             let sep_color = color_f(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0, 200.0 / 255.0);
-            let sep_brush = match self.render_ctx.brush_cache.get_brush(target, &sep_color) {
+            let sep_brush = match self.win.render_ctx.brush_cache.get_brush(target, &sep_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
             // 勾选标记画刷（使用 hover 文本色）
             let check_color = color_f(180.0 / 255.0, 220.0 / 255.0, 1.0, 1.0);
-            let check_brush = match self.render_ctx.brush_cache.get_brush(target, &check_color) {
+            let check_brush = match self.win.render_ctx.brush_cache.get_brush(target, &check_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
 
             let text_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -650,30 +650,30 @@ impl EditorState {
                 .unwrap();
 
             // 从顶部 padding 开始绘制菜单项
-            let mut current_y = menu_y + self.context_menus.activity_bar.top_padding;
-            for (i, item) in self.context_menus.activity_bar.items.iter().enumerate() {
+            let mut current_y = menu_y + self.ui.context_menus.activity_bar.top_padding;
+            for (i, item) in self.ui.context_menus.activity_bar.items.iter().enumerate() {
                 if item.is_separator() {
                     // 分隔符：1px 水平线
                     let sep_rect = D2D_RECT_F {
                         left: menu_x + 8.0,
                         top: current_y
-                            + (self.context_menus.activity_bar.separator_height - 1.0) / 2.0,
+                            + (self.ui.context_menus.activity_bar.separator_height - 1.0) / 2.0,
                         right: menu_x + menu_width - 8.0,
                         bottom: current_y
-                            + (self.context_menus.activity_bar.separator_height - 1.0) / 2.0
+                            + (self.ui.context_menus.activity_bar.separator_height - 1.0) / 2.0
                             + 1.0,
                     };
                     target.FillRectangle(&sep_rect, &sep_brush);
-                    current_y += self.context_menus.activity_bar.separator_height;
+                    current_y += self.ui.context_menus.activity_bar.separator_height;
                 } else {
-                    let is_hover = self.context_menus.activity_bar.hover_index == Some(i);
+                    let is_hover = self.ui.context_menus.activity_bar.hover_index == Some(i);
                     if is_hover {
                         // hover 项背景（圆角）
                         let item_rect = D2D_RECT_F {
                             left: menu_x + 3.0,
                             top: current_y,
                             right: menu_x + menu_width - 3.0,
-                            bottom: current_y + self.context_menus.activity_bar.item_height,
+                            bottom: current_y + self.ui.context_menus.activity_bar.item_height,
                         };
                         let item_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
                             rect: item_rect,
@@ -710,7 +710,7 @@ impl EditorState {
                         left: menu_x + 32.0,
                         top: current_y,
                         right: menu_x + menu_width - 12.0,
-                        bottom: current_y + self.context_menus.activity_bar.item_height,
+                        bottom: current_y + self.ui.context_menus.activity_bar.item_height,
                     };
                     let text_brush = if !item.enabled {
                         &disabled_text_brush
@@ -727,7 +727,7 @@ impl EditorState {
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
-                    current_y += self.context_menus.activity_bar.item_height;
+                    current_y += self.ui.context_menus.activity_bar.item_height;
                 }
             }
         }
@@ -756,7 +756,7 @@ impl EditorState {
                 continue;
             }
             let label_w = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .measure_text_width(&item.label, LABEL_FONT_SIZE, normal_weight)
                 .unwrap_or(0.0);
@@ -764,7 +764,7 @@ impl EditorState {
                 .shortcut
                 .as_ref()
                 .and_then(|s| {
-                    self.render_ctx.text_format_cache.measure_text_width(
+                    self.win.render_ctx.text_format_cache.measure_text_width(
                         s,
                         SHORTCUT_FONT_SIZE,
                         normal_weight,
@@ -793,60 +793,60 @@ impl EditorState {
     ) {
         unsafe {
             // 子菜单需要保证可读性，背景强制不透明，避免后面文件树/编辑器内容干扰
-            let bg_color = if self.theme.glass_enabled {
-                let mut c = self.theme.submenu_bg;
+            let bg_color = if self.win.theme.glass_enabled {
+                let mut c = self.win.theme.submenu_bg;
                 c.a = 1.0;
                 c
             } else {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
             let bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
             let text_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let disabled_color = color_f(0.5, 0.5, 0.5, 1.0);
             let disabled_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &disabled_color)
                 .unwrap();
-            let sep_color = if self.theme.glass_enabled {
-                self.theme.panel_border
+            let sep_color = if self.win.theme.glass_enabled {
+                self.win.theme.panel_border
             } else {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let sep_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
             // 悬停项高亮（强调蓝）与提亮文字画刷
             let hover_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
                 .unwrap();
             let hover_text_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
                 .unwrap();
             // 快捷键说明文字弱化，拉开与菜单名的层级
             let shortcut_dim_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.55, 0.57, 0.62, 1.0))
                 .unwrap();
 
             let text_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -856,7 +856,7 @@ impl EditorState {
                 )
                 .unwrap();
             let shortcut_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -894,7 +894,7 @@ impl EditorState {
 
             // 阴影（右侧 + 底部，与应用内其他弹出菜单一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
                 let shadow_right = D2D_RECT_F {
                     left: bg_rect.right,
                     top: bg_rect.top + 4.0,
@@ -915,12 +915,12 @@ impl EditorState {
             target.FillRoundedRectangle(&bg_rounded, &bg_brush);
 
             // 圆角描边（非玻璃模式使用中性灰）
-            let border_color = if self.theme.glass_enabled {
-                self.theme.panel_border
+            let border_color = if self.win.theme.glass_enabled {
+                self.win.theme.panel_border
             } else {
                 color_f(0.30, 0.32, 0.36, 1.0)
             };
-            if let Ok(border_brush) = self.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
                 target.DrawRoundedRectangle(&bg_rounded, &border_brush, 1.0, None);
             }
 
@@ -943,7 +943,7 @@ impl EditorState {
                     item_y += 8.0;
                 } else {
                     // 悬停项：圆角高亮背景，提供明确的选中反馈
-                    let is_hover = self.menu_bar.submenu_hover == Some(item_idx);
+                    let is_hover = self.ui.menu_bar.submenu_hover == Some(item_idx);
                     if is_hover && item.enabled {
                         // 首项顶部圆角与面板一致(6.0)，末项底部圆角与面板一致，
                         // 避免高亮矩形在面板圆角处产生切割感
@@ -1038,54 +1038,54 @@ impl EditorState {
         unsafe {
             let input_height = 40.0;
             let item_height = 36.0;
-            let visible_count = self.command_palette.visible_count();
+            let visible_count = self.ui.command_palette.visible_count();
             let total_height = input_height + (visible_count as f32 * item_height) + 16.0;
 
-            let bg_color = if self.theme.glass_enabled {
-                self.theme.command_palette_bg
+            let bg_color = if self.win.theme.glass_enabled {
+                self.win.theme.command_palette_bg
             } else {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
             let bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let border_color = color_f(0.0, 0.47, 0.83, 1.0);
             let border_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
-            let input_bg_color = if self.theme.glass_enabled {
+            let input_bg_color = if self.win.theme.glass_enabled {
                 color_f(0.12, 0.12, 0.12, 0.85)
             } else {
                 color_f(0.12, 0.12, 0.12, 1.0)
             };
             let input_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
             let text_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
-                .get_brush(target, &self.theme.text_default)
+                .get_brush(target, &self.win.theme.text_default)
                 .unwrap();
             let selected_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             let desc_color = color_f(0.6, 0.6, 0.6, 1.0);
             let desc_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &desc_color)
                 .unwrap();
             let shortcut_color = color_f(0.5, 0.5, 0.5, 1.0);
             let shortcut_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &shortcut_color)
                 .unwrap();
@@ -1099,11 +1099,11 @@ impl EditorState {
             target.FillRectangle(&bg_rect, &bg_brush);
 
             // 玻璃模式下添加边框和阴影
-            if self.theme.glass_enabled {
+            if self.win.theme.glass_enabled {
                 let panel_border = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
-                    .get_brush(target, &self.theme.panel_border)
+                    .get_brush(target, &self.win.theme.panel_border)
                     .unwrap();
                 let top_border = D2D_RECT_F {
                     left: x,
@@ -1121,9 +1121,9 @@ impl EditorState {
                 target.FillRectangle(&bottom_border, &panel_border);
                 let _ = glass::draw_panel_shadow(
                     target,
-                    &mut self.render_ctx.brush_cache,
+                    &mut self.win.render_ctx.brush_cache,
                     &bg_rect,
-                    &self.theme.shadow,
+                    &self.win.theme.shadow,
                     6.0,
                 );
             }
@@ -1145,7 +1145,7 @@ impl EditorState {
             target.FillRectangle(&input_rect, &input_bg_brush);
 
             let input_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     14.0,
@@ -1154,7 +1154,7 @@ impl EditorState {
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
                 )
                 .unwrap();
-            let query = self.command_palette.query.clone();
+            let query = self.ui.command_palette.query.clone();
             let query_wide: Vec<u16> = query.encode_utf16().chain(Some(0)).collect();
             let query_rect = D2D_RECT_F {
                 left: x + 16.0,
@@ -1172,7 +1172,7 @@ impl EditorState {
             );
 
             let item_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -1182,7 +1182,7 @@ impl EditorState {
                 )
                 .unwrap();
             let desc_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -1192,7 +1192,7 @@ impl EditorState {
                 )
                 .unwrap();
             let shortcut_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -1203,11 +1203,11 @@ impl EditorState {
                 .unwrap();
 
             // 确保矢量图标几何已创建
-            self.icons.ensure_created_from_target(target);
+            self.ui.icons.ensure_created_from_target(target);
 
             for i in 0..visible_count {
                 let item_y = y + input_height + 8.0 + (i as f32 * item_height);
-                let is_selected = i == self.command_palette.selected_index;
+                let is_selected = i == self.ui.command_palette.selected_index;
 
                 if is_selected {
                     let sel_rect = D2D_RECT_F {
@@ -1219,13 +1219,13 @@ impl EditorState {
                     target.FillRectangle(&sel_rect, &selected_brush);
                 }
 
-                if let Some(item) = self.command_palette.get_item(i) {
+                if let Some(item) = self.ui.command_palette.get_item(i) {
                     // 前置矢量图标
                     let mut text_left = x + 16.0;
                     if let Some(icon_kind) = item.icon {
                         let icon_size = 18.0f32;
                         let icon_y = item_y + (item_height - icon_size) / 2.0;
-                        self.icons.draw(
+                        self.ui.icons.draw(
                             target,
                             icon_kind,
                             x + 16.0,

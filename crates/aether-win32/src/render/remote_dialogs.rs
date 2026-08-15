@@ -8,60 +8,60 @@ impl EditorState {
         unsafe {
             let width = 400.0f32;
             let height = 420.0f32;
-            let x = (self.window_width as f32 - width) / 2.0;
-            let y = (self.window_height as f32 - height) / 2.0;
+            let x = (self.win.window_width as f32 - width) / 2.0;
+            let y = (self.win.window_height as f32 - height) / 2.0;
 
             let bg_color = color_f(0.18, 0.18, 0.18, 1.0);
             let bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let border_color = color_f(0.3, 0.3, 0.3, 1.0);
             let border_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             let text_color = color_f(0.9, 0.9, 0.9, 1.0);
             let text_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let dim_color = color_f(0.5, 0.5, 0.5, 1.0);
             let dim_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let input_bg_color = color_f(0.12, 0.12, 0.12, 1.0);
             let input_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
             let btn_bg_color = color_f(0.0, 0.47, 0.83, 1.0);
             let btn_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg_color)
                 .unwrap();
             let btn_hover_color = color_f(0.0, 0.55, 0.95, 1.0);
             let btn_hover_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
             let overlay_color = color_f(0.0, 0.0, 0.0, 0.5);
             let overlay_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &overlay_color)
                 .unwrap();
 
             let format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -71,7 +71,7 @@ impl EditorState {
                 )
                 .unwrap();
             let title_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     14.0,
@@ -85,8 +85,8 @@ impl EditorState {
             let overlay_rect = D2D_RECT_F {
                 left: 0.0,
                 top: 0.0,
-                right: self.window_width as f32,
-                bottom: self.window_height as f32,
+                right: self.win.window_width as f32,
+                bottom: self.win.window_height as f32,
             };
             target.FillRectangle(&overlay_rect, &overlay_brush);
 
@@ -137,7 +137,7 @@ impl EditorState {
                 };
                 let err_color = color_f(0.9, 0.2, 0.2, 1.0);
                 let err_brush = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &err_color)
                     .unwrap();
@@ -209,7 +209,7 @@ impl EditorState {
                     };
                     let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
                     let focus_brush = self
-                        .render_ctx
+    .win.render_ctx
                         .brush_cache
                         .get_brush(target, &focus_color)
                         .unwrap();
@@ -317,7 +317,7 @@ impl EditorState {
                         };
                         let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
                         let focus_brush = self
-                            .render_ctx
+    .win.render_ctx
                             .brush_cache
                             .get_brush(target, &focus_color)
                             .unwrap();
@@ -380,7 +380,7 @@ impl EditorState {
                         };
                         let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
                         let focus_brush = self
-                            .render_ctx
+    .win.render_ctx
                             .brush_cache
                             .get_brush(target, &focus_color)
                             .unwrap();
@@ -437,7 +437,7 @@ impl EditorState {
                         };
                         let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
                         let focus_brush = self
-                            .render_ctx
+    .win.render_ctx
                             .brush_cache
                             .get_brush(target, &focus_color)
                             .unwrap();
@@ -495,13 +495,13 @@ impl EditorState {
             };
             let cancel_bg_color = color_f(0.25, 0.25, 0.25, 1.0);
             let cancel_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &cancel_bg_color)
                 .unwrap();
             let cancel_hover_color = color_f(0.35, 0.35, 0.35, 1.0);
             let cancel_hover_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &cancel_hover_color)
                 .unwrap();
@@ -553,60 +553,60 @@ impl EditorState {
         unsafe {
             let width = 400.0f32;
             let height = 200.0f32;
-            let x = (self.window_width as f32 - width) / 2.0;
-            let y = (self.window_height as f32 - height) / 2.0;
+            let x = (self.win.window_width as f32 - width) / 2.0;
+            let y = (self.win.window_height as f32 - height) / 2.0;
 
             let bg_color = color_f(0.18, 0.18, 0.18, 1.0);
             let bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let border_color = color_f(0.3, 0.3, 0.3, 1.0);
             let border_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             let text_color = color_f(0.9, 0.9, 0.9, 1.0);
             let text_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let dim_color = color_f(0.5, 0.5, 0.5, 1.0);
             let dim_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let input_bg_color = color_f(0.12, 0.12, 0.12, 1.0);
             let input_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
             let btn_bg_color = color_f(0.0, 0.47, 0.83, 1.0);
             let btn_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg_color)
                 .unwrap();
             let btn_hover_color = color_f(0.0, 0.55, 0.95, 1.0);
             let btn_hover_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
             let overlay_color = color_f(0.0, 0.0, 0.0, 0.5);
             let overlay_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &overlay_color)
                 .unwrap();
 
             let format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -616,7 +616,7 @@ impl EditorState {
                 )
                 .unwrap();
             let title_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     14.0,
@@ -630,8 +630,8 @@ impl EditorState {
             let overlay_rect = D2D_RECT_F {
                 left: 0.0,
                 top: 0.0,
-                right: self.window_width as f32,
-                bottom: self.window_height as f32,
+                right: self.win.window_width as f32,
+                bottom: self.win.window_height as f32,
             };
             target.FillRectangle(&overlay_rect, &overlay_brush);
 
@@ -720,7 +720,7 @@ impl EditorState {
                 };
                 let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
                 let focus_brush = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &focus_color)
                     .unwrap();
@@ -739,7 +739,7 @@ impl EditorState {
                 };
                 let err_color = color_f(0.9, 0.2, 0.2, 1.0);
                 let err_brush = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &err_color)
                     .unwrap();
@@ -799,13 +799,13 @@ impl EditorState {
             };
             let cancel_bg_color = color_f(0.25, 0.25, 0.25, 1.0);
             let cancel_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &cancel_bg_color)
                 .unwrap();
             let cancel_hover_color = color_f(0.35, 0.35, 0.35, 1.0);
             let cancel_hover_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &cancel_hover_color)
                 .unwrap();

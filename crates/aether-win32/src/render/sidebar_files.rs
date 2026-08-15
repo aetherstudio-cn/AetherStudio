@@ -10,7 +10,7 @@ impl EditorState {
         height: f32,
         text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
     ) {
-        let s = self.dpi_scale;
+        let s = self.win.dpi_scale;
         // 动画收起期间侧边栏宽度缩小到无法显示内容时，直接跳过所有文字/图标渲染，
         // 避免文字被挤压产生重影（仅保留背景填充，由 render_sidebar 处理）。
         if width < 60.0 * s {
@@ -18,9 +18,9 @@ impl EditorState {
         }
         unsafe {
             // 确保矢量图标几何已创建（FilePython / FileJava / FileText）
-            self.icons.ensure_created_from_target(target);
+            self.ui.icons.ensure_created_from_target(target);
             let ui_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     12.0 * s,
@@ -31,7 +31,7 @@ impl EditorState {
                 .unwrap();
             // 章节标题：8px 加粗，紧凑风格
             let header_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     8.0 * s,
@@ -41,7 +41,7 @@ impl EditorState {
                 )
                 .unwrap();
             let tree_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     8.0 * s,
@@ -52,7 +52,7 @@ impl EditorState {
                 .unwrap();
             // 根目录行（工作区文件夹名）加粗显示（VS Code 风格）
             let tree_bold_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     8.0 * s,
@@ -63,47 +63,47 @@ impl EditorState {
                 .unwrap();
             let dir_color = color_f(0.9, 0.9, 0.9, 1.0);
             let dir_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &dir_color)
                 .unwrap();
-            let sel_color = if self.theme.glass_enabled {
-                self.theme.glow_selection
+            let sel_color = if self.win.theme.glass_enabled {
+                self.win.theme.glow_selection
             } else {
                 color_f(0.0, 0.47, 0.83, 1.0)
             };
             let sel_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &sel_color)
                 .unwrap();
-            let hover_color = if self.theme.glass_enabled {
+            let hover_color = if self.win.theme.glass_enabled {
                 color_f(0.25, 0.25, 0.27, 0.70)
             } else {
                 color_f(0.2, 0.2, 0.2, 1.0)
             };
             let hover_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
             // 缩进参考线：白色 8% 细线（VS Code 风格）
             let guide_color = color_f(1.0, 1.0, 1.0, 0.08);
             let guide_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &guide_color)
                 .unwrap();
             // 章节分隔线颜色
             let sep_color = color_f(0.2, 0.2, 0.2, 1.0);
             let sep_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
             let btn_hover_color = color_f(0.28, 0.28, 0.28, 1.0);
             let btn_hover_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
@@ -143,13 +143,13 @@ impl EditorState {
                 bottom: y + (header_h + btn_size) / 2.0,
             };
             // 保存按钮区域供 hit test 使用
-            self.file_tree_new_file_btn = Some(crate::layout::Region::new(
+            self.fs.file_tree_new_file_btn = Some(crate::layout::Region::new(
                 new_file_rect.left,
                 new_file_rect.top,
                 new_file_rect.right - new_file_rect.left,
                 new_file_rect.bottom - new_file_rect.top,
             ));
-            self.file_tree_new_folder_btn = Some(crate::layout::Region::new(
+            self.fs.file_tree_new_folder_btn = Some(crate::layout::Region::new(
                 new_folder_rect.left,
                 new_folder_rect.top,
                 new_folder_rect.right - new_folder_rect.left,
@@ -157,14 +157,14 @@ impl EditorState {
             ));
 
             let nf_hover = self
-                .file_tree_new_file_btn
+    .fs.file_tree_new_file_btn
                 .as_ref()
-                .map(|r| r.contains(self.hover.last_mouse_x, self.hover.last_mouse_y))
+                .map(|r| r.contains(self.input.hover.last_mouse_x, self.input.hover.last_mouse_y))
                 .unwrap_or(false);
             let nfo_hover = self
-                .file_tree_new_folder_btn
+    .fs.file_tree_new_folder_btn
                 .as_ref()
-                .map(|r| r.contains(self.hover.last_mouse_x, self.hover.last_mouse_y))
+                .map(|r| r.contains(self.input.hover.last_mouse_x, self.input.hover.last_mouse_y))
                 .unwrap_or(false);
 
             // 轻量化：常态不画背景色块，仅 hover 时显示浅色反馈
@@ -177,7 +177,7 @@ impl EditorState {
 
             // 矢量描边图标替代 emoji（➕/📁）：细线条、可缩放、与主题同色
             let icon_inset = 1.5f32 * s;
-            self.icons.draw(
+            self.ui.icons.draw(
                 target,
                 crate::icons::IconKind::NewFile,
                 new_file_rect.left + icon_inset,
@@ -186,7 +186,7 @@ impl EditorState {
                 btn_size - icon_inset * 2.0,
                 text_brush,
             );
-            self.icons.draw(
+            self.ui.icons.draw(
                 target,
                 crate::icons::IconKind::OpenFolder,
                 new_folder_rect.left + icon_inset,
@@ -208,7 +208,7 @@ impl EditorState {
             // 内联输入行（新建文件/文件夹/重命名）已改为树内行，
             // 在树绘制完成后叠加绘制（见本函数尾部）。
 
-            if self.file_tree.is_some() {
+            if self.fs.file_tree.is_some() {
                 let node_h = crate::layout::FILE_TREE_ROW_HEIGHT * s;
                 let base_x = x + 10.0 * s;
                 let arrow_w = crate::layout::FILE_TREE_ARROW_COL * s;
@@ -217,9 +217,9 @@ impl EditorState {
                 // 避免 dpi_scale / scroll / inline input 不一致时焦点错位）
                 let root_top = y + self.file_tree_list_start_y();
                 // 拖拽放置目标为工作区根目录时高亮根目录行（填充 + 边框）
-                let root_drop = self.mouse_press.file_tree_dragging
-                    && self.file_drag.drop_target == Some(crate::file_drag_drop::DropTarget::Root);
-                if self.hover_file_tree_root || root_drop {
+                let root_drop = self.input.mouse_press.file_tree_dragging
+                    && self.fs.file_drag.drop_target == Some(crate::file_drag_drop::DropTarget::Root);
+                if self.fs.hover_file_tree_root || root_drop {
                     let hover_rect = D2D_RECT_F {
                         left: x,
                         top: root_top,
@@ -231,14 +231,14 @@ impl EditorState {
                         target.DrawRectangle(&hover_rect, &sel_brush, 1.0 * s, None);
                     }
                 }
-                let chevron = if self.file_tree_root_expanded {
+                let chevron = if self.fs.file_tree_root_expanded {
                     crate::icons::IconKind::ChevronDown
                 } else {
                     crate::icons::IconKind::ChevronRight
                 };
                 let ch_size = 9.0 * s;
                 // chevron 左边缘对齐"资源管理器"标题文字（x + 10*s）
-                self.icons.draw(
+                self.ui.icons.draw(
                     target,
                     chevron,
                     base_x,
@@ -248,14 +248,14 @@ impl EditorState {
                     &dir_brush,
                 );
                 let root_name = self
-                    .current_folder
+    .fs.current_folder
                     .as_ref()
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "工作区".to_string());
                 let root_text_left = base_x + arrow_w + 1.0 * s;
                 let max_text_w = (x + width - 10.0 * s - root_text_left).max(1.0);
-                if let Ok(layout) = self.render_ctx.text_layout_cache.create_ellipsis_layout(
+                if let Ok(layout) = self.win.render_ctx.text_layout_cache.create_ellipsis_layout(
                     &root_name,
                     &tree_bold_format,
                     max_text_w,
@@ -272,11 +272,11 @@ impl EditorState {
                 }
             }
 
-            if self.file_tree.is_some() {
-                if self.file_tree_root_expanded {
+            if self.fs.file_tree.is_some() {
+                if self.fs.file_tree_root_expanded {
                     // 内联输入行几何依赖可见行数组，渲染帧先确保其最新
                     self.ensure_file_tree_rows();
-                    let tree = self.file_tree.as_ref().unwrap();
+                    let tree = self.fs.file_tree.as_ref().unwrap();
                     // 节点列表从根目录行下方开始（公式与 file_tree_nodes_start_y 一致）
                     let mut current_y =
                         y + self.file_tree_list_start_y() + crate::layout::FILE_TREE_ROW_HEIGHT * s;
@@ -297,7 +297,7 @@ impl EditorState {
                         &guide_brush,
                     );
                 }
-            } else if self.file_tree_input.is_none() {
+            } else if self.fs.file_tree_input.is_none() {
                 let text: Vec<u16> = "按 Ctrl+K 打开文件夹"
                     .encode_utf16()
                     .chain(Some(0))
@@ -321,12 +321,12 @@ impl EditorState {
             // 内联输入行（树内叠加层）：新建时占据目标目录子列表首行
             //（render_tree_nodes 已为其空出一行），重命名时覆盖原行文本区
             //（原行图标保留在框外左侧）。几何与 file_tree_input_row_geom 共用。
-            if self.file_tree_input.is_some() {
+            if self.fs.file_tree_input.is_some() {
                 if let Some((top_rel, item_left_rel, text_left_rel)) =
                     self.file_tree_input_row_geom()
                 {
                     let (kind, value, composition, caret_visible) = {
-                        let input = self.file_tree_input.as_ref().unwrap();
+                        let input = self.fs.file_tree_input.as_ref().unwrap();
                         (
                             input.kind,
                             input.value.clone(),
@@ -344,7 +344,7 @@ impl EditorState {
                         match kind {
                             crate::editor::FileTreeInputKind::NewFolder => {
                                 let ch_size = 9.0 * s;
-                                self.icons.draw(
+                                self.ui.icons.draw(
                                     target,
                                     crate::icons::IconKind::ChevronRight,
                                     icon_left
@@ -360,7 +360,7 @@ impl EditorState {
                                 let icon_kind = self
                                     .get_file_vector_icon(&value)
                                     .unwrap_or(crate::icons::IconKind::File);
-                                self.icons.draw(
+                                self.ui.icons.draw(
                                     target,
                                     icon_kind,
                                     icon_left,
@@ -382,13 +382,13 @@ impl EditorState {
                         };
                         let input_bg = color_f(0.12, 0.12, 0.12, 1.0);
                         let input_bg_brush = self
-                            .render_ctx
+    .win.render_ctx
                             .brush_cache
                             .get_brush(target, &input_bg)
                             .unwrap();
                         let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
                         let focus_brush = self
-                            .render_ctx
+    .win.render_ctx
                             .brush_cache
                             .get_brush(target, &focus_color)
                             .unwrap();
@@ -398,7 +398,7 @@ impl EditorState {
                         // 文本：与树行同字号，垂直居中
                         let ft_font_size = 8.0f32 * s;
                         let input_format = self
-                            .render_ctx
+    .win.render_ctx
                             .text_format_cache
                             .get_format(
                                 ft_font_size,
@@ -424,7 +424,7 @@ impl EditorState {
                             DWRITE_MEASURING_MODE_NATURAL,
                         );
                         let value_width = self
-                            .render_ctx
+    .win.render_ctx
                             .text_format_cache
                             .measure_text_width(
                                 &value,
@@ -442,7 +442,7 @@ impl EditorState {
                                 ..text_rect
                             };
                             let comp_brush = self
-                                .render_ctx
+    .win.render_ctx
                                 .brush_cache
                                 .get_brush(target, &color_f(1.0, 0.9, 0.4, 1.0))
                                 .unwrap();
@@ -455,7 +455,7 @@ impl EditorState {
                                 DWRITE_MEASURING_MODE_NATURAL,
                             );
                             comp_width = self
-                                .render_ctx
+    .win.render_ctx
                                 .text_format_cache
                                 .measure_text_width(
                                     comp,
@@ -475,9 +475,9 @@ impl EditorState {
                                 bottom: row_top + node_h - 2.0 * s,
                             };
                             let cursor_brush = self
-                                .render_ctx
+    .win.render_ctx
                                 .brush_cache
-                                .get_brush(target, &self.theme.cursor_color)
+                                .get_brush(target, &self.win.theme.cursor_color)
                                 .unwrap();
                             target.FillRectangle(&caret_rect, &cursor_brush);
                         }
@@ -487,14 +487,14 @@ impl EditorState {
 
             // 拖拽浮标：跟随鼠标的文件名标签（仅在侧边栏内绘制，
             // 保证脏矩形只涉及侧边栏区域，不在编辑器区域留残影）
-            if self.mouse_press.file_tree_dragging && !self.file_drag.drag_label.is_empty() {
-                let gx = self.file_drag.cur_x;
-                let gy = self.file_drag.cur_y;
+            if self.input.mouse_press.file_tree_dragging && !self.fs.file_drag.drag_label.is_empty() {
+                let gx = self.fs.file_drag.cur_x;
+                let gy = self.fs.file_drag.cur_y;
                 if gx >= x && gx < x + width && gy >= y && gy < y + height {
-                    let label = self.file_drag.drag_label.as_str();
+                    let label = self.fs.file_drag.drag_label.as_str();
                     // 宽度用进入拖拽时的缓存值（避免每帧 DirectWrite 测量）
                     let text_w = self
-                        .file_drag
+    .fs.file_drag
                         .drag_label_width
                         .max(12.0 * s)
                         .min(width * 0.7);
@@ -512,13 +512,13 @@ impl EditorState {
                     };
                     let ghost_bg = color_f(0.15, 0.15, 0.15, 0.95);
                     let ghost_bg_brush = self
-                        .render_ctx
+    .win.render_ctx
                         .brush_cache
                         .get_brush(target, &ghost_bg)
                         .unwrap();
                     target.FillRectangle(&ghost_rect, &ghost_bg_brush);
                     target.DrawRectangle(&ghost_rect, &sel_brush, 1.0 * s, None);
-                    if let Ok(layout) = self.render_ctx.text_layout_cache.create_ellipsis_layout(
+                    if let Ok(layout) = self.win.render_ctx.text_layout_cache.create_ellipsis_layout(
                         label,
                         &tree_format,
                         text_w.max(1.0),
@@ -561,7 +561,7 @@ impl EditorState {
         hover_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
         guide_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
     ) {
-        let s = self.dpi_scale;
+        let s = self.win.dpi_scale;
         let node_height = crate::layout::FILE_TREE_ROW_HEIGHT * s;
         // VS Code 风格两列布局：目录 = chevron + 名称（无文件夹图标），
         // 文件 = 类型图标（占据 chevron 列）+ 名称，同级名称对齐
@@ -571,7 +571,7 @@ impl EditorState {
         // 内联新建输入行占位：在目标目录（u32::MAX = 工作区根）的
         // 子列表开头空出一行，实际输入框在树绘制完成后叠加。
         // 行序公式与 file_tree_input_row_geom / skip_tree_nodes 保持一致。
-        if let Some(input) = &self.file_tree_input {
+        if let Some(input) = &self.fs.file_tree_input {
             if !matches!(input.kind, crate::editor::FileTreeInputKind::Rename)
                 && input.target_node.unwrap_or(u32::MAX) == parent_idx
             {
@@ -619,7 +619,7 @@ impl EditorState {
                 let row_right = row_left + sidebar_width;
 
                 // 绘制悬停背景
-                let is_hover = self.hover_file_node == Some(idx);
+                let is_hover = self.fs.hover_file_node == Some(idx);
                 if is_hover {
                     let hover_rect = D2D_RECT_F {
                         left: row_left,
@@ -633,7 +633,7 @@ impl EditorState {
                 }
 
                 // 绘制选中高亮背景（文件 + 目录都支持选中显示）
-                let is_selected = self.selected_file_node == Some(idx);
+                let is_selected = self.fs.selected_file_node == Some(idx);
                 if is_selected {
                     let sel_rect = D2D_RECT_F {
                         left: row_left,
@@ -648,8 +648,8 @@ impl EditorState {
 
                 // 拖拽放置目标目录：填充 + 边框高亮（拖拽视觉反馈，
                 // 绘在选中高亮之后，确保目标边框不被选中填充覆盖）
-                let is_drop_target = self.mouse_press.file_tree_dragging
-                    && self.file_drag.drop_target
+                let is_drop_target = self.input.mouse_press.file_tree_dragging
+                    && self.fs.file_drag.drop_target
                         == Some(crate::file_drag_drop::DropTarget::Directory(idx));
                 if is_drop_target {
                     let drop_rect = D2D_RECT_F {
@@ -674,27 +674,42 @@ impl EditorState {
                 // 文件夹图标；文件：彩色类型图标占据 chevron 列，未命中扩展名
                 // 时回退到通用 File 描边图标
                 if node.kind == FileKind::Directory {
-                    let chevron = if node.is_expanded {
-                        crate::icons::IconKind::ChevronDown
+                    // 加载中状态：显示时钟图标表示正在加载
+                    if node.is_loading {
+                        let ch_size = 9.0 * s;
+                        let icon_kind = crate::icons::IconKind::Clock;
+                        self.ui.icons.draw(
+                            target,
+                            icon_kind,
+                            item_left + (arrow_w - ch_size) / 2.0,
+                            *current_y + (node_height - ch_size) / 2.0,
+                            ch_size,
+                            ch_size,
+                            brush,
+                        );
                     } else {
-                        crate::icons::IconKind::ChevronRight
-                    };
-                    let ch_size = 9.0 * s;
-                    self.icons.draw(
-                        target,
-                        chevron,
-                        item_left + (arrow_w - ch_size) / 2.0,
-                        *current_y + (node_height - ch_size) / 2.0,
-                        ch_size,
-                        ch_size,
-                        brush,
-                    );
+                        let chevron = if node.is_expanded {
+                            crate::icons::IconKind::ChevronDown
+                        } else {
+                            crate::icons::IconKind::ChevronRight
+                        };
+                        let ch_size = 9.0 * s;
+                        self.ui.icons.draw(
+                            target,
+                            chevron,
+                            item_left + (arrow_w - ch_size) / 2.0,
+                            *current_y + (node_height - ch_size) / 2.0,
+                            ch_size,
+                            ch_size,
+                            brush,
+                        );
+                    }
                 } else {
                     let icon_kind = self
                         .get_file_vector_icon(name)
                         .unwrap_or(crate::icons::IconKind::File);
                     let icon_top = *current_y + (node_height - icon_size) / 2.0;
-                    self.icons.draw(
+                    self.ui.icons.draw(
                         target, icon_kind, item_left, icon_top, icon_size, icon_size, brush,
                     );
                 }
@@ -710,7 +725,7 @@ impl EditorState {
                     // 副作用是侧边栏拖动时省略号即时刷新（无缓存滞后）。
                     let max_text_w = (item_right - text_left).max(1.0);
                     let layout = self
-                        .render_ctx
+    .win.render_ctx
                         .text_layout_cache
                         .create_ellipsis_layout(name, format, max_text_w, node_height)
                         .unwrap();
@@ -775,10 +790,10 @@ impl EditorState {
     }
 
     pub(super) fn skip_tree_nodes(&self, tree: &FileTree, parent_idx: u32, current_y: &mut f32) {
-        let s = self.dpi_scale;
+        let s = self.win.dpi_scale;
         let node_height = crate::layout::FILE_TREE_ROW_HEIGHT * s;
         // 与 render_tree_nodes 同步：内联新建输入行在该父目录下占一行
-        if let Some(input) = &self.file_tree_input {
+        if let Some(input) = &self.fs.file_tree_input {
             if !matches!(input.kind, crate::editor::FileTreeInputKind::Rename)
                 && input.target_node.unwrap_or(u32::MAX) == parent_idx
             {

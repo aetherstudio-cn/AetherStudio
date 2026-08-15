@@ -10,54 +10,54 @@ impl EditorState {
         height: f32,
     ) {
         unsafe {
-            let bg_color = if self.theme.glass_enabled {
+            let bg_color = if self.win.theme.glass_enabled {
                 color_f(0.13, 0.13, 0.14, 0.95)
             } else {
                 color_f(0.13, 0.13, 0.14, 1.0)
             };
             let bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
-            let border_color = if self.theme.glass_enabled {
-                self.theme.panel_border
+            let border_color = if self.win.theme.glass_enabled {
+                self.win.theme.panel_border
             } else {
                 color_f(0.2, 0.2, 0.2, 1.0)
             };
             let _border_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             let text_color = color_f(0.8, 0.8, 0.8, 1.0);
             let _text_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let active_color = color_f(1.0, 1.0, 1.0, 1.0);
             let active_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &active_color)
                 .unwrap();
             let dim_color = color_f(0.5, 0.5, 0.5, 1.0);
             let dim_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let output_color = color_f(0.8, 0.8, 0.8, 1.0);
             let output_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &output_color)
                 .unwrap();
             let _prompt_color = color_f(0.0, 0.8, 0.0, 1.0);
 
             let ui_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -67,7 +67,7 @@ impl EditorState {
                 )
                 .unwrap();
             let mono_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -87,13 +87,13 @@ impl EditorState {
             target.FillRectangle(&bg_rect, &bg_brush);
 
             // 顶部边框（聚焦时高亮为强调色，提供视觉反馈）
-            let top_border_color = if self.terminal_panel.focused {
+            let top_border_color = if self.terminal.terminal_panel.focused {
                 color_f(0.3, 0.55, 0.85, 1.0)
             } else {
                 border_color
             };
             let top_border_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &top_border_color)
                 .unwrap();
@@ -106,7 +106,7 @@ impl EditorState {
             target.FillRectangle(&top_border, &top_border_brush);
 
             // ===== 全局搜索面板（覆盖默认终端内容） =====
-            if self.search_panel.visible {
+            if self.ui.search_panel.visible {
                 // 搜索输入框
                 let input_height = 24.0;
                 let input_rect = D2D_RECT_F {
@@ -117,7 +117,7 @@ impl EditorState {
                 };
                 let input_bg = color_f(0.18, 0.18, 0.2, 1.0);
                 let input_bg_brush = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &input_bg)
                     .unwrap();
@@ -126,13 +126,13 @@ impl EditorState {
                 // 输入框边框（聚焦时高亮）
                 let border_focused = color_f(0.3, 0.55, 0.85, 1.0);
                 let border_dim = color_f(0.3, 0.3, 0.3, 1.0);
-                let input_border_color = if self.search_panel.visible {
+                let input_border_color = if self.ui.search_panel.visible {
                     border_focused
                 } else {
                     border_dim
                 };
                 let input_border_brush = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &input_border_color)
                     .unwrap();
@@ -185,10 +185,10 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
-                let query_text = if self.search_panel.query.is_empty() {
+                let query_text = if self.ui.search_panel.query.is_empty() {
                     "输入搜索内容...".to_string()
                 } else {
-                    self.search_panel.query.clone()
+                    self.ui.search_panel.query.clone()
                 };
                 let query_wide: Vec<u16> = query_text.encode_utf16().chain(Some(0)).collect();
                 let query_rect = D2D_RECT_F {
@@ -197,7 +197,7 @@ impl EditorState {
                     right: input_rect.right - 100.0,
                     bottom: input_rect.bottom - 2.0,
                 };
-                let query_brush = if self.search_panel.query.is_empty() {
+                let query_brush = if self.ui.search_panel.query.is_empty() {
                     &dim_brush
                 } else {
                     &active_brush
@@ -212,12 +212,12 @@ impl EditorState {
                 );
 
                 // 选项标签：Aa（大小写）、.*（正则）
-                let case_label = if self.search_panel.case_sensitive {
+                let case_label = if self.ui.search_panel.case_sensitive {
                     "Aa✓"
                 } else {
                     "Aa"
                 };
-                let regex_label = if self.search_panel.regex {
+                let regex_label = if self.ui.search_panel.regex {
                     ".*✓"
                 } else {
                     ".*"
@@ -234,7 +234,7 @@ impl EditorState {
                     &case_wide,
                     &ui_format,
                     &case_rect,
-                    if self.search_panel.case_sensitive {
+                    if self.ui.search_panel.case_sensitive {
                         &active_brush
                     } else {
                         &dim_brush
@@ -253,7 +253,7 @@ impl EditorState {
                     &regex_wide,
                     &ui_format,
                     &regex_rect,
-                    if self.search_panel.regex {
+                    if self.ui.search_panel.regex {
                         &active_brush
                     } else {
                         &dim_brush
@@ -264,12 +264,12 @@ impl EditorState {
 
                 // 状态行
                 let status_y = input_rect.bottom + 4.0;
-                let status_text = if self.search_panel.is_searching {
+                let status_text = if self.ui.search_panel.is_searching {
                     "搜索中...".to_string()
-                } else if self.search_panel.status.is_empty() {
+                } else if self.ui.search_panel.status.is_empty() {
                     "按 Enter 搜索 · Esc 关闭".to_string()
                 } else {
-                    self.search_panel.status.clone()
+                    self.ui.search_panel.status.clone()
                 };
                 let status_wide: Vec<u16> = status_text.encode_utf16().chain(Some(0)).collect();
                 let status_rect = D2D_RECT_F {
@@ -292,8 +292,8 @@ impl EditorState {
                 let mut line_y = results_y;
                 let max_y = y + height - 6.0;
                 let line_h = 16.0;
-                let results = self.search_panel.results.clone();
-                let selected = self.search_panel.selected_index;
+                let results = self.ui.search_panel.results.clone();
+                let selected = self.ui.search_panel.selected_index;
                 for (i, r) in results.iter().enumerate() {
                     if line_y + line_h > max_y {
                         break;
@@ -308,7 +308,7 @@ impl EditorState {
                         };
                         let sel_bg = color_f(0.2, 0.3, 0.5, 1.0);
                         let sel_bg_brush = self
-                            .render_ctx
+    .win.render_ctx
                             .brush_cache
                             .get_brush(target, &sel_bg)
                             .unwrap();
@@ -317,7 +317,7 @@ impl EditorState {
 
                     // 文件路径（相对路径）+ 行号
                     let rel_path = self
-                        .current_folder
+    .fs.current_folder
                         .as_ref()
                         .and_then(|root| r.path.strip_prefix(root).ok())
                         .map(|p| p.to_string_lossy().to_string())
@@ -386,7 +386,7 @@ impl EditorState {
             let mut tab_x = x + 10.0;
             let tab_w = 60.0;
             for tab_kind in tabs.iter() {
-                let is_active = *tab_kind == self.bottom_panel_tab;
+                let is_active = *tab_kind == self.terminal.bottom_panel_tab;
                 let tab_rect = D2D_RECT_F {
                     left: tab_x,
                     top: y + 2.0,
@@ -396,7 +396,7 @@ impl EditorState {
                 if is_active {
                     let active_bg = color_f(0.18, 0.18, 0.2, 1.0);
                     let active_bg_brush = self
-                        .render_ctx
+    .win.render_ctx
                         .brush_cache
                         .get_brush(target, &active_bg)
                         .unwrap();
@@ -434,15 +434,15 @@ impl EditorState {
 
             // P-问题: 问题面板占位。问题数据/采集引擎后续从 diagnostics 字段设计。
             // 当前仅渲染居中提示，让用户能验证"终端/问题"切换能力已生效。
-            if self.bottom_panel_tab == BottomPanelTab::Problems {
+            if self.terminal.bottom_panel_tab == BottomPanelTab::Problems {
                 let hint_color = color_f(150.0 / 255.0, 150.0 / 255.0, 150.0 / 255.0, 1.0);
                 let hint_brush = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &hint_color)
                     .unwrap();
                 let hint_format = self
-                    .render_ctx
+    .win.render_ctx
                     .text_format_cache
                     .get_format(
                         14.0,
@@ -472,17 +472,17 @@ impl EditorState {
 
             // 终端未启动时：若有历史输出（进程已退出）则显示输出+重启提示；
             // 否则显示居中引导文案
-            if !self.terminal_panel.running {
-                if self.terminal_panel.output_lines.is_empty() {
+            if !self.terminal.terminal_panel.running {
+                if self.terminal.terminal_panel.output_lines.is_empty() {
                     // 从未启动：居中提示
                     let hint_color = color_f(150.0 / 255.0, 150.0 / 255.0, 150.0 / 255.0, 1.0);
                     let hint_brush = self
-                        .render_ctx
+    .win.render_ctx
                         .brush_cache
                         .get_brush(target, &hint_color)
                         .unwrap();
                     let hint_format = self
-                        .render_ctx
+    .win.render_ctx
                         .text_format_cache
                         .get_format(
                             14.0,
@@ -513,7 +513,7 @@ impl EditorState {
                     let content_bottom = y + height - 24.0; // 底部留空给重启提示
                     let visible_lines =
                         ((content_bottom - content_y) / line_h).floor().max(1.0) as usize;
-                    let lines = self.terminal_panel.visible_window(visible_lines);
+                    let lines = self.terminal.terminal_panel.visible_window(visible_lines);
                     let mut line_y = content_y;
                     for line in &lines {
                         if line_y + line_h > content_bottom {
@@ -539,7 +539,7 @@ impl EditorState {
                     // 底部重启提示
                     let restart_color = color_f(0.3, 0.55, 0.85, 1.0);
                     let restart_brush = self
-                        .render_ctx
+    .win.render_ctx
                         .brush_cache
                         .get_brush(target, &restart_color)
                         .unwrap();
@@ -566,7 +566,7 @@ impl EditorState {
                 // 计算可见行数并同步 ConPTY 尺寸
                 // 使用 DirectWrite 实测 11pt Consolas 等宽字符宽度，避免硬编码 7px 与渲染偏差
                 let cell_w = self
-                    .render_ctx
+    .win.render_ctx
                     .text_format_cache
                     .measure_text_width("M", 11.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
                     .unwrap_or(7.0);
@@ -576,11 +576,11 @@ impl EditorState {
                     ((content_bottom - content_y) / line_h).floor().max(1.0) as usize;
                 let term_cols = ((width - 20.0) / cell_w).max(20.0) as i16;
                 let term_rows = visible_lines.max(5) as i16;
-                self.terminal_panel.set_size(term_cols, term_rows);
-                let lines = self.terminal_panel.visible_window(visible_lines);
+                self.terminal.terminal_panel.set_size(term_cols, term_rows);
+                let lines = self.terminal.terminal_panel.visible_window(visible_lines);
 
                 // 滚动提示：用户向上浏览历史时显示提示
-                if self.terminal_panel.scroll_offset > 0 {
+                if self.terminal.terminal_panel.scroll_offset > 0 {
                     let hint_wide: Vec<u16> = "↑ 历史输出（回车回到最新）"
                         .encode_utf16()
                         .chain(Some(0))
@@ -626,17 +626,17 @@ impl EditorState {
 
                 // 渲染光标：在光标位置绘制一个半透明方块
                 // ConPTY 模式下光标位置由 ANSI 解析器跟踪
-                let total_lines = self.terminal_panel.output_lines.len();
-                let scroll_off = self.terminal_panel.scroll_offset;
+                let total_lines = self.terminal.terminal_panel.output_lines.len();
+                let scroll_off = self.terminal.terminal_panel.scroll_offset;
                 let end_line = total_lines.saturating_sub(scroll_off);
                 let start_line = end_line.saturating_sub(visible_lines);
-                let (cursor_row, cursor_col) = self.terminal_panel.cursor_position();
+                let (cursor_row, cursor_col) = self.terminal.terminal_panel.cursor_position();
                 if cursor_row >= start_line && cursor_row < end_line {
                     let display_row = cursor_row - start_line;
                     // 光标 x 使用 DirectWrite HitTestTextPosition 获取光标行前缀尾端的精确像素坐标
                     // cursor_col 是字符索引（非显示列宽），因此按字符个数取前缀
                     let cursor_x =
-                        if let Some(line) = self.terminal_panel.output_lines.get(cursor_row) {
+                        if let Some(line) = self.terminal.terminal_panel.output_lines.get(cursor_row) {
                             let char_count = line.chars().count();
                             let take = cursor_col.min(char_count);
                             let mut prefix_len = 0usize;
@@ -647,7 +647,7 @@ impl EditorState {
                             }
                             let prefix = &line[..prefix_len];
                             let prefix_x = self
-                                .render_ctx
+    .win.render_ctx
                                 .text_format_cache
                                 .text_position_x(
                                     prefix,
@@ -663,7 +663,7 @@ impl EditorState {
                         };
                     let cursor_y = content_y + display_row as f32 * line_h;
                     let cursor_w =
-                        if let Some(line) = self.terminal_panel.output_lines.get(cursor_row) {
+                        if let Some(line) = self.terminal.terminal_panel.output_lines.get(cursor_row) {
                             line.chars()
                                 .nth(cursor_col)
                                 .map(|ch| (unicode_char_width(ch) as f32).max(1.0) * cell_w)
@@ -676,7 +676,7 @@ impl EditorState {
                     if cursor_y + cursor_h <= content_bottom {
                         let cursor_color = color_f(0.8, 0.8, 0.8, 0.6);
                         let cursor_brush = self
-                            .render_ctx
+    .win.render_ctx
                             .brush_cache
                             .get_brush(target, &cursor_color)
                             .unwrap();

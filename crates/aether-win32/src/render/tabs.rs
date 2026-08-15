@@ -8,22 +8,22 @@ impl EditorState {
         let max_tab_width = 200.0;
         let gap = 2.0;
 
-        let tab_count = self.tab_bar.tabs.len();
+        let tab_count = self.editor.tab_bar.tabs.len();
         let available_width = width - 8.0;
         let tab_width = (available_width / tab_count as f32 - gap)
             .max(min_tab_width)
             .min(max_tab_width);
 
-        let mut tab_x = x + 4.0 - self.tab_bar.tab_scroll_x;
-        self.tab_bar.tab_layouts.clear();
+        let mut tab_x = x + 4.0 - self.editor.tab_bar.tab_scroll_x;
+        self.editor.tab_bar.tab_layouts.clear();
 
-        for i in 0..self.tab_bar.tabs.len() {
+        for i in 0..self.editor.tab_bar.tabs.len() {
             let tw = tab_width;
-            self.tab_bar.tab_layouts.push(crate::tabs::TabLayout {
+            self.editor.tab_bar.tab_layouts.push(crate::tabs::TabLayout {
                 index: i,
-                x: tab_x - x - 4.0 + self.tab_bar.tab_scroll_x,
+                x: tab_x - x - 4.0 + self.editor.tab_bar.tab_scroll_x,
                 width: tw,
-                close_x: tab_x - x - 4.0 + self.tab_bar.tab_scroll_x + tw - close_btn_width + 4.0,
+                close_x: tab_x - x - 4.0 + self.editor.tab_bar.tab_scroll_x + tw - close_btn_width + 4.0,
                 close_width: 16.0,
             });
             tab_x += tw + gap;
@@ -51,65 +51,65 @@ impl EditorState {
                 windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED,
             );
 
-            let bg_color = if self.theme.glass_enabled {
-                self.theme.tab_inactive_bg
+            let bg_color = if self.win.theme.glass_enabled {
+                self.win.theme.tab_inactive_bg
             } else {
                 color_f(0.145, 0.145, 0.149, 1.0)
             };
             let bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let _active_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
-                .get_brush(target, &self.theme.tab_active_bg)
+                .get_brush(target, &self.win.theme.tab_active_bg)
                 .unwrap();
             let inactive_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
-                .get_brush(target, &self.theme.tab_inactive_bg)
+                .get_brush(target, &self.win.theme.tab_inactive_bg)
                 .unwrap();
-            let hover_color = if self.theme.glass_enabled {
+            let hover_color = if self.win.theme.glass_enabled {
                 color_f(0.25, 0.25, 0.27, 0.85)
             } else {
                 color_f(0.22, 0.22, 0.24, 1.0)
             };
             let hover_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
             let text_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
-                .get_brush(target, &self.theme.text_default)
+                .get_brush(target, &self.win.theme.text_default)
                 .unwrap();
             let active_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let active_text_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &active_text_color)
                 .unwrap();
-            let border_color = if self.theme.glass_enabled {
-                self.theme.panel_border
+            let border_color = if self.win.theme.glass_enabled {
+                self.win.theme.panel_border
             } else {
                 color_f(0.2, 0.2, 0.2, 1.0)
             };
             let border_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             // 活动标签发光颜色（玻璃模式下 brighter glow）
-            let glow_color = if self.theme.glass_enabled {
+            let glow_color = if self.win.theme.glass_enabled {
                 color_f(0.35, 0.35, 0.38, 0.90)
             } else {
                 color_f(0.22, 0.22, 0.24, 1.0)
             };
             let glow_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &glow_color)
                 .unwrap();
@@ -117,20 +117,20 @@ impl EditorState {
             // SubTask 7.3: 关闭按钮矢量图标颜色 — 默认灰，hover 白
             let close_default_color = color_f(180.0 / 255.0, 180.0 / 255.0, 180.0 / 255.0, 1.0);
             let close_default_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &close_default_color)
                 .unwrap();
             let close_hover_icon_color = color_f(1.0, 1.0, 1.0, 1.0);
             let close_hover_icon_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &close_hover_icon_color)
                 .unwrap();
             // 关闭按钮 hover 时的圆角矩形背景
             let close_hover_bg_color = color_f(0.4, 0.4, 0.4, 1.0);
             let close_hover_bg_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &close_hover_bg_color)
                 .unwrap();
@@ -138,13 +138,13 @@ impl EditorState {
             // SubTask 7.4: dirty 圆点画刷（金黄色 RGBA(255,200,0,255)）
             let dirty_color = color_f(1.0, 200.0 / 255.0, 0.0, 1.0);
             let dirty_brush = self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &dirty_color)
                 .unwrap();
 
             // SubTask 7.2/7.3: 确保矢量图标几何已创建（Plus / Close）
-            self.icons.ensure_created_from_target(target);
+            self.ui.icons.ensure_created_from_target(target);
 
             // 背景
             let bg_rect = D2D_RECT_F {
@@ -156,7 +156,7 @@ impl EditorState {
             target.FillRectangle(&bg_rect, &bg_brush);
 
             let tab_format = self
-                .render_ctx
+    .win.render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -166,17 +166,17 @@ impl EditorState {
                 )
                 .unwrap();
 
-            let mut tab_x = x + 4.0 - self.tab_bar.tab_scroll_x;
+            let mut tab_x = x + 4.0 - self.editor.tab_bar.tab_scroll_x;
             let close_btn_width = 20.0;
             let gap = 2.0;
             // SubTask 7.2: 记录最后一个标签右侧位置，用于定位 "+" 按钮
             let mut last_tab_right = tab_x;
 
-            for (i, tab) in self.tab_bar.tabs.iter().enumerate() {
-                let is_active = i == self.tab_bar.active_tab;
-                let is_hover = self.tab_bar.hover_tab == Some(i);
-                let tw = if i < self.tab_bar.tab_layouts.len() {
-                    self.tab_bar.tab_layouts[i].width
+            for (i, tab) in self.editor.tab_bar.tabs.iter().enumerate() {
+                let is_active = i == self.editor.tab_bar.active_tab;
+                let is_hover = self.editor.tab_bar.hover_tab == Some(i);
+                let tw = if i < self.editor.tab_bar.tab_layouts.len() {
+                    self.editor.tab_bar.tab_layouts[i].width
                 } else {
                     100.0
                 };
@@ -214,14 +214,14 @@ impl EditorState {
                 }
 
                 // 文件名
-                // REQ-P1-09: 活动文件标签页的状态在 self.content 中，需从中读取。
-                // 但设置/欢迎等非文件标签没有独立 content，self.content 可能残留上一个
-                // 文件的内容，若直接用 self.content.file_name() 会导致活动的“设置”标签
+                // REQ-P1-09: 活动文件标签页的状态在 self.editor.content 中，需从中读取。
+                // 但设置/欢迎等非文件标签没有独立 content，self.editor.content 可能残留上一个
+                // 文件的内容，若直接用 self.editor.content.file_name() 会导致活动的“设置”标签
                 // 错误显示成某个文件名。故非文件标签一律用标签自身标题。
                 // SubTask 7.4: 不再在文件名中拼接 "●"，改为独立小圆点
                 let (name, is_dirty) = if is_active {
                     if tab.is_file() {
-                        (self.content.file_name(), self.content.is_dirty)
+                        (self.editor.content.file_name(), self.editor.content.is_dirty)
                     } else {
                         (tab.title(), false)
                     }
@@ -298,7 +298,7 @@ impl EditorState {
                 };
                 let close_icon_x = close_click_left + (close_click_size - close_icon_size) / 2.0;
                 let close_icon_y = close_click_top + (close_click_size - close_icon_size) / 2.0;
-                self.icons.draw(
+                self.ui.icons.draw(
                     target,
                     crate::icons::IconKind::Close,
                     close_icon_x,
@@ -314,18 +314,18 @@ impl EditorState {
 
             // Task 8.5: 拖拽插入指示线（蓝色 2px 垂直线）
             if let (Some(drag_idx), Some(drop_idx)) =
-                (self.tab_bar.dragging_tab, self.tab_bar.tab_drop_index)
+                (self.editor.tab_bar.dragging_tab, self.editor.tab_bar.tab_drop_index)
             {
-                if drag_idx < self.tab_bar.tabs.len() && drop_idx <= self.tab_bar.tabs.len() {
+                if drag_idx < self.editor.tab_bar.tabs.len() && drop_idx <= self.editor.tab_bar.tabs.len() {
                     let drop_line_color = color_f(100.0 / 255.0, 150.0 / 255.0, 1.0, 1.0);
                     let drop_line_brush = self
-                        .render_ctx
+    .win.render_ctx
                         .brush_cache
                         .get_brush(target, &drop_line_color)
                         .unwrap();
-                    let mut line_x = x + 4.0 - self.tab_bar.tab_scroll_x;
-                    for i in 0..drop_idx.min(self.tab_bar.tab_layouts.len()) {
-                        line_x += self.tab_bar.tab_layouts[i].width + gap;
+                    let mut line_x = x + 4.0 - self.editor.tab_bar.tab_scroll_x;
+                    for i in 0..drop_idx.min(self.editor.tab_bar.tab_layouts.len()) {
+                        line_x += self.editor.tab_bar.tab_layouts[i].width + gap;
                     }
                     let line_rect = D2D_RECT_F {
                         left: line_x - 1.0,
@@ -346,7 +346,7 @@ impl EditorState {
             let plus_bottom = plus_y + plus_btn_size;
             // 仅在有足够空间时渲染并更新命中区域
             if plus_right <= x + width {
-                if self.tab_bar.plus_button_hover {
+                if self.editor.tab_bar.plus_button_hover {
                     let plus_bg_rect = D2D_RECT_F {
                         left: plus_x,
                         top: plus_y,
@@ -360,18 +360,18 @@ impl EditorState {
                     };
                     target.FillRoundedRectangle(&rounded_rect, &hover_bg_brush);
                 }
-                let plus_icon_color = if self.tab_bar.plus_button_hover {
+                let plus_icon_color = if self.editor.tab_bar.plus_button_hover {
                     color_f(1.0, 1.0, 1.0, 1.0)
                 } else {
                     color_f(0.7, 0.7, 0.7, 1.0)
                 };
                 let plus_icon_brush = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &plus_icon_color)
                     .unwrap();
                 let plus_icon_size = 16.0f32;
-                self.icons.draw(
+                self.ui.icons.draw(
                     target,
                     crate::icons::IconKind::Plus,
                     plus_x + (plus_btn_size - plus_icon_size) / 2.0,
@@ -380,9 +380,9 @@ impl EditorState {
                     plus_icon_size,
                     &plus_icon_brush,
                 );
-                self.tab_bar.plus_button_rect = Some((plus_x, plus_y, plus_right, plus_bottom));
+                self.editor.tab_bar.plus_button_rect = Some((plus_x, plus_y, plus_right, plus_bottom));
             } else {
-                self.tab_bar.plus_button_rect = None;
+                self.editor.tab_bar.plus_button_rect = None;
             }
 
             // 底部边框线

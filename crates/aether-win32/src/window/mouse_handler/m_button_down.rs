@@ -28,20 +28,20 @@ pub(crate) unsafe fn on_m_button_down(
     let (mouse_x, mouse_y, layout) = {
         let st = state.borrow();
         (
-            raw_x / st.dpi_scale,
-            raw_y / st.dpi_scale,
-            st.layout.clone(),
+            raw_x / st.win.dpi_scale,
+            raw_y / st.win.dpi_scale,
+            st.ui.layout.clone(),
         )
     };
     let mut st = state.borrow_mut();
 
     // 图片预览模式：中键按下开始拖拽
-    if st.content.language == aether_core::lexer::Language::Image {
+    if st.editor.content.language == aether_core::lexer::Language::Image {
         let editor = layout.editor_region();
         if editor.contains(mouse_x, mouse_y) {
-            st.mouse_press.image_dragging = true;
-            st.mouse_press.image_drag_start = Some((mouse_x, mouse_y));
-            st.mouse_press.image_drag_offset = Some((st.image_offset_x, st.image_offset_y));
+            st.input.mouse_press.image_dragging = true;
+            st.input.mouse_press.image_drag_start = Some((mouse_x, mouse_y));
+            st.input.mouse_press.image_drag_offset = Some((st.win.image_offset_x, st.win.image_offset_y));
             return LRESULT(0);
         }
     }
@@ -52,9 +52,9 @@ pub(crate) unsafe fn on_m_button_down(
         return LRESULT(0);
     }
     // 命中检测：与 handle_tab_bar_click 一致，应用 tab_scroll_x 偏移
-    let rel_x = mouse_x - tab_region.x + st.tab_bar.tab_scroll_x;
+    let rel_x = mouse_x - tab_region.x + st.editor.tab_bar.tab_scroll_x;
     let mut hit_index: Option<usize> = None;
-    for layout_entry in &st.tab_bar.tab_layouts {
+    for layout_entry in &st.editor.tab_bar.tab_layouts {
         if rel_x >= layout_entry.x && rel_x < layout_entry.x + layout_entry.width {
             hit_index = Some(layout_entry.index);
             break;

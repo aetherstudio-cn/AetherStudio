@@ -47,13 +47,13 @@ pub enum AutoSaveReason {
 impl EditorState {
     /// 当前缓冲区是否属于大文件（依据字节数与配置阈值）
     pub fn is_large_file_for_autosave(&self) -> bool {
-        let threshold = self.app_settings.auto_save.large_file_threshold;
-        threshold > 0 && (self.content.buffer.len_bytes() as u64) > threshold
+        let threshold = self.ui.app_settings.auto_save.large_file_threshold;
+        threshold > 0 && (self.editor.content.buffer.len_bytes() as u64) > threshold
     }
 
     /// 计算当前文件应使用的防抖延迟（大文件降级为更长延迟）
     pub fn effective_autosave_debounce_ms(&self) -> u32 {
-        let cfg = &self.app_settings.auto_save;
+        let cfg = &self.ui.app_settings.auto_save;
         if self.is_large_file_for_autosave() {
             cfg.large_file_debounce_ms
         } else {
@@ -66,11 +66,11 @@ impl EditorState {
     /// `SetTimer` 对同 ID 定时器会重置计时，天然实现防抖。
     /// 仅对有路径（可落盘）且脏的文件调度。
     pub fn schedule_autosave_debounce(&self) {
-        let cfg = &self.app_settings.auto_save;
+        let cfg = &self.ui.app_settings.auto_save;
         if !cfg.enabled {
             return;
         }
-        if self.content.file_path.is_none() || !self.content.is_dirty {
+        if self.editor.content.file_path.is_none() || !self.editor.content.is_dirty {
             return;
         }
         let delay = self.effective_autosave_debounce_ms();
@@ -79,26 +79,26 @@ impl EditorState {
         }
         unsafe {
             // SetTimer 对已存在的同 ID 定时器重置计时
-            let _ = SetTimer(self.hwnd, AUTOSAVE_DEBOUNCE_TIMER_ID, delay, None);
+            let _ = SetTimer(self.win.hwnd, AUTOSAVE_DEBOUNCE_TIMER_ID, delay, None);
         }
     }
 
     /// 停止防抖定时器（保存成功后或文件变为干净时调用）
     pub fn stop_autosave_debounce(&self) {
         unsafe {
-            let _ = KillTimer(self.hwnd, AUTOSAVE_DEBOUNCE_TIMER_ID);
+            let _ = KillTimer(self.win.hwnd, AUTOSAVE_DEBOUNCE_TIMER_ID);
         }
     }
 
     /// 启动周期兜底定时器（在窗口创建后调用一次）
     pub fn start_autosave_periodic(&self) {
-        let cfg = &self.app_settings.auto_save;
+        let cfg = &self.ui.app_settings.auto_save;
         if !cfg.enabled || cfg.periodic_save_ms == 0 {
             return;
         }
         unsafe {
             let _ = SetTimer(
-                self.hwnd,
+                self.win.hwnd,
                 AUTOSAVE_PERIODIC_TIMER_ID,
                 cfg.periodic_save_ms,
                 None,
@@ -108,8 +108,8 @@ impl EditorState {
 
     /// 失焦触发：编辑器失去焦点时立即保存当前标签
     pub fn autosave_on_focus_loss(&mut self) {
-        let enabled = self.app_settings.auto_save.enabled;
-        let focus_loss_save = self.app_settings.auto_save.focus_loss_save;
+        let enabled = self.ui.app_settings.auto_save.enabled;
+        let focus_loss_save = self.ui.app_settings.auto_save.focus_loss_save;
         if !enabled || !focus_loss_save {
             return;
         }
@@ -125,7 +125,7 @@ impl EditorState {
 
     /// 周期定时器触发：WM_TIMER(AUTOSAVE_PERIODIC_TIMER_ID)
     pub fn on_autosave_periodic_timer(&mut self) {
-        let cfg = &self.app_settings.auto_save;
+        let cfg = &self.ui.app_settings.auto_save;
         if !cfg.enabled || cfg.periodic_save_ms == 0 {
             return;
         }
@@ -141,12 +141,12 @@ impl EditorState {
     /// 保存逻辑复用 [`EditorState::save_file`]，与手动 Ctrl+S 走完全相同的
     /// 原子写入路径，保证行为一致性。
     pub fn autosave_tick(&mut self, reason: AutoSaveReason) {
-        let enabled = self.app_settings.auto_save.enabled;
+        let enabled = self.ui.app_settings.auto_save.enabled;
         if !enabled {
             return;
         }
         // 无路径文件无法自动保存（需用户另存为）
-        let path = match self.content.file_path.clone() {
+        let path = match self.editor.content.file_path.clone() {
             Some(p) => p,
             None => return,
         };
@@ -155,11 +155,11 @@ impl EditorState {
             return;
         }
         // 未修改：跳过
-        if !self.content.is_dirty {
+        if !self.editor.content.is_dirty {
             return;
         }
         // 内容去重：buffer_version 未变则跳过写盘
-        if self.content.buffer_version == self.content.last_saved_buffer_version {
+        if self.editor.content.buffer_version == self.editor.content.last_saved_buffer_version {
             return;
         }
         // 冲突检测：mtime 变化则暂停自动保存并提示
@@ -172,7 +172,7 @@ impl EditorState {
         if self.save_file() {
             // save_file 已将 is_dirty=false 并更新 last_saved_buffer_version/mtime/conflict
             // 静默提示（不打扰）：状态栏轻量确认
-            self.status_message = "已自动保存".to_string();
+            self.ui.status_message = "已自动保存".to_string();
         }
         // 保存失败：save_file 已设置错误 status_message；保留内容不清空，等待下次重试
     }
@@ -184,9 +184,9 @@ impl EditorState {
     /// - 刷新 `last_known_mtime` 为落盘后的新 mtime（仅本地文件）
     /// - 停止防抖定时器（已落盘，无需再防抖）
     pub(crate) fn note_save_succeeded(&mut self) {
-        self.content.last_saved_buffer_version = self.content.buffer_version;
-        self.content.auto_save_conflict = false;
-        self.content.last_known_mtime = self.content.file_path.as_ref().and_then(|p| {
+        self.editor.content.last_saved_buffer_version = self.editor.content.buffer_version;
+        self.editor.content.auto_save_conflict = false;
+        self.editor.content.last_known_mtime = self.editor.content.file_path.as_ref().and_then(|p| {
             // 仅本地文件有 mtime；远程文件（remote: 前缀）跳过
             if p.to_str().is_some_and(|s| s.starts_with("remote:")) {
                 None
@@ -206,11 +206,11 @@ impl EditorState {
             Ok(t) => t,
             Err(_) => return false, // 文件不可读，不在此处阻断（save 时会报错）
         };
-        match self.content.last_known_mtime {
+        match self.editor.content.last_known_mtime {
             Some(known) if current_mtime > known => {
-                if !self.content.auto_save_conflict {
-                    self.content.auto_save_conflict = true;
-                    self.status_message =
+                if !self.editor.content.auto_save_conflict {
+                    self.editor.content.auto_save_conflict = true;
+                    self.ui.status_message =
                         "文件已被外部修改，自动保存已暂停。按 Ctrl+S 覆盖或重新载入".to_string();
                 }
                 true

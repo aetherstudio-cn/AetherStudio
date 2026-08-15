@@ -12,8 +12,8 @@ impl EditorState {
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
     ) {
-        if !self.ai_panel.history_open {
-            self.ai_panel.history_win_region = None;
+        if !self.ai.ai_panel.history_open {
+            self.ai.ai_panel.history_win_region = None;
             return;
         }
 
@@ -21,24 +21,24 @@ impl EditorState {
         // 浮窗渲染不受右面板 visible 守卫（可拖出/居中于整个窗口），
         // 不能依赖 AI 面板的 clear_hit_regions（其仅在右面板渲染时调用），
         // 否则右面板隐藏时这些 Vec 会每帧无限累积（内存泄漏 + 命中错乱）。
-        self.ai_panel.history_item_regions.clear();
-        self.ai_panel.history_delete_regions.clear();
-        self.ai_panel.history_time_filter_regions.clear();
+        self.ai.ai_panel.history_item_regions.clear();
+        self.ai.ai_panel.history_delete_regions.clear();
+        self.ai.ai_panel.history_time_filter_regions.clear();
 
         // 确保垃圾桶矢量图标几何已创建
-        self.icons.ensure_created_from_target(target);
+        self.ui.icons.ensure_created_from_target(target);
 
         unsafe {
-            let (win_w, win_h) = self.ai_panel.history_win_size;
+            let (win_w, win_h) = self.ai.ai_panel.history_win_size;
             // 默认居中：窗口客户区中心减去浮窗一半尺寸
-            let (px, py) = self.ai_panel.history_win_pos.unwrap_or_else(|| {
-                let cx = (self.window_width as f32 - win_w) / 2.0;
-                let cy = (self.window_height as f32 - win_h) / 2.0;
+            let (px, py) = self.ai.ai_panel.history_win_pos.unwrap_or_else(|| {
+                let cx = (self.win.window_width as f32 - win_w) / 2.0;
+                let cy = (self.win.window_height as f32 - win_h) / 2.0;
                 (cx.max(0.0), cy.max(0.0))
             });
 
             // 文本格式
-            let title_format = match self.render_ctx.text_format_cache.get_format(
+            let title_format = match self.win.render_ctx.text_format_cache.get_format(
                 12.0,
                 DWRITE_FONT_WEIGHT_BOLD.0 as u32,
                 DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -47,7 +47,7 @@ impl EditorState {
                 Ok(f) => f,
                 Err(_) => return,
             };
-            let text_format = match self.render_ctx.text_format_cache.get_format(
+            let text_format = match self.win.render_ctx.text_format_cache.get_format(
                 11.0,
                 DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                 DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -56,7 +56,7 @@ impl EditorState {
                 Ok(f) => f,
                 Err(_) => return,
             };
-            let small_format = match self.render_ctx.text_format_cache.get_format(
+            let small_format = match self.win.render_ctx.text_format_cache.get_format(
                 10.0,
                 DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                 DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -68,7 +68,7 @@ impl EditorState {
 
             // 画刷
             let bg_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.13, 0.13, 0.15, 1.0))
             {
@@ -76,7 +76,7 @@ impl EditorState {
                 Err(_) => return,
             };
             let border_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.30, 0.30, 0.34, 1.0))
             {
@@ -84,7 +84,7 @@ impl EditorState {
                 Err(_) => return,
             };
             let titlebar_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.17, 0.17, 0.20, 1.0))
             {
@@ -92,7 +92,7 @@ impl EditorState {
                 Err(_) => return,
             };
             let white_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.92, 0.92, 0.92, 1.0))
             {
@@ -100,7 +100,7 @@ impl EditorState {
                 Err(_) => return,
             };
             let dim_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.55, 0.58, 0.64, 1.0))
             {
@@ -108,7 +108,7 @@ impl EditorState {
                 Err(_) => return,
             };
             let accent_brush = match self
-                .render_ctx
+    .win.render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
             {
@@ -126,9 +126,9 @@ impl EditorState {
             // 阴影（Glass 风格柔和投影）
             let _ = glass::draw_panel_shadow(
                 target,
-                &mut self.render_ctx.brush_cache,
+                &mut self.win.render_ctx.brush_cache,
                 &win_rect,
-                &self.theme.shadow,
+                &self.win.theme.shadow,
                 3.0,
             );
             // 主体背景 + 边框
@@ -136,7 +136,7 @@ impl EditorState {
             target.DrawRectangle(&win_rect, &border_brush, 1.0, None);
 
             // 注册浮窗整体命中区
-            self.ai_panel.history_win_region = Some((px, py, win_w, win_h));
+            self.ai.ai_panel.history_win_region = Some((px, py, win_w, win_h));
             crate::hit_test::register_hit_region("ai:history_window", px, py, win_w, win_h);
 
             let titlebar_h = 32.0f32;
@@ -177,7 +177,7 @@ impl EditorState {
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
                 // 标题栏命中区（拖动区，排除关闭按钮）
-                self.ai_panel.history_win_titlebar_region =
+                self.ai.ai_panel.history_win_titlebar_region =
                     Some((px, cy, win_w - 40.0, titlebar_h));
                 crate::hit_test::register_hit_region(
                     "ai:history_win_titlebar",
@@ -211,7 +211,7 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
-                self.ai_panel.history_win_close_region =
+                self.ai.ai_panel.history_win_close_region =
                     Some((close_x, close_y, close_size, close_size));
                 crate::hit_test::register_hit_region(
                     "ai:history_win_close",
@@ -231,7 +231,7 @@ impl EditorState {
             let search_h = 30.0f32;
             {
                 cy += 8.0;
-                let focused = self.ai_panel.history_search_focused;
+                let focused = self.ai.ai_panel.history_search_focused;
                 let box_rect = D2D_RECT_F {
                     left: content_left,
                     top: cy,
@@ -239,7 +239,7 @@ impl EditorState {
                     bottom: cy + search_h,
                 };
                 let box_bg = match self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.10, 0.10, 0.12, 1.0))
                 {
@@ -262,7 +262,7 @@ impl EditorState {
                     border,
                 );
                 // 搜索文本或占位符
-                let search_text = self.ai_panel.history_search.clone();
+                let search_text = self.ai.ai_panel.history_search.clone();
                 let display = if search_text.is_empty() {
                     "搜索对话标题...".to_string()
                 } else {
@@ -288,9 +288,9 @@ impl EditorState {
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
                 // 聚焦时绘制光标
-                if focused && self.ai_panel.caret_visible {
+                if focused && self.ai.ai_panel.caret_visible {
                     // 用字节索引切片更安全
-                    let byte_caret = self.ai_panel.history_search_caret.min(search_text.len());
+                    let byte_caret = self.ai.ai_panel.history_search_caret.min(search_text.len());
                     let before = &search_text[..byte_caret];
                     let approx_x =
                         content_left + 8.0 + measure_text_width(&title_format, before) as f32;
@@ -304,7 +304,7 @@ impl EditorState {
                         &white_brush,
                     );
                 }
-                self.ai_panel.history_search_region = Some((content_left, cy, content_w, search_h));
+                self.ai.ai_panel.history_search_region = Some((content_left, cy, content_w, search_h));
                 crate::hit_test::register_hit_region(
                     "ai:history_search",
                     content_left,
@@ -322,13 +322,13 @@ impl EditorState {
                 let mut fx = content_left;
                 for (fi, f) in crate::ai_panel::HistoryTimeFilter::ALL.iter().enumerate() {
                     let bw = 44.0f32;
-                    let active = self.ai_panel.history_time_filter == *f;
+                    let active = self.ai.ai_panel.history_time_filter == *f;
                     let bg = if active {
                         color_f(0.0, 0.47, 0.83, 1.0)
                     } else {
                         color_f(0.20, 0.21, 0.24, 1.0)
                     };
-                    if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &bg) {
+                    if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &bg) {
                         target.FillRectangle(
                             &D2D_RECT_F {
                                 left: fx,
@@ -353,7 +353,7 @@ impl EditorState {
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
-                    self.ai_panel
+                    self.ai.ai_panel
                         .history_time_filter_regions
                         .push((fi, fx, cy, bw, btn_h));
                     crate::hit_test::register_hit_region(
@@ -375,7 +375,7 @@ impl EditorState {
             let list_h = (list_bottom - list_top).max(0.0);
             let item_h = 44.0f32;
             let now = crate::ai_panel::now_secs();
-            let page_indices = self.ai_panel.history_page_indices();
+            let page_indices = self.ai.ai_panel.history_page_indices();
 
             // 列表裁剪
             let list_clip = D2D_RECT_F {
@@ -386,11 +386,11 @@ impl EditorState {
             };
             target.PushAxisAlignedClip(&list_clip, D2D1_ANTIALIAS_MODE_ALIASED);
 
-            let scroll = self.ai_panel.history_scroll;
+            let scroll = self.ai.ai_panel.history_scroll;
             let mut iy = list_top - scroll;
 
             if page_indices.is_empty() {
-                let hint = if self.ai_panel.history_search.trim().is_empty() {
+                let hint = if self.ai.ai_panel.history_search.trim().is_empty() {
                     "暂无历史对话"
                 } else {
                     "无匹配的对话"
@@ -412,7 +412,7 @@ impl EditorState {
             }
 
             for hi in page_indices.iter().copied() {
-                let hmeta = match self.ai_panel.history.get(hi) {
+                let hmeta = match self.ai.ai_panel.history.get(hi) {
                     Some(m) => m.clone(),
                     None => continue,
                 };
@@ -423,9 +423,9 @@ impl EditorState {
                     bottom: iy + item_h - 4.0,
                 };
                 // 悬停高亮
-                if self.ai_panel.hover_tab == Some(hi) {
+                if self.ai.ai_panel.hover_tab == Some(hi) {
                     if let Ok(hl) = self
-                        .render_ctx
+    .win.render_ctx
                         .brush_cache
                         .get_brush(target, &color_f(0.18, 0.20, 0.26, 1.0))
                     {
@@ -434,7 +434,7 @@ impl EditorState {
                 }
 
                 let editing =
-                    self.ai_panel.history_editing_id.as_deref() == Some(hmeta.id.as_str());
+                    self.ai.ai_panel.history_editing_id.as_deref() == Some(hmeta.id.as_str());
                 let del_w = 30.0f32;
 
                 if editing {
@@ -446,7 +446,7 @@ impl EditorState {
                         bottom: iy + item_h - 8.0,
                     };
                     let edit_bg = match self
-                        .render_ctx
+    .win.render_ctx
                         .brush_cache
                         .get_brush(target, &color_f(0.10, 0.10, 0.12, 1.0))
                     {
@@ -462,7 +462,7 @@ impl EditorState {
                         edit_rect.bottom - edit_rect.top,
                         &accent_brush,
                     );
-                    let edit_text = self.ai_panel.history_editing_text.clone();
+                    let edit_text = self.ai.ai_panel.history_editing_text.clone();
                     let et: Vec<u16> = edit_text.encode_utf16().chain(Some(0)).collect();
                     target.DrawText(
                         &et,
@@ -478,8 +478,8 @@ impl EditorState {
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
                     // 光标
-                    if self.ai_panel.caret_visible {
-                        let byte_caret = self.ai_panel.history_editing_caret.min(edit_text.len());
+                    if self.ai.ai_panel.caret_visible {
+                        let byte_caret = self.ai.ai_panel.history_editing_caret.min(edit_text.len());
                         let before = &edit_text[..byte_caret];
                         let cx = edit_rect.left + 4.0 + measure_text_width(&title_format, before);
                         target.FillRectangle(
@@ -536,7 +536,7 @@ impl EditorState {
                     bottom: iy + (item_h - 4.0 - 22.0) / 2.0 + 22.0,
                 };
                 if let Ok(b) = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.45, 0.16, 0.16, 1.0))
                 {
@@ -546,7 +546,7 @@ impl EditorState {
                 let trash_size = 14.0f32;
                 let trash_x = dx + (del_w - trash_size) / 2.0;
                 let trash_y = del_rect.top + (22.0 - trash_size) / 2.0;
-                self.icons.draw(
+                self.ui.icons.draw(
                     target,
                     crate::icons::IconKind::Trash,
                     trash_x,
@@ -555,7 +555,7 @@ impl EditorState {
                     trash_size,
                     &white_brush,
                 );
-                self.ai_panel.history_delete_regions.push((
+                self.ai.ai_panel.history_delete_regions.push((
                     hi,
                     del_rect.left,
                     del_rect.top,
@@ -571,7 +571,7 @@ impl EditorState {
                 );
 
                 // 条目命中区（标题区，排除删除按钮）
-                self.ai_panel.history_item_regions.push((
+                self.ai.ai_panel.history_item_regions.push((
                     hi,
                     item_rect.left,
                     iy,
@@ -593,13 +593,13 @@ impl EditorState {
             // 列表滚动条
             let total_h = page_indices.len() as f32 * item_h;
             let max_scroll = (total_h - list_h).max(0.0);
-            self.ai_panel.history_max_scroll = max_scroll;
+            self.ai.ai_panel.history_max_scroll = max_scroll;
             if max_scroll > 1.0 {
                 let sb_w = 4.0f32;
                 let sb_x = px + win_w - sb_w - 3.0;
                 let track_h = list_h.max(8.0);
                 if let Ok(tb) = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.20, 0.20, 0.23, 1.0))
                 {
@@ -616,7 +616,7 @@ impl EditorState {
                 let thumb_h = (track_h * list_h / total_h).max(16.0).min(track_h);
                 let thumb_y = list_top + (track_h - thumb_h) * (scroll / max_scroll);
                 if let Ok(tb) = self
-                    .render_ctx
+    .win.render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.45, 0.46, 0.52, 1.0))
                 {
@@ -645,12 +645,12 @@ impl EditorState {
                     },
                     &border_brush,
                 );
-                let pc = self.ai_panel.history_page_count().max(1);
-                let page = self.ai_panel.history_page + 1;
+                let pc = self.ai.ai_panel.history_page_count().max(1);
+                let page = self.ai.ai_panel.history_page + 1;
                 let btn_h = 20.0f32;
                 let btn_y = fy + (footer_h - btn_h) / 2.0;
                 // 上一页
-                let prev_enabled = self.ai_panel.history_page > 0;
+                let prev_enabled = self.ai.ai_panel.history_page > 0;
                 let pw = 56.0f32;
                 let px0 = content_left;
                 let prev_bg = if prev_enabled {
@@ -658,7 +658,7 @@ impl EditorState {
                 } else {
                     color_f(0.14, 0.14, 0.16, 1.0)
                 };
-                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &prev_bg) {
+                if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &prev_bg) {
                     target.FillRectangle(
                         &D2D_RECT_F {
                             left: px0,
@@ -687,7 +687,7 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
-                self.ai_panel.history_page_prev_region = if prev_enabled {
+                self.ai.ai_panel.history_page_prev_region = if prev_enabled {
                     crate::hit_test::register_hit_region(
                         "ai:history_page_prev",
                         px0,
@@ -725,7 +725,7 @@ impl EditorState {
                 } else {
                     color_f(0.14, 0.14, 0.16, 1.0)
                 };
-                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &next_bg) {
+                if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &next_bg) {
                     target.FillRectangle(
                         &D2D_RECT_F {
                             left: nx,
@@ -754,7 +754,7 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
-                self.ai_panel.history_page_next_region = if next_enabled {
+                self.ai.ai_panel.history_page_next_region = if next_enabled {
                     crate::hit_test::register_hit_region(
                         "ai:history_page_next",
                         nx,
@@ -767,7 +767,7 @@ impl EditorState {
                     None
                 };
                 // 清空按钮（最右侧）
-                let has_history = !self.ai_panel.history.is_empty();
+                let has_history = !self.ai.ai_panel.history.is_empty();
                 let cw = 44.0f32;
                 let cx = content_right - cw;
                 let btn_bg = if has_history {
@@ -775,7 +775,7 @@ impl EditorState {
                 } else {
                     color_f(0.25, 0.25, 0.28, 0.5)
                 };
-                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &btn_bg) {
+                if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &btn_bg) {
                     target.FillRectangle(
                         &D2D_RECT_F {
                             left: cx,
@@ -804,7 +804,7 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
-                self.ai_panel.history_clear_all_region = if has_history {
+                self.ai.ai_panel.history_clear_all_region = if has_history {
                     crate::hit_test::register_hit_region(
                         "ai:history_clear_all",
                         cx,

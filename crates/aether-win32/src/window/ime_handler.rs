@@ -36,7 +36,7 @@ pub(crate) unsafe fn on_ime_composition(
         let result = EDITOR_STATE.with(|s| {
             s.borrow()
                 .as_ref()
-                .and_then(|state| state.borrow().ime.get_result_string())
+                .and_then(|state| state.borrow().ui.ime.get_result_string())
         });
         if let Some(text) = result {
             EDITOR_STATE.with(|s| {
@@ -58,7 +58,7 @@ pub(crate) unsafe fn on_ime_composition(
         let comp = EDITOR_STATE.with(|s| {
             s.borrow()
                 .as_ref()
-                .and_then(|state| state.borrow().ime.get_composition_string())
+                .and_then(|state| state.borrow().ui.ime.get_composition_string())
         });
         if let Some(text) = comp {
             EDITOR_STATE.with(|s| {
@@ -105,9 +105,9 @@ pub(crate) unsafe fn on_ime_endcomposition(
             state.borrow_mut().clear_composition();
             // 终端聚焦时结束合成后立即关闭 IME，
             // 让用户能立即用 Backspace 删除终端内容
-            let terminal_focused = state.borrow().terminal_panel.focused;
+            let terminal_focused = state.borrow().terminal.terminal_panel.focused;
             if terminal_focused {
-                state.borrow_mut().ime.set_ime_open(false);
+                state.borrow_mut().ui.ime.set_ime_open(false);
             }
             invalidate_window(hwnd);
         }

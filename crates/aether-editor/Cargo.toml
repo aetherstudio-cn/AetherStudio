@@ -1,0 +1,23 @@
+[package]
+name = "aether-editor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+aether-core = { path = "../aether-core" }
+aether-shared = { path = "../aether-shared" }
+aether-lsp = { path = "../aether-lsp" }
+aether-ai-panel = { path = "../aether-ai-panel" }
+aether-terminal = { path = "../aether-terminal" }
+aether-ui = { path = "../aether-ui" }
+aether-remote = { path = "../aether-remote" }
+aether-render = { path = "../aether-render" }
+tokio = { version = "1.35", features = ["rt-multi-thread", "sync"] }
+lsp-types = "0.95"
+url = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+dirs = "5.0"
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Ime", "Win32_UI_Shell", "Win32_System_Com", "Win32_Graphics_Direct2D", "Win32_Graphics_DirectWrite"] }
+windows-core = "0.58"
