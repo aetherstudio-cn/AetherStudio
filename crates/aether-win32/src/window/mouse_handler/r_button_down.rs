@@ -27,10 +27,10 @@ pub(crate) unsafe fn on_r_button_down(
     let (mouse_x, mouse_y, window_w, window_h) = {
         let st = state.borrow();
         (
-            raw_x / st.dpi_scale,
-            raw_y / st.dpi_scale,
-            st.window_width as f32,
-            st.window_height as f32,
+            raw_x / st.win.dpi_scale,
+            raw_y / st.win.dpi_scale,
+            st.win.window_width as f32,
+            st.win.window_height as f32,
         )
     };
 
@@ -39,18 +39,19 @@ pub(crate) unsafe fn on_r_button_down(
     // 若正在内联输入，右键视为失焦提交（与左键点击其他区域一致；
     // 空名时 confirm 内部等效取消）。输入行已内联进树，提交/取消
     // 不再整体位移布局，因此起始 Y 在处理之后读取即可。
-    if st.file_tree_input.is_some() {
+    if st.fs.file_tree_input.is_some() {
         st.confirm_file_tree_input();
     }
     let nodes_start_y = st.file_tree_nodes_start_y();
 
     // SubTask 9.3: 标签右键——检测是否命中标签栏的某个标签
     let show_tab_bar = st.show_tab_bar();
-    let tab_region = st.layout.tab_bar_region(show_tab_bar);
+    let tab_region = st.ui.layout.tab_bar_region(show_tab_bar);
     if show_tab_bar && tab_region.contains(mouse_x, mouse_y) {
         if let Some(tab_idx) = st.tab_body_hit_test(mouse_x, mouse_y, tab_region.x, tab_region.y) {
             // 获取该标签的 file_path（用于判断 has_path 和复制路径）
             let has_path = st
+                .editor
                 .tab_bar
                 .tabs
                 .get(tab_idx)
@@ -58,71 +59,69 @@ pub(crate) unsafe fn on_r_button_down(
                 .is_some();
             let mut menu = TabContextMenuState::build_for_tab(tab_idx, has_path);
             menu.open_at(mouse_x, mouse_y, window_w, window_h);
-            st.context_menus.tab = menu;
+            st.ui.context_menus.tab = menu;
             // 关闭可能打开的资源管理器菜单，避免重叠
-            if st.context_menus.explorer.is_open {
-                st.context_menus.explorer.close();
+            if st.ui.context_menus.explorer.is_open {
+                st.ui.context_menus.explorer.close();
             }
             // 菜单互斥：关闭活动栏菜单
-            if st.context_menus.activity_bar.visible {
-                st.context_menus.activity_bar.hide();
+            if st.ui.context_menus.activity_bar.visible {
+                st.ui.context_menus.activity_bar.hide();
             }
             // 菜单开合必须走完整首帧渲染（擦除旧菜单/绘制新菜单），
             // 否则紧随其后的 hover 会以 Dialog 脏区触发快速路径，留下残影。
-            st.dirty_tracker.mark_full_window();
-            drop(st);
+            st.win.dirty_tracker.mark_full_window();
             invalidate_window(hwnd);
             return LRESULT(0);
         }
     }
 
     // SubTask 14.1: 活动栏右键——检测是否落在活动栏区域
-    let activity_region = st.layout.activity_bar_region();
-    if st.layout.activity_bar_visible
+    let activity_region = st.ui.layout.activity_bar_region();
+    if st.ui.layout.activity_bar_visible
         && activity_region.width > 0.0
         && activity_region.contains(mouse_x, mouse_y)
     {
-        let active_view = st.activity_view;
+        let active_view = st.ui.activity_view;
         let mut menu = ActivityBarContextMenuState::build(active_view);
         menu.open_at(mouse_x, mouse_y, window_w, window_h);
-        st.context_menus.activity_bar = menu;
+        st.ui.context_menus.activity_bar = menu;
         // 菜单互斥：关闭标签菜单与资源管理器菜单
-        if st.context_menus.tab.visible {
-            st.context_menus.tab.hide();
+        if st.ui.context_menus.tab.visible {
+            st.ui.context_menus.tab.hide();
         }
-        if st.context_menus.explorer.is_open {
-            st.context_menus.explorer.close();
+        if st.ui.context_menus.explorer.is_open {
+            st.ui.context_menus.explorer.close();
         }
-        st.dirty_tracker.mark_full_window();
-        drop(st);
+        st.win.dirty_tracker.mark_full_window();
         invalidate_window(hwnd);
         return LRESULT(0);
     }
 
     // 仅当侧边栏可见且当前为文件树视图时，才可能弹出空白区域菜单
-    let sidebar_region = st.layout.sidebar_region();
-    let in_sidebar_file_tree = st.layout.sidebar_visible
+    let sidebar_region = st.ui.layout.sidebar_region();
+    let in_sidebar_file_tree = st.ui.layout.sidebar_visible
         && sidebar_region.width > 0.0
         && sidebar_region.contains(mouse_x, mouse_y)
-        && st.sidebar_content == SidebarContent::FileTree;
+        && st.ui.sidebar_content == SidebarContent::FileTree;
 
     if !in_sidebar_file_tree {
         // 在侧边栏外右键：关闭已打开的菜单
         let mut need_invalidate = false;
-        if st.context_menus.explorer.is_open {
-            st.context_menus.explorer.close();
+        if st.ui.context_menus.explorer.is_open {
+            st.ui.context_menus.explorer.close();
             need_invalidate = true;
         }
-        if st.context_menus.tab.visible {
-            st.context_menus.tab.hide();
+        if st.ui.context_menus.tab.visible {
+            st.ui.context_menus.tab.hide();
             need_invalidate = true;
         }
-        if st.context_menus.activity_bar.visible {
-            st.context_menus.activity_bar.hide();
+        if st.ui.context_menus.activity_bar.visible {
+            st.ui.context_menus.activity_bar.hide();
             need_invalidate = true;
         }
         if need_invalidate {
-            st.dirty_tracker.mark_full_window();
+            st.win.dirty_tracker.mark_full_window();
         }
         drop(st);
         if need_invalidate {
@@ -133,11 +132,13 @@ pub(crate) unsafe fn on_r_button_down(
 
     // 命中标题栏的新建按钮 → 不弹出空白菜单（交由左键处理）
     let on_new_file_btn = st
+        .fs
         .file_tree_new_file_btn
         .as_ref()
         .map(|r| r.contains(mouse_x, mouse_y))
         .unwrap_or(false);
     let on_new_folder_btn = st
+        .fs
         .file_tree_new_folder_btn
         .as_ref()
         .map(|r| r.contains(mouse_x, mouse_y))
@@ -151,11 +152,11 @@ pub(crate) unsafe fn on_r_button_down(
     // 避免手写偏移公式与渲染布局漂移。
     let sidebar_rel_x = mouse_x - sidebar_region.x;
     let sidebar_rel_y = mouse_y - sidebar_region.y;
-    let sidebar_width = st.layout.sidebar_width;
+    let sidebar_width = st.ui.layout.sidebar_width;
 
     // 命中文件/文件夹节点 → 弹出文件节点上下文菜单（携带节点类型，文件夹额外提供新建入口）
     // 根目录行折叠时节点不可见，跳过节点命中检测
-    let hit_node: Option<(u32, bool)> = if st.file_tree_root_expanded {
+    let hit_node: Option<(u32, bool)> = if st.fs.file_tree_root_expanded {
         // P5-1: O(1) 行定位命中测试，替代递归遍历
         st.file_tree_hit_test(sidebar_rel_x, sidebar_rel_y, nodes_start_y, sidebar_width)
             .map(|(node_idx, kind, _)| {
@@ -170,48 +171,49 @@ pub(crate) unsafe fn on_r_button_down(
 
     if let Some((node_idx, is_dir)) = hit_node {
         // 节点命中：选中节点，关闭旧菜单，弹出节点级上下文菜单
-        if st.context_menus.explorer.is_open {
-            st.context_menus.explorer.close();
+        if st.ui.context_menus.explorer.is_open {
+            st.ui.context_menus.explorer.close();
         }
-        if st.context_menus.file_node.is_open {
-            st.context_menus.file_node.close();
+        if st.ui.context_menus.file_node.is_open {
+            st.ui.context_menus.file_node.close();
         }
-        if st.context_menus.tab.visible {
-            st.context_menus.tab.hide();
+        if st.ui.context_menus.tab.visible {
+            st.ui.context_menus.tab.hide();
         }
-        if st.context_menus.activity_bar.visible {
-            st.context_menus.activity_bar.hide();
+        if st.ui.context_menus.activity_bar.visible {
+            st.ui.context_menus.activity_bar.hide();
         }
-        st.selected_file_node = Some(node_idx);
+        st.fs.selected_file_node = Some(node_idx);
         st.emit_event(crate::events::EditorEvent::SidebarChanged);
         // 弹出文件节点上下文菜单
-        st.context_menus
+        st.ui
+            .context_menus
             .file_node
             .open(mouse_x, mouse_y, window_w, window_h, node_idx, is_dir);
-        st.dirty_tracker.mark_full_window();
-        drop(st);
+        st.win.dirty_tracker.mark_full_window();
         invalidate_window(hwnd);
         return LRESULT(0);
     }
 
     // 空白区域：弹出上下文菜单（菜单内部会做窗口边界校正）
-    st.context_menus
+    st.ui
+        .context_menus
         .explorer
         .open(mouse_x, mouse_y, window_w, window_h);
     // 关闭可能打开的其他菜单，避免重叠
-    if st.context_menus.file_node.is_open {
-        st.context_menus.file_node.close();
+    if st.ui.context_menus.file_node.is_open {
+        st.ui.context_menus.file_node.close();
     }
-    if st.context_menus.tab.visible {
-        st.context_menus.tab.hide();
+    if st.ui.context_menus.tab.visible {
+        st.ui.context_menus.tab.hide();
     }
-    if st.context_menus.activity_bar.visible {
-        st.context_menus.activity_bar.hide();
+    if st.ui.context_menus.activity_bar.visible {
+        st.ui.context_menus.activity_bar.hide();
     }
     // 空白区域右键同时清除当前选中节点（符合"未选中任何文件或文件夹"语义）
-    st.selected_file_node = None;
+    st.fs.selected_file_node = None;
     st.emit_event(crate::events::EditorEvent::SidebarChanged);
-    st.dirty_tracker.mark_full_window();
+    st.win.dirty_tracker.mark_full_window();
     drop(st);
     invalidate_window(hwnd);
     LRESULT(0)

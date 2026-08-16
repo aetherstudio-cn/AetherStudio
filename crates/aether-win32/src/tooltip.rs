@@ -39,7 +39,7 @@ impl crate::editor::EditorState {
             DWRITE_MEASURING_MODE_NATURAL, DWRITE_TEXT_METRICS,
         };
 
-        let Some(text) = self.tooltip_state.visible_text.as_ref() else {
+        let Some(text) = self.ui.tooltip_state.visible_text.as_ref() else {
             return;
         };
         if text.is_empty() {
@@ -48,7 +48,7 @@ impl crate::editor::EditorState {
 
         unsafe {
             // 1. 测量文本：IDWriteTextLayout::GetMetrics
-            let dwrite = self.text_renderer.dwrite_factory();
+            let dwrite = self.win.text_renderer.dwrite_factory();
             let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
             let layout = match dwrite.CreateTextLayout(&wide, text_format, 10000.0, 1000.0) {
                 Ok(l) => l,
@@ -70,16 +70,16 @@ impl crate::editor::EditorState {
             let box_w = text_width + 16.0;
             let box_h = text_height + 8.0;
 
-            let mut tx = self.tooltip_state.show_pos.0 + offset_x;
-            let ty = self.tooltip_state.show_pos.1 + offset_y;
+            let mut tx = self.ui.tooltip_state.show_pos.0 + offset_x;
+            let ty = self.ui.tooltip_state.show_pos.1 + offset_y;
 
             // 3. 如果 tooltip 右侧超出窗口，则放在鼠标左侧
-            let win_w = self.window_width as f32;
+            let win_w = self.win.window_width as f32;
             if tx + box_w > win_w {
-                tx = (self.tooltip_state.show_pos.0 - offset_x - box_w).max(0.0);
+                tx = (self.ui.tooltip_state.show_pos.0 - offset_x - box_w).max(0.0);
             }
             // 钳制 y 到窗口范围内
-            let win_h = self.window_height as f32;
+            let win_h = self.win.window_height as f32;
             let ty = if ty + box_h > win_h {
                 (win_h - box_h).max(0.0)
             } else {
@@ -138,8 +138,8 @@ impl crate::editor::EditorState {
     /// 返回 `(hover_key, tooltip_text)`，二者均为 None 表示未 hover 任何可提示元素。
     pub(crate) fn compute_tooltip_hover_key(&self) -> (Option<String>, Option<String>) {
         // 活动栏项
-        if let Some(idx) = self.activity_bar.hover_index {
-            if let Some(item) = self.activity_bar.items.get(idx) {
+        if let Some(idx) = self.ui.activity_bar.hover_index {
+            if let Some(item) = self.ui.activity_bar.items.get(idx) {
                 return (
                     Some(format!("activity_{}", idx)),
                     Some(item.tooltip.clone()),
@@ -147,7 +147,7 @@ impl crate::editor::EditorState {
             }
         }
         // 标题栏按钮
-        if let Some(btn) = self.titlebar_hover_button {
+        if let Some(btn) = self.win.titlebar_hover_button {
             let (key, text) = match btn {
                 0 => ("title_btn_0", "最小化"),
                 1 => ("title_btn_1", "最大化/还原"),

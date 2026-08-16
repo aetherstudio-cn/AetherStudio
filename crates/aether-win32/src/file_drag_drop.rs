@@ -71,13 +71,14 @@ impl EditorState {
     /// 在 `lbd_sidebar` 命中文件/目录节点名称区域时调用。
     pub fn file_drag_begin_press(&mut self, node_idx: u32, mouse_x: f32, mouse_y: f32) {
         let label = self
+            .fs
             .file_tree
             .as_ref()
             .and_then(|t| t.get_node(node_idx).map(|n| t.get_name(n).to_string()))
             .unwrap_or_default();
-        self.mouse_press.file_tree_drag_node = Some(node_idx);
-        self.mouse_press.file_tree_dragging = false;
-        self.file_drag = FileDragDropState {
+        self.input.mouse_press.file_tree_drag_node = Some(node_idx);
+        self.input.mouse_press.file_tree_dragging = false;
+        self.fs.file_drag = FileDragDropState {
             press_x: mouse_x,
             press_y: mouse_y,
             cur_x: mouse_x,
@@ -94,53 +95,54 @@ impl EditorState {
     /// WM_MOUSEMOVE 中调用：阈值判定 + 放置目标/浮标位置更新。
     /// 返回 true 表示视觉状态有变化（需要重绘侧边栏）。
     pub fn file_drag_update(&mut self, mouse_x: f32, mouse_y: f32) -> bool {
-        let Some(source_idx) = self.mouse_press.file_tree_drag_node else {
+        let Some(source_idx) = self.input.mouse_press.file_tree_drag_node else {
             return false;
         };
-        if !self.mouse_press.file_tree_dragging {
-            let dx = mouse_x - self.file_drag.press_x;
-            let dy = mouse_y - self.file_drag.press_y;
+        if !self.input.mouse_press.file_tree_dragging {
+            let dx = mouse_x - self.fs.file_drag.press_x;
+            let dy = mouse_y - self.fs.file_drag.press_y;
             if dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD {
                 return false;
             }
-            self.mouse_press.file_tree_dragging = true;
+            self.input.mouse_press.file_tree_dragging = true;
             // 浮标文本宽度只在进入拖拽时测量一次（每帧测量是无谓的 CPU 开销）
-            let label = self.file_drag.drag_label.clone();
-            self.file_drag.drag_label_width = self
+            let label = self.fs.file_drag.drag_label.clone();
+            self.fs.file_drag.drag_label_width = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .measure_text_width(
                     &label,
-                    9.5 * self.dpi_scale,
+                    9.5 * self.win.dpi_scale,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                 )
                 .unwrap_or(0.0);
             // 捕获鼠标：拖出窗口仍能收到 WM_MOUSEMOVE / WM_LBUTTONUP，
             // 避免窗口外释放导致拖拽状态残留
             unsafe {
-                SetCapture(self.hwnd);
+                SetCapture(self.win.hwnd);
             }
         }
-        self.file_drag.cur_x = mouse_x;
-        self.file_drag.cur_y = mouse_y;
+        self.fs.file_drag.cur_x = mouse_x;
+        self.fs.file_drag.cur_y = mouse_y;
         let new_target = self.file_drag_compute_target(source_idx, mouse_x, mouse_y);
-        let target_changed = new_target != self.file_drag.drop_target;
-        self.file_drag.drop_target = new_target;
+        let target_changed = new_target != self.fs.file_drag.drop_target;
+        self.fs.file_drag.drop_target = new_target;
         // 拖拽期间清除普通悬停，避免 hover 高亮与放置目标高亮叠加
-        self.hover_file_node = None;
-        self.hover_file_tree_root = false;
+        self.fs.hover_file_node = None;
+        self.fs.hover_file_tree_root = false;
         // 微动过滤：目标未变且位移不足 1px 时跳过重绘，
         // 避免高回报率鼠标的亚像素抖动频繁刷帧
-        let pdx = mouse_x - self.file_drag.last_paint_x;
-        let pdy = mouse_y - self.file_drag.last_paint_y;
+        let pdx = mouse_x - self.fs.file_drag.last_paint_x;
+        let pdy = mouse_y - self.fs.file_drag.last_paint_y;
         if !target_changed && pdx * pdx + pdy * pdy < 1.0 {
             return false;
         }
-        self.file_drag.last_paint_x = mouse_x;
-        self.file_drag.last_paint_y = mouse_y;
+        self.fs.file_drag.last_paint_x = mouse_x;
+        self.fs.file_drag.last_paint_y = mouse_y;
         // 浮标/高亮跟随鼠标：整个侧边栏标脏（区域小，代价可接受）
-        let sidebar = self.layout.sidebar_region();
-        self.dirty_tracker.mark_region(
+        let sidebar = self.ui.layout.sidebar_region();
+        self.win.dirty_tracker.mark_region(
             sidebar.x,
             sidebar.y,
             sidebar.width,
@@ -156,10 +158,10 @@ impl EditorState {
     pub fn file_drag_should_sync_paint(&mut self) -> bool {
         const MIN_FRAME: std::time::Duration = std::time::Duration::from_millis(8);
         let now = std::time::Instant::now();
-        match self.file_drag.last_sync_paint {
+        match self.fs.file_drag.last_sync_paint {
             Some(t) if now.duration_since(t) < MIN_FRAME => false,
             _ => {
-                self.file_drag.last_sync_paint = Some(now);
+                self.fs.file_drag.last_sync_paint = Some(now);
                 true
             }
         }
@@ -168,10 +170,10 @@ impl EditorState {
     /// WM_LBUTTONUP 中调用：拖拽中则以释放位置执行移动，否则仅清理候选。
     /// 返回 true 表示本次释放属于拖拽（调用方需要重绘）。
     pub fn file_drag_finish(&mut self, mouse_x: f32, mouse_y: f32) -> bool {
-        let source = self.mouse_press.file_tree_drag_node.take();
-        let was_dragging = std::mem::take(&mut self.mouse_press.file_tree_dragging);
+        let source = self.input.mouse_press.file_tree_drag_node.take();
+        let was_dragging = std::mem::take(&mut self.input.mouse_press.file_tree_dragging);
         if !was_dragging {
-            self.file_drag.drop_target = None;
+            self.fs.file_drag.drop_target = None;
             return false;
         }
         unsafe {
@@ -179,14 +181,14 @@ impl EditorState {
         }
         // 以释放位置重算目标（比 mouse_move 缓存的更准确）
         let target = source.and_then(|src| self.file_drag_compute_target(src, mouse_x, mouse_y));
-        self.file_drag.drop_target = None;
-        self.file_drag.drag_label.clear();
+        self.fs.file_drag.drop_target = None;
+        self.fs.file_drag.drag_label.clear();
         match (source, target) {
             (Some(src), Some(t)) => self.file_drag_perform_move(src, t),
-            _ => self.status_message = "已取消移动".to_string(),
+            _ => self.ui.status_message = "已取消移动".to_string(),
         }
-        let sidebar = self.layout.sidebar_region();
-        self.dirty_tracker.mark_region(
+        let sidebar = self.ui.layout.sidebar_region();
+        self.win.dirty_tracker.mark_region(
             sidebar.x,
             sidebar.y,
             sidebar.width,
@@ -205,7 +207,7 @@ impl EditorState {
         mouse_x: f32,
         mouse_y: f32,
     ) -> Option<DropTarget> {
-        let sidebar = self.layout.sidebar_region();
+        let sidebar = self.ui.layout.sidebar_region();
         if !sidebar.contains(mouse_x, mouse_y) {
             return None;
         }
@@ -214,20 +216,21 @@ impl EditorState {
 
         // 根目录行：放入工作区根目录
         let root_top = self.file_tree_list_start_y();
-        let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale;
+        let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.win.dpi_scale;
         let raw_target = if rel_y >= root_top && rel_y < root_top + row_h {
             DropTarget::Root
-        } else if rel_y < root_top || !self.file_tree_root_expanded {
+        } else if rel_y < root_top || !self.fs.file_tree_root_expanded {
             // 标题栏/输入框区域不作为放置目标；树折叠时同理
             return None;
         } else {
             let start_y = self.file_tree_nodes_start_y();
-            let sidebar_width = self.layout.sidebar_width;
+            let sidebar_width = self.ui.layout.sidebar_width;
             match self.file_tree_hit_test(rel_x, rel_y, start_y, sidebar_width) {
                 Some((idx, FileKind::Directory, _)) => DropTarget::Directory(idx),
                 Some((idx, _, _)) => {
                     // 命中文件/符号链接 → 目标为其父目录
                     let parent = self
+                        .fs
                         .file_tree
                         .as_ref()
                         .and_then(|t| t.get_node(idx))
@@ -248,7 +251,7 @@ impl EditorState {
 
     /// 校验放置目标合法性：不能放入自身、自身子孙目录或原父目录（无操作）。
     fn file_drag_validate_target(&self, source_idx: u32, target: DropTarget) -> bool {
-        let Some(tree) = self.file_tree.as_ref() else {
+        let Some(tree) = self.fs.file_tree.as_ref() else {
             return false;
         };
         let Some(source) = tree.get_node(source_idx) else {
@@ -277,8 +280,8 @@ impl EditorState {
 
     /// 节点的绝对路径（工作区根 + 相对路径）
     fn file_drag_node_abs_path(&self, node_idx: u32) -> Option<PathBuf> {
-        let folder = self.current_folder.as_ref()?;
-        let tree = self.file_tree.as_ref()?;
+        let folder = self.fs.current_folder.as_ref()?;
+        let tree = self.fs.file_tree.as_ref()?;
         let rel = file_tree_node_path(tree, node_idx)?;
         Some(folder.join(rel))
     }
@@ -289,7 +292,7 @@ impl EditorState {
             return;
         };
         let target_dir = match target {
-            DropTarget::Root => match self.current_folder.clone() {
+            DropTarget::Root => match self.fs.current_folder.clone() {
                 Some(p) => p,
                 None => return,
             },
@@ -303,11 +306,11 @@ impl EditorState {
         };
         let dest_path = target_dir.join(&file_name);
         if dest_path.exists() {
-            self.status_message = format!("目标位置已存在: {}", file_name.to_string_lossy());
+            self.ui.status_message = format!("目标位置已存在: {}", file_name.to_string_lossy());
             return;
         }
         if let Err(e) = std::fs::rename(&source_path, &dest_path) {
-            self.status_message = format!("移动失败: {}", e);
+            self.ui.status_message = format!("移动失败: {}", e);
             return;
         }
 
@@ -321,44 +324,47 @@ impl EditorState {
                     .map(|rest| dest_path.join(rest))
             }
         };
-        for tab in &mut self.tab_bar.tabs {
+        for tab in &mut self.editor.tab_bar.tabs {
             if let Some(file_content) = tab.as_file_mut() {
                 if let Some(new_path) = file_content.file_path.as_ref().and_then(remap) {
                     file_content.file_path = Some(new_path);
                 }
             }
         }
-        if let Some(new_path) = self.content.file_path.as_ref().and_then(remap) {
-            self.content.file_path = Some(new_path);
+        if let Some(new_path) = self.editor.content.file_path.as_ref().and_then(remap) {
+            self.editor.content.file_path = Some(new_path);
         }
 
         // 展开目标目录，让用户在刷新后立即看到移动结果
         //（refresh_file_tree_light 依据旧树的展开状态重建）
         if let DropTarget::Directory(dir_idx) = target {
-            if let Some(tree) = self.file_tree.as_mut() {
+            if let Some(tree) = self.fs.file_tree.as_mut() {
                 if let Some(node) = tree.get_node_mut(dir_idx) {
                     node.is_expanded = true;
                 }
             }
         }
         // 移动后旧节点索引全部失效
-        self.selected_file_node = None;
-        self.hover_file_node = None;
+        self.fs.selected_file_node = None;
+        self.fs.hover_file_node = None;
         let target_name = match target {
             DropTarget::Root => "工作区根目录".to_string(),
             DropTarget::Directory(dir_idx) => self
+                .fs
                 .file_tree
                 .as_ref()
                 .and_then(|t| t.get_node(dir_idx).map(|n| t.get_name(n).to_string()))
                 .unwrap_or_else(|| "目标文件夹".to_string()),
         };
-        self.status_message = format!("已移动 {} 到 {}", file_name.to_string_lossy(), target_name);
+        self.ui.status_message =
+            format!("已移动 {} 到 {}", file_name.to_string_lossy(), target_name);
         self.refresh_file_tree_light();
     }
 
     /// 拖拽中源节点的绝对路径（供外部 OLE 拖放使用）
     pub fn file_drag_external_source_path(&self) -> Option<PathBuf> {
-        self.mouse_press
+        self.input
+            .mouse_press
             .file_tree_drag_node
             .and_then(|idx| self.file_drag_node_abs_path(idx))
     }
@@ -367,16 +373,16 @@ impl EditorState {
     /// DoDragDrop 会自己捕获鼠标并运行模态消息循环，内部状态必须先清空，
     /// 避免重入的 WM_MOUSEMOVE/WM_LBUTTONUP 再走内部拖拽分支。
     pub fn file_drag_abort_internal(&mut self) {
-        self.mouse_press.file_tree_drag_node = None;
-        if std::mem::take(&mut self.mouse_press.file_tree_dragging) {
+        self.input.mouse_press.file_tree_drag_node = None;
+        if std::mem::take(&mut self.input.mouse_press.file_tree_dragging) {
             unsafe {
                 let _ = ReleaseCapture();
             }
         }
-        self.file_drag.drop_target = None;
-        self.file_drag.drag_label.clear();
-        let sidebar = self.layout.sidebar_region();
-        self.dirty_tracker.mark_region(
+        self.fs.file_drag.drop_target = None;
+        self.fs.file_drag.drag_label.clear();
+        let sidebar = self.ui.layout.sidebar_region();
+        self.win.dirty_tracker.mark_region(
             sidebar.x,
             sidebar.y,
             sidebar.width,

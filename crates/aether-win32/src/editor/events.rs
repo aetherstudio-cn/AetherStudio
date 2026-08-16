@@ -8,97 +8,112 @@ impl EditorState {
     /// 更新活动栏高亮、`activity_view`、侧边栏可见性与内容。
     /// 供活动栏左键点击与右键上下文菜单共用。
     pub fn switch_activity_view(&mut self, view: ActivityBarView) {
-        self.activity_bar.switch_to_view(view);
-        self.activity_view = view;
+        self.ui.activity_bar.switch_to_view(view);
+        self.ui.activity_view = view;
         // 切换活动栏视图时打开侧边栏：恢复上次保存的宽度
-        self.layout.show_sidebar();
-        self.sidebar_content = SidebarContent::from_view(view);
+        self.ui.layout.show_sidebar();
+        self.ui.sidebar_content = SidebarContent::from_view(view);
     }
     /// P2-3: 调整字体大小（Ctrl+= 放大 / Ctrl+- 缩小 / Ctrl+0 重置）。
     /// delta 为正放大、为负缩小；传 None 则重置为 14.0。
     pub fn zoom_font(&mut self, delta: Option<f32>) {
-        let current = self.text_renderer.font_size();
+        let current = self.win.text_renderer.font_size();
         let new_size = match delta {
             Some(d) => current + d,
             None => 14.0,
         };
-        self.text_renderer.set_font_size(new_size);
+        self.win.text_renderer.set_font_size(new_size);
         // 重建文本格式缓存（与 set_font_size 同步，避免渲染时使用旧格式）
-        let fs = self.text_renderer.font_size();
-        self.render_ctx.text_format_cache.init_common_formats(fs);
-        self.status_message = format!("字体大小: {:.1} px", fs);
+        let fs = self.win.text_renderer.font_size();
+        self.win
+            .render_ctx
+            .text_format_cache
+            .init_common_formats(fs);
+        self.ui.status_message = format!("字体大小: {:.1} px", fs);
     }
     /// 发射一个编辑器事件到事件队列
     pub fn emit_event(&mut self, event: crate::events::EditorEvent) {
-        self.event_queue.push(event);
+        self.input.event_queue.push(event);
     }
     /// P3.1: 请求内联补全建议（占位实现）
     pub fn request_inline_completion(&mut self) {
         // 收集光标前后文本作为上下文
         let prefix = self
+            .editor
             .content
             .buffer
-            .get_line(self.content.cursor_line)
+            .get_line(self.editor.content.cursor_line)
             .map(|s| {
-                let pos = s.floor_char_boundary(self.content.cursor_col.min(s.len()));
+                let pos = s.floor_char_boundary(self.editor.content.cursor_col.min(s.len()));
                 s[..pos].to_string()
             })
             .unwrap_or_default();
         let suffix = self
+            .editor
             .content
             .buffer
-            .get_line(self.content.cursor_line)
+            .get_line(self.editor.content.cursor_line)
             .map(|s| {
-                let pos = s.floor_char_boundary(self.content.cursor_col.min(s.len()));
+                let pos = s.floor_char_boundary(self.editor.content.cursor_col.min(s.len()));
                 s[pos..].to_string()
             })
             .unwrap_or_default();
 
-        if let Some(suggestion) = self.inline_completion_service.request(&prefix, &suffix) {
-            self.content.inline_completion = Some(crate::inline_completion::InlineCompletion {
-                text: suggestion.text,
-                trigger_line: self.content.cursor_line,
-                trigger_col: self.content.cursor_col,
-                version: suggestion.version,
-            });
+        if let Some(suggestion) = self
+            .editor
+            .inline_completion_service
+            .request(&prefix, &suffix)
+        {
+            self.editor.content.inline_completion =
+                Some(crate::inline_completion::InlineCompletion {
+                    text: suggestion.text,
+                    trigger_line: self.editor.content.cursor_line,
+                    trigger_col: self.editor.content.cursor_col,
+                    version: suggestion.version,
+                });
             self.emit_event(crate::events::EditorEvent::CursorMoved);
         }
     }
     /// P3.1: 清除当前内联补全建议
     /// 清除后标记编辑区脏矩形，确保幽灵文本从屏幕上擦除（否则残留为重影）
     pub fn clear_inline_completion(&mut self) {
-        if self.content.inline_completion.take().is_some() {
+        if self.editor.content.inline_completion.take().is_some() {
             self.emit_event(crate::events::EditorEvent::CursorMoved);
         }
     }
     /// P3.3: 接受当前内联补全建议，将建议文本插入到光标处
     pub fn accept_inline_completion(&mut self) -> bool {
-        let Some(comp) = self.content.inline_completion.take() else {
+        let Some(comp) = self.editor.content.inline_completion.take() else {
             return false;
         };
-        if comp.trigger_line != self.content.cursor_line
-            || comp.trigger_col != self.content.cursor_col
+        if comp.trigger_line != self.editor.content.cursor_line
+            || comp.trigger_col != self.editor.content.cursor_col
         {
             // 补全已被 take() 清除但位置不匹配：标记脏区域擦除幽灵文本残留
             self.emit_event(crate::events::EditorEvent::CursorMoved);
             return false;
         }
         let pos = self.cursor_byte_pos();
-        self.content.buffer.insert(pos, &comp.text);
-        self.content.cursor_col += comp.text.len();
-        self.content.is_dirty = true;
-        if let Some(tab) = self.tab_bar.tabs.get_mut(self.tab_bar.active_tab) {
+        self.editor.content.buffer.insert(pos, &comp.text);
+        self.editor.content.cursor_col += comp.text.len();
+        self.editor.content.is_dirty = true;
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
-        self.content.buffer_version += 1;
+        self.editor.content.buffer_version += 1;
         self.emit_edit_events();
         true
     }
     /// 发射文本编辑相关事件（TextChanged + CursorMoved）
     pub(super) fn emit_edit_events(&mut self) {
         self.emit_event(crate::events::EditorEvent::TextChanged {
-            start_line: self.content.cursor_line,
-            end_line: self.content.cursor_line + 1,
+            start_line: self.editor.content.cursor_line,
+            end_line: self.editor.content.cursor_line + 1,
         });
         self.emit_event(crate::events::EditorEvent::CursorMoved);
         // 自动保存：文本变更后按防抖延迟（重）设空闲保存定时器
@@ -106,32 +121,34 @@ impl EditorState {
     }
     /// 将事件队列中所有事件转换为脏矩形标记
     pub fn flush_events_to_dirty_tracker(&mut self) {
-        // 预取布局区域，避免闭包多次借用 self.layout
-        let editor_region = self.layout.editor_region();
-        let status_region = self.layout.status_bar_region();
-        let sidebar_region = self.layout.sidebar_region();
-        let right_panel_region = self.layout.right_panel_region();
-        let bottom_region = self.layout.bottom_panel_region();
-        let line_height = self.text_renderer.line_height();
+        // 预取布局区域，避免闭包多次借用 self.ui.layout
+        let editor_region = self.ui.layout.editor_region();
+        let status_region = self.ui.layout.status_bar_region();
+        let sidebar_region = self.ui.layout.sidebar_region();
+        let right_panel_region = self.ui.layout.right_panel_region();
+        let bottom_region = self.ui.layout.bottom_panel_region();
+        let line_height = self.win.text_renderer.line_height();
         // REQ-P1-03: 用字符列（而非字节偏移）计算脏矩形光标 x 坐标，
         // 避免非 ASCII 文本时光标残影/撕裂
         let char_col = self
+            .editor
             .content
             .buffer
-            .get_line(self.content.cursor_line)
+            .get_line(self.editor.content.cursor_line)
             .map(|line| {
-                let pos = line.floor_char_boundary(self.content.cursor_col.min(line.len()));
+                let pos = line.floor_char_boundary(self.editor.content.cursor_col.min(line.len()));
                 line[..pos].chars().count()
             })
             .unwrap_or(0);
         let cursor_x =
-            editor_region.x + 60.0 + 5.0 + char_col as f32 * self.text_renderer.char_width()
-                - self.content.scroll_x;
-        let cursor_y =
-            editor_region.y + self.content.cursor_line as f32 * line_height - self.content.scroll_y;
+            editor_region.x + 60.0 + 5.0 + char_col as f32 * self.win.text_renderer.char_width()
+                - self.editor.content.scroll_x;
+        let cursor_y = editor_region.y + self.editor.content.cursor_line as f32 * line_height
+            - self.editor.content.scroll_y;
 
-        self.event_queue
-            .drain_to_dirty_tracker(&mut self.dirty_tracker, |event| {
+        self.input
+            .event_queue
+            .drain_to_dirty_tracker(&mut self.win.dirty_tracker, |event| {
                 use crate::events::EditorEvent;
                 match event {
                     EditorEvent::TextChanged { .. } => Some((
@@ -204,9 +221,9 @@ impl EditorState {
     }
     /// P2.3: 根据当前 buffer 大小更新大文件标记
     pub fn update_large_file_flag(&mut self) {
-        let line_count = self.content.buffer.len_lines();
-        let byte_count = self.content.buffer.len_bytes();
-        self.content.is_large_file = line_count > Self::LARGE_FILE_LINE_THRESHOLD
+        let line_count = self.editor.content.buffer.len_lines();
+        let byte_count = self.editor.content.buffer.len_bytes();
+        self.editor.content.is_large_file = line_count > Self::LARGE_FILE_LINE_THRESHOLD
             || byte_count > Self::LARGE_FILE_BYTE_THRESHOLD;
     }
     /// 执行菜单命令
@@ -285,76 +302,83 @@ impl EditorState {
                 self.paste();
             }
             crate::menu_bar::CommandId::EditFind => {
-                self.find.toggle_find(&self.content);
+                self.editor.find.toggle_find(&self.editor.content);
             }
             crate::menu_bar::CommandId::EditReplace => {
-                self.find.toggle_replace(&self.content);
+                self.editor.find.toggle_replace(&self.editor.content);
             }
             crate::menu_bar::CommandId::EditSelectAll => {
                 self.select_all();
             }
             crate::menu_bar::CommandId::ViewToggleSidebar => {
-                self.layout.sidebar_visible = !self.layout.sidebar_visible;
+                self.ui.layout.sidebar_visible = !self.ui.layout.sidebar_visible;
             }
             crate::menu_bar::CommandId::ViewToggleActivityBar => {
-                self.layout.activity_bar_visible = !self.layout.activity_bar_visible;
+                self.ui.layout.activity_bar_visible = !self.ui.layout.activity_bar_visible;
             }
             crate::menu_bar::CommandId::ViewToggleStatusBar => {
-                self.layout.status_bar_visible = !self.layout.status_bar_visible;
+                self.ui.layout.status_bar_visible = !self.ui.layout.status_bar_visible;
             }
             crate::menu_bar::CommandId::ViewZoomIn => {
-                self.status_message = "放大功能即将推出".to_string();
+                self.ui.status_message = "放大功能即将推出".to_string();
             }
             crate::menu_bar::CommandId::ViewZoomOut => {
-                self.status_message = "缩小功能即将推出".to_string();
+                self.ui.status_message = "缩小功能即将推出".to_string();
             }
             crate::menu_bar::CommandId::GotoFile => {
-                self.status_message = "转到文件功能即将推出".to_string();
+                self.ui.status_message = "转到文件功能即将推出".to_string();
             }
             crate::menu_bar::CommandId::GotoLine => {
-                self.status_message = "转到行功能即将推出".to_string();
+                self.ui.status_message = "转到行功能即将推出".to_string();
             }
             crate::menu_bar::CommandId::RunStart => {
-                self.status_message = "运行功能即将推出".to_string();
+                self.ui.status_message = "运行功能即将推出".to_string();
             }
             crate::menu_bar::CommandId::RunDebug => {
-                self.status_message = "调试功能即将推出".to_string();
+                self.ui.status_message = "调试功能即将推出".to_string();
             }
             crate::menu_bar::CommandId::RunSandboxEval => {
                 self.open_sandbox_eval_tab();
             }
             crate::menu_bar::CommandId::SearchGlobal => {
-                self.search_panel.toggle();
-                if self.search_panel.visible {
-                    self.search_panel.search(self.current_folder.as_deref());
+                self.ui.search_panel.toggle();
+                if self.ui.search_panel.visible {
+                    self.ui
+                        .search_panel
+                        .search(self.fs.current_folder.as_deref());
                 }
             }
             crate::menu_bar::CommandId::AiFixDiagnostics => {
                 self.ai_fix_diagnostics();
             }
             crate::menu_bar::CommandId::TerminalNew => {
-                self.layout.toggle_terminal_panel();
-                if self.layout.bottom_panel_visible {
-                    self.terminal_panel.focused = true;
+                self.ui.layout.toggle_terminal_panel();
+                if self.ui.layout.bottom_panel_visible {
+                    self.terminal.terminal_panel.focused = true;
                     self.set_terminal_ime_bypass(true);
-                    if !self.terminal_panel.running {
-                        let _ = self.terminal_panel.start();
+                    if !self.terminal.terminal_panel.running {
+                        let _ = self.terminal.terminal_panel.start();
                     }
                     // 启动周期刷新定时器以显示异步 shell 输出
                     unsafe {
                         let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
-                            self.hwnd, 0xA002, 50, None,
+                            self.win.hwnd,
+                            0xA002,
+                            50,
+                            None,
                         );
                     }
                 } else {
-                    self.terminal_panel.focused = false;
+                    self.terminal.terminal_panel.focused = false;
                     self.set_terminal_ime_bypass(false);
                     unsafe {
-                        let _ =
-                            windows::Win32::UI::WindowsAndMessaging::KillTimer(self.hwnd, 0xA002);
+                        let _ = windows::Win32::UI::WindowsAndMessaging::KillTimer(
+                            self.win.hwnd,
+                            0xA002,
+                        );
                     }
                 }
-                self.status_message = if self.layout.bottom_panel_visible {
+                self.ui.status_message = if self.ui.layout.bottom_panel_visible {
                     "终端已打开"
                 } else {
                     "终端已关闭"
@@ -362,11 +386,11 @@ impl EditorState {
                 .to_string();
             }
             crate::menu_bar::CommandId::HelpCheckUpdate => {
-                self.status_message = "正在检查更新...".to_string();
+                self.ui.status_message = "正在检查更新...".to_string();
                 crate::updater::start_check(hwnd, true);
             }
             crate::menu_bar::CommandId::HelpAbout => {
-                self.status_message = format!("牧羊人编辑器 v{}", crate::updater::APP_VERSION);
+                self.ui.status_message = format!("牧羊人编辑器 v{}", crate::updater::APP_VERSION);
             }
             crate::menu_bar::CommandId::MarkdownTogglePreview => {
                 self.toggle_markdown_preview();
@@ -384,19 +408,20 @@ impl EditorState {
         // === 0延迟切换：刚切换过来的标签页首帧跳过所有重建 ===
         // 直接渲染已有缓存，下一帧再恢复正常逻辑
         // 但如果缓存中没有高亮数据（首次打开或缓存被清空），仍然需要高亮
-        if self.content.just_switched {
-            self.content.just_switched = false;
+        if self.editor.content.just_switched {
+            self.editor.content.just_switched = false;
             // 只更新签名，让后续帧能正确命中
-            let total_lines = self.content.buffer.len_lines().max(1);
-            self.content.last_cache_signature = (
-                self.content.buffer_version,
+            let total_lines = self.editor.content.buffer.len_lines().max(1);
+            self.editor.content.last_cache_signature = (
+                self.editor.content.buffer_version,
                 visible_start,
                 visible_end,
                 total_lines,
             );
             // 检查可见区域是否已有高亮缓存
             let has_highlight = (visible_start..visible_end.min(total_lines)).all(|i| {
-                i < self.content.cached_tokens.len() && !self.content.cached_tokens[i].is_empty()
+                i < self.editor.content.cached_tokens.len()
+                    && !self.editor.content.cached_tokens[i].is_empty()
             });
             if has_highlight {
                 return; // 缓存完整，0延迟渲染
@@ -404,49 +429,11 @@ impl EditorState {
             // 缓存不完整：继续执行下方的高亮逻辑
         }
 
-        let total_lines = self.content.buffer.len_lines().max(1);
-
-        // tree-sitter 优先高亮：返回支持的语言的字符串标识
-        let ts_lang = language_to_ts_str(self.content.language);
-
-        // === P0-3: 后台语法高亮 — 始终 poll，即使在空闲帧 ===
-        if ts_lang.is_some() && !self.content.is_large_file {
-            if let Some(mut result) = self.bg_highlighter.poll_result() {
-                let current_doc = self
-                    .content
-                    .file_path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "untitled".to_string());
-                if result.doc_id != current_doc || result.version != self.content.buffer_version {
-                    drop(result);
-                } else {
-                    let token_lines = std::mem::take(&mut result.token_lines);
-                    if self.content.cached_tokens.len() < token_lines.len() {
-                        self.content
-                            .cached_tokens
-                            .resize_with(token_lines.len(), Vec::new);
-                    }
-                    for (i, tokens) in token_lines.into_iter().enumerate() {
-                        if i < self.content.cached_tokens.len() {
-                            self.content.cached_tokens[i] = tokens;
-                        }
-                    }
-                    let er = self.layout.editor_region();
-                    self.dirty_tracker.mark_region(
-                        er.x,
-                        er.y,
-                        er.width,
-                        er.height,
-                        crate::dirty_rect::DirtyRegionType::EditorContent,
-                    );
-                }
-            }
-        }
+        let total_lines = self.editor.content.buffer.len_lines().max(1);
 
         // REQ-P2-01: 变化检测
         let signature = (
-            self.content.buffer_version,
+            self.editor.content.buffer_version,
             visible_start,
             visible_end,
             total_lines,
@@ -455,31 +442,34 @@ impl EditorState {
         let cache_start = visible_start.saturating_sub(2);
         let cache_end = (visible_end + 2).min(total_lines).max(cache_start);
         let window_len = cache_end - cache_start;
-        if self.content.last_cache_signature == signature
-            && self.content.cache_window_start == cache_start
-            && self.content.cached_lines.len() == window_len
+        if self.editor.content.last_cache_signature == signature
+            && self.editor.content.cache_window_start == cache_start
+            && self.editor.content.cached_lines.len() == window_len
         {
             return;
         }
-        self.content.last_cache_signature = signature;
+        self.editor.content.last_cache_signature = signature;
 
         // P2.3: 大文件检测与行偏移缓存
         // 优化：只在必要时更新大文件标记（行数或字节数变化时）
-        let line_count = self.content.buffer.len_lines();
-        let byte_count = self.content.buffer.len_bytes();
+        let line_count = self.editor.content.buffer.len_lines();
+        let byte_count = self.editor.content.buffer.len_bytes();
         let new_is_large = line_count > Self::LARGE_FILE_LINE_THRESHOLD
             || byte_count > Self::LARGE_FILE_BYTE_THRESHOLD;
-        if self.content.is_large_file != new_is_large {
-            self.content.is_large_file = new_is_large;
+        if self.editor.content.is_large_file != new_is_large {
+            self.editor.content.is_large_file = new_is_large;
         }
         self.rebuild_line_y_offsets();
 
         // P0-A: 平移行文本缓存窗口
-        self.content.slide_cache_window(cache_start, window_len);
+        self.editor
+            .content
+            .slide_cache_window(cache_start, window_len);
 
         // tokens 仍为全文件索引，行数变化时调整
-        if self.content.cached_tokens.len() != total_lines {
-            self.content
+        if self.editor.content.cached_tokens.len() != total_lines {
+            self.editor
+                .content
                 .cached_tokens
                 .resize_with(total_lines, Vec::new);
         }
@@ -490,12 +480,14 @@ impl EditorState {
         // === GPU 高亮优先尝试 ===
         // 优化：只在文件内容变化时运行 GPU 词法分析，切换标签页时复用缓存
         let mut gpu_highlighted = false;
-        if let Some(ref mut gpu_lexer) = self.gpu_highlighter {
-            if self.gpu_highlight_config.enabled
-                && !self.content.is_large_file
-                && self.content.buffer.len_bytes() >= self.gpu_highlight_config.min_file_size
+        if let Some(ref mut gpu_lexer) = self.win.gpu_highlighter {
+            if self.win.gpu_highlight_config.enabled
+                && !self.editor.content.is_large_file
+                && self.editor.content.buffer.len_bytes()
+                    >= self.win.gpu_highlight_config.min_file_size
             {
                 let vp_cache = self
+                    .editor
                     .content
                     .viewport_highlight_cache
                     .get_or_insert_with(aether_render::gpu::viewport::ViewportHighlightCache::new);
@@ -504,25 +496,30 @@ impl EditorState {
                 // 1. 视口范围变化 2. buffer_version 变化（内容编辑）
                 let vp_changed =
                     vp_cache.window_start() != cache_start || vp_cache.window_len() != window_len;
-                let content_changed = vp_cache.buffer_version() != self.content.buffer_version;
+                let content_changed =
+                    vp_cache.buffer_version() != self.editor.content.buffer_version;
                 let need_gpu_rebuild = vp_changed || content_changed || vp_cache.is_empty();
 
                 if need_gpu_rebuild {
-                    vp_cache.resize_window(cache_start, window_len, self.content.buffer_version);
+                    vp_cache.resize_window(
+                        cache_start,
+                        window_len,
+                        self.editor.content.buffer_version,
+                    );
 
                     let current_lines: Vec<String> = (cache_start..cache_end)
-                        .map(|i| self.content.buffer.get_line(i).unwrap_or_default())
+                        .map(|i| self.editor.content.buffer.get_line(i).unwrap_or_default())
                         .collect();
                     vp_cache.update_with_edit_distance(
                         &current_lines,
-                        self.content.buffer_version,
-                        self.gpu_highlight_config.edit_distance_threshold,
+                        self.editor.content.buffer_version,
+                        self.win.gpu_highlight_config.edit_distance_threshold,
                     );
 
                     let dirty_lines = vp_cache.dirty_line_indices();
 
                     if !dirty_lines.is_empty() {
-                        let text = self.content.buffer.get_all_text();
+                        let text = self.editor.content.buffer.get_all_text();
                         if let Ok(tokens) = gpu_lexer.lex(text.as_bytes()) {
                             if !tokens.is_empty() {
                                 let gpu_spans =
@@ -533,12 +530,14 @@ impl EditorState {
 
                                 for line_idx in cache_start..cache_end {
                                     let line_start = self
+                                        .editor
                                         .content
                                         .buffer
                                         .line_byte_range(line_idx)
                                         .map(|(s, _)| s as u32)
                                         .unwrap_or(0);
                                     let line_end = self
+                                        .editor
                                         .content
                                         .buffer
                                         .line_byte_range(line_idx)
@@ -557,7 +556,7 @@ impl EditorState {
                                     vp_cache.set_line_tokens(
                                         line_idx,
                                         line_tokens,
-                                        self.content.buffer_version,
+                                        self.editor.content.buffer_version,
                                     );
                                 }
                             }
@@ -574,45 +573,13 @@ impl EditorState {
 
         // 将 ViewportHighlightCache 中的 token 同步到 cached_tokens
         if gpu_highlighted {
-            if let Some(ref vp_cache) = self.content.viewport_highlight_cache {
+            if let Some(ref vp_cache) = self.editor.content.viewport_highlight_cache {
                 for line_idx in cache_start..cache_end {
                     if let Some(tokens) = vp_cache.get_line_tokens(line_idx) {
-                        if line_idx < self.content.cached_tokens.len() {
-                            self.content.cached_tokens[line_idx] = tokens.to_vec();
+                        if line_idx < self.editor.content.cached_tokens.len() {
+                            self.editor.content.cached_tokens[line_idx] = tokens.to_vec();
                         }
                     }
-                }
-            }
-        }
-
-        // === P0-3: 后台语法高亮 — 发送请求 ===
-        let mut use_sync_lexer = false;
-        if !gpu_highlighted {
-            if let Some(lang) = ts_lang {
-                if !self.content.is_large_file
-                    && (self.content.buffer_version != self.hl_request_version
-                        || self.content.tokens_trimmed)
-                    && !self.bg_highlighter.has_pending()
-                {
-                    let snapshot = self.content.buffer.create_snapshot();
-                    let doc_id = self
-                        .content
-                        .file_path
-                        .as_ref()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "untitled".to_string());
-                    self.bg_highlighter.request(
-                        &doc_id,
-                        lang,
-                        self.content.buffer_version,
-                        snapshot,
-                    );
-                    self.hl_request_version = self.content.buffer_version;
-                    self.content.tokens_trimmed = false;
-                }
-                // 小文件：同步使用 CPU lexer 提供即时高亮
-                if self.content.buffer.len_bytes() < self.gpu_highlight_config.min_file_size {
-                    use_sync_lexer = true;
                 }
             }
         }
@@ -632,15 +599,10 @@ impl EditorState {
         for i in viewport_start..viewport_end {
             if i >= cache_start && i < cache_end {
                 let slot = i - cache_start;
-                if self.content.line_cache_versions[slot] != self.content.buffer_version {
-                    self.highlight_line(
-                        i,
-                        slot,
-                        gpu_highlighted,
-                        use_sync_lexer,
-                        ts_lang,
-                        &mut lexer,
-                    );
+                if self.editor.content.line_cache_versions[slot]
+                    != self.editor.content.buffer_version
+                {
+                    self.highlight_line(i, slot, gpu_highlighted, &mut lexer);
                 }
             }
         }
@@ -649,15 +611,10 @@ impl EditorState {
         for i in extended_start..extended_end {
             if i < viewport_start || i >= viewport_end {
                 let slot = i - cache_start;
-                if self.content.line_cache_versions[slot] != self.content.buffer_version {
-                    self.highlight_line(
-                        i,
-                        slot,
-                        gpu_highlighted,
-                        use_sync_lexer,
-                        ts_lang,
-                        &mut lexer,
-                    );
+                if self.editor.content.line_cache_versions[slot]
+                    != self.editor.content.buffer_version
+                {
+                    self.highlight_line(i, slot, gpu_highlighted, &mut lexer);
                 }
             }
         }
@@ -669,46 +626,34 @@ impl EditorState {
         line_idx: usize,
         slot: usize,
         gpu_highlighted: bool,
-        use_sync_lexer: bool,
-        ts_lang: Option<&str>,
         lexer: &mut Option<Box<dyn aether_core::lexer::Lexer>>,
     ) {
-        let line = self.content.buffer.get_line(line_idx).unwrap_or_default();
+        let line = self
+            .editor
+            .content
+            .buffer
+            .get_line(line_idx)
+            .unwrap_or_default();
 
-        if self.content.is_large_file {
-            self.content.cached_lines[slot] = line;
-            self.content.cached_tokens[line_idx] = Vec::new();
-            self.content.line_cache_versions[slot] = self.content.buffer_version;
+        if self.editor.content.is_large_file {
+            self.editor.content.cached_lines[slot] = line;
+            self.editor.content.cached_tokens[line_idx] = Vec::new();
+            self.editor.content.line_cache_versions[slot] = self.editor.content.buffer_version;
         } else if gpu_highlighted {
-            self.content.cached_lines[slot] = line;
-            self.content.line_cache_versions[slot] = self.content.buffer_version;
-        } else if use_sync_lexer {
-            if lexer.is_none() {
-                *lexer = Some(self.content.language.create_lexer());
-            }
-            let tokens = if let Some(lex) = lexer.as_ref() {
-                lex.lex_full(&line)
-            } else {
-                Vec::new()
-            };
-            self.content.cached_lines[slot] = line;
-            self.content.cached_tokens[line_idx] = tokens;
-            self.content.line_cache_versions[slot] = self.content.buffer_version;
-        } else if ts_lang.is_some() {
-            self.content.cached_lines[slot] = line;
-            self.content.line_cache_versions[slot] = self.content.buffer_version;
+            self.editor.content.cached_lines[slot] = line;
+            self.editor.content.line_cache_versions[slot] = self.editor.content.buffer_version;
         } else {
             if lexer.is_none() {
-                *lexer = Some(self.content.language.create_lexer());
+                *lexer = Some(self.editor.content.language.create_lexer());
             }
             let tokens = if let Some(lex) = lexer.as_ref() {
                 lex.lex_full(&line)
             } else {
                 Vec::new()
             };
-            self.content.cached_lines[slot] = line;
-            self.content.cached_tokens[line_idx] = tokens;
-            self.content.line_cache_versions[slot] = self.content.buffer_version;
+            self.editor.content.cached_lines[slot] = line;
+            self.editor.content.cached_tokens[line_idx] = tokens;
+            self.editor.content.line_cache_versions[slot] = self.editor.content.buffer_version;
         }
     }
 }

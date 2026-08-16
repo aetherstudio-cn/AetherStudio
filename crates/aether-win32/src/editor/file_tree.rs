@@ -4,10 +4,10 @@ impl EditorState {
     /// 命中检测：侧边栏右侧的宽度调整手柄
     /// 仅当侧边栏可见、活动栏已渲染（侧边栏真实存在宽度）时返回 true
     pub fn hit_test_sidebar_resize(&self, mouse_x: f32, mouse_y: f32) -> bool {
-        if !self.layout.sidebar_visible {
+        if !self.ui.layout.sidebar_visible {
             return false;
         }
-        let sidebar = self.layout.sidebar_region();
+        let sidebar = self.ui.layout.sidebar_region();
         if mouse_y < sidebar.y || mouse_y >= sidebar.y + sidebar.height {
             return false;
         }
@@ -25,12 +25,12 @@ impl EditorState {
     /// 使用逻辑像素（与 TAB_BAR_HEIGHT 一致，不乘 dpi_scale，Direct2D 自动处理缩放）
     pub fn file_tree_list_start_y(&self) -> f32 {
         let header_h = crate::layout::FILE_TREE_HEADER_HEIGHT;
-        header_h + 6.0 - self.sidebar_scroll_y
+        header_h + 6.0 - self.fs.sidebar_scroll_y
     }
 
     /// 树节点列表的起始 Y 坐标：根目录行之下一行（根行高度 = 节点行高）
     pub fn file_tree_nodes_start_y(&self) -> f32 {
-        self.file_tree_list_start_y() + crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale
+        self.file_tree_list_start_y() + crate::layout::FILE_TREE_ROW_HEIGHT * self.win.dpi_scale
     }
     /// 开始文件树内联输入（新建文件/文件夹/重命名）。
     /// 新建时基于当前选中项定位目标目录（VS Code 行为）：
@@ -42,8 +42,8 @@ impl EditorState {
     /// 新建入口的目标父目录：选中目录 → 该目录；选中文件 → 其父目录；
     /// 无选中/顶层文件 → 工作区根（None）
     pub(crate) fn file_tree_new_target_dir(&self) -> Option<u32> {
-        let idx = self.selected_file_node?;
-        let tree = self.file_tree.as_ref()?;
+        let idx = self.fs.selected_file_node?;
+        let tree = self.fs.file_tree.as_ref()?;
         let node = tree.get_node(idx)?;
         if node.kind == FileKind::Directory {
             Some(idx)
@@ -57,8 +57,8 @@ impl EditorState {
     /// None 则在工作区根目录）。重命名忽略 parent_node，仍使用选中节点。
     pub fn start_file_tree_input_in(&mut self, kind: FileTreeInputKind, parent_node: Option<u32>) {
         // 未打开文件夹时无处创建，直接提示而不进入输入态
-        if self.current_folder.is_none() {
-            self.status_message = "请先打开文件夹".to_string();
+        if self.fs.current_folder.is_none() {
+            self.ui.status_message = "请先打开文件夹".to_string();
             return;
         }
         let (default_name, target_node) = match kind {
@@ -68,9 +68,9 @@ impl EditorState {
                 (String::new(), parent_node)
             }
             FileTreeInputKind::Rename => {
-                let node_idx = self.selected_file_node;
+                let node_idx = self.fs.selected_file_node;
                 let name = node_idx.and_then(|idx| {
-                    self.file_tree.as_ref().and_then(|tree| {
+                    self.fs.file_tree.as_ref().and_then(|tree| {
                         tree.get_node(idx)
                             .map(|node| tree.get_name(node).to_string())
                     })
@@ -80,10 +80,10 @@ impl EditorState {
         };
         // 新建时输入行渲染在目标目录子列表开头：确保目标目录已加载并展开
         if !matches!(kind, FileTreeInputKind::Rename) {
-            self.file_tree_root_expanded = true;
+            self.fs.file_tree_root_expanded = true;
             if let Some(p) = target_node {
                 let _ = self.ensure_node_loaded(p);
-                if let Some(tree) = self.file_tree.as_mut() {
+                if let Some(tree) = self.fs.file_tree.as_mut() {
                     if let Some(node) = tree.get_node_mut(p) {
                         node.is_expanded = true;
                     }
@@ -91,7 +91,7 @@ impl EditorState {
             }
             self.mark_file_tree_rows_dirty();
         }
-        self.file_tree_input = Some(FileTreeInput {
+        self.fs.file_tree_input = Some(FileTreeInput {
             kind,
             value: default_name,
             caret_visible: true,
@@ -101,32 +101,32 @@ impl EditorState {
         // 启动光标闪烁定时器（此前遗漏，输入行光标不会闪烁）
         unsafe {
             let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
-                self.hwnd,
+                self.win.hwnd,
                 crate::window::CARET_TIMER_ID,
                 530,
                 None,
             );
         }
-        self.dirty_tracker.mark_region(
-            self.layout.sidebar_region().x,
-            self.layout.sidebar_region().y,
-            self.layout.sidebar_region().width,
-            self.layout.sidebar_region().height,
+        self.win.dirty_tracker.mark_region(
+            self.ui.layout.sidebar_region().x,
+            self.ui.layout.sidebar_region().y,
+            self.ui.layout.sidebar_region().width,
+            self.ui.layout.sidebar_region().height,
             crate::dirty_rect::DirtyRegionType::Sidebar,
         );
     }
     /// 确认文件树内联输入，执行新建操作
     pub fn confirm_file_tree_input(&mut self) {
-        let Some(input) = self.file_tree_input.take() else {
+        let Some(input) = self.fs.file_tree_input.take() else {
             return;
         };
-        let Some(base_path) = self.current_folder.clone() else {
-            self.status_message = "请先打开文件夹".to_string();
-            self.dirty_tracker.mark_region(
-                self.layout.sidebar_region().x,
-                self.layout.sidebar_region().y,
-                self.layout.sidebar_region().width,
-                self.layout.sidebar_region().height,
+        let Some(base_path) = self.fs.current_folder.clone() else {
+            self.ui.status_message = "请先打开文件夹".to_string();
+            self.win.dirty_tracker.mark_region(
+                self.ui.layout.sidebar_region().x,
+                self.ui.layout.sidebar_region().y,
+                self.ui.layout.sidebar_region().width,
+                self.ui.layout.sidebar_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
             return;
@@ -135,11 +135,11 @@ impl EditorState {
         let name = input.value.trim();
         if name.is_empty() {
             // VS Code 行为：空名提交视为取消，不提示错误
-            self.dirty_tracker.mark_region(
-                self.layout.sidebar_region().x,
-                self.layout.sidebar_region().y,
-                self.layout.sidebar_region().width,
-                self.layout.sidebar_region().height,
+            self.win.dirty_tracker.mark_region(
+                self.ui.layout.sidebar_region().x,
+                self.ui.layout.sidebar_region().y,
+                self.ui.layout.sidebar_region().width,
+                self.ui.layout.sidebar_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
             return;
@@ -149,14 +149,14 @@ impl EditorState {
         const INVALID_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
         if name.contains(INVALID_CHARS) {
             let bad: String = name.chars().filter(|c| INVALID_CHARS.contains(c)).collect();
-            self.status_message = format!("文件名不能包含: {}", bad);
+            self.ui.status_message = format!("文件名不能包含: {}", bad);
             // 验证失败时保留输入框，让用户修改后重试
-            self.file_tree_input = Some(input);
-            self.dirty_tracker.mark_region(
-                self.layout.sidebar_region().x,
-                self.layout.sidebar_region().y,
-                self.layout.sidebar_region().width,
-                self.layout.sidebar_region().height,
+            self.fs.file_tree_input = Some(input);
+            self.win.dirty_tracker.mark_region(
+                self.ui.layout.sidebar_region().x,
+                self.ui.layout.sidebar_region().y,
+                self.ui.layout.sidebar_region().width,
+                self.ui.layout.sidebar_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
             return;
@@ -176,12 +176,12 @@ impl EditorState {
         // 重命名的重名检查在 Rename 分支内基于旧路径父目录完成，
         // 此处仅对新建操作检查，避免子目录重命名被根目录同名项误拦
         if !matches!(input.kind, FileTreeInputKind::Rename) && target.exists() {
-            self.status_message = format!("{} 已存在", name);
-            self.dirty_tracker.mark_region(
-                self.layout.sidebar_region().x,
-                self.layout.sidebar_region().y,
-                self.layout.sidebar_region().width,
-                self.layout.sidebar_region().height,
+            self.ui.status_message = format!("{} 已存在", name);
+            self.win.dirty_tracker.mark_region(
+                self.ui.layout.sidebar_region().x,
+                self.ui.layout.sidebar_region().y,
+                self.ui.layout.sidebar_region().width,
+                self.ui.layout.sidebar_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
             return;
@@ -190,9 +190,9 @@ impl EditorState {
         match input.kind {
             FileTreeInputKind::NewFile => {
                 if let Err(e) = std::fs::write(&target, "") {
-                    self.status_message = format!("创建文件失败: {}", e);
+                    self.ui.status_message = format!("创建文件失败: {}", e);
                 } else {
-                    self.status_message = format!("已创建文件: {}", name);
+                    self.ui.status_message = format!("已创建文件: {}", name);
                     // 轻量刷新：保留展开状态，不重启 LSP / 不重开 README
                     self.refresh_file_tree_light();
                     self.select_node_by_path(&target);
@@ -201,9 +201,9 @@ impl EditorState {
             }
             FileTreeInputKind::NewFolder => {
                 if let Err(e) = std::fs::create_dir(&target) {
-                    self.status_message = format!("创建文件夹失败: {}", e);
+                    self.ui.status_message = format!("创建文件夹失败: {}", e);
                 } else {
-                    self.status_message = format!("已创建文件夹: {}", name);
+                    self.ui.status_message = format!("已创建文件夹: {}", name);
                     self.refresh_file_tree_light();
                     self.select_node_by_path(&target);
                 }
@@ -218,23 +218,23 @@ impl EditorState {
                         if old_path == new_path {
                             // 名称未改变，无需操作
                         } else if new_path.exists() {
-                            self.status_message = format!("{} 已存在", name);
-                            self.file_tree_input = Some(input);
-                            self.dirty_tracker.mark_region(
-                                self.layout.sidebar_region().x,
-                                self.layout.sidebar_region().y,
-                                self.layout.sidebar_region().width,
-                                self.layout.sidebar_region().height,
+                            self.ui.status_message = format!("{} 已存在", name);
+                            self.fs.file_tree_input = Some(input);
+                            self.win.dirty_tracker.mark_region(
+                                self.ui.layout.sidebar_region().x,
+                                self.ui.layout.sidebar_region().y,
+                                self.ui.layout.sidebar_region().width,
+                                self.ui.layout.sidebar_region().height,
                                 crate::dirty_rect::DirtyRegionType::Sidebar,
                             );
                             return;
                         } else if let Err(e) = std::fs::rename(&old_path, &new_path) {
-                            self.status_message = format!("重命名失败: {}", e);
+                            self.ui.status_message = format!("重命名失败: {}", e);
                         } else {
-                            self.status_message = format!("已重命名为: {}", name);
+                            self.ui.status_message = format!("已重命名为: {}", name);
                             // 如果重命名的文件当前已打开，更新标签页路径
                             let old_path_str = old_path.to_string_lossy().to_string();
-                            for tab in &mut self.tab_bar.tabs {
+                            for tab in &mut self.editor.tab_bar.tabs {
                                 if let Some(file_content) = tab.as_file_mut() {
                                     if let Some(ref fp) = file_content.file_path {
                                         if fp.to_string_lossy() == old_path_str {
@@ -243,9 +243,9 @@ impl EditorState {
                                     }
                                 }
                             }
-                            if let Some(ref active_path) = self.content.file_path {
+                            if let Some(ref active_path) = self.editor.content.file_path {
                                 if active_path.to_string_lossy() == old_path_str {
-                                    self.content.file_path = Some(new_path.clone());
+                                    self.editor.content.file_path = Some(new_path.clone());
                                 }
                             }
                             self.refresh_file_tree_light();
@@ -258,22 +258,27 @@ impl EditorState {
     }
     /// 取消文件树内联输入
     pub fn cancel_file_tree_input(&mut self) {
-        if self.file_tree_input.take().is_some() {
-            self.dirty_tracker.mark_region(
-                self.layout.sidebar_region().x,
-                self.layout.sidebar_region().y,
-                self.layout.sidebar_region().width,
-                self.layout.sidebar_region().height,
+        if self.fs.file_tree_input.take().is_some() {
+            self.win.dirty_tracker.mark_region(
+                self.ui.layout.sidebar_region().x,
+                self.ui.layout.sidebar_region().y,
+                self.ui.layout.sidebar_region().width,
+                self.ui.layout.sidebar_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
         }
     }
     /// 按绝对路径查找节点并选中（刷新树后定位新建/重命名的节点）
     fn select_node_by_path(&mut self, path: &std::path::Path) {
-        let n = self.file_tree.as_ref().map(|t| t.len() as u32).unwrap_or(0);
+        let n = self
+            .fs
+            .file_tree
+            .as_ref()
+            .map(|t| t.len() as u32)
+            .unwrap_or(0);
         for idx in 0..n {
             if self.get_node_path(idx).as_deref() == Some(path) {
-                self.selected_file_node = Some(idx);
+                self.fs.selected_file_node = Some(idx);
                 return;
             }
         }
@@ -285,20 +290,28 @@ impl EditorState {
     /// 依赖 file_tree_visible_rows：渲染帧会先 ensure_file_tree_rows()，
     /// 鼠标路径读到的至多是上一帧布局（误差一帧，可接受）。
     pub(crate) fn file_tree_input_row_geom(&self) -> Option<(f32, f32, f32)> {
-        let input = self.file_tree_input.as_ref()?;
-        let s = self.dpi_scale;
+        let input = self.fs.file_tree_input.as_ref()?;
+        let s = self.win.dpi_scale;
         let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * s;
         let nodes_top = self.file_tree_nodes_start_y();
         let (row, depth) = match (input.kind, input.target_node) {
             (FileTreeInputKind::Rename, Some(idx)) => {
-                let i = self.file_tree_visible_rows.iter().position(|&r| r == idx)?;
-                let depth = self.file_tree.as_ref()?.get_node(idx)?.depth as f32;
+                let i = self
+                    .fs
+                    .file_tree_visible_rows
+                    .iter()
+                    .position(|&r| r == idx)?;
+                let depth = self.fs.file_tree.as_ref()?.get_node(idx)?.depth as f32;
                 (i as f32, depth)
             }
             (FileTreeInputKind::Rename, None) => return None,
             (_, Some(p)) => {
-                let i = self.file_tree_visible_rows.iter().position(|&r| r == p)?;
-                let depth = self.file_tree.as_ref()?.get_node(p)?.depth as f32 + 1.0;
+                let i = self
+                    .fs
+                    .file_tree_visible_rows
+                    .iter()
+                    .position(|&r| r == p)?;
+                let depth = self.fs.file_tree.as_ref()?.get_node(p)?.depth as f32 + 1.0;
                 (i as f32 + 1.0, depth)
             }
             (_, None) => (0.0, 0.0),
@@ -311,12 +324,12 @@ impl EditorState {
     }
     /// 刷新文件树（重新扫描当前文件夹）
     pub fn refresh_file_tree(&mut self) {
-        if let Some(path) = self.current_folder.clone() {
+        if let Some(path) = self.fs.current_folder.clone() {
             // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
-            if crate::editor::files::check_workspace_trust(self.hwnd, &path) {
+            if crate::editor::files::check_workspace_trust(self.win.hwnd, &path) {
                 self.open_folder(path);
             } else {
-                self.status_message = "已取消打开不受信任的工作区".to_string();
+                self.ui.status_message = "已取消打开不受信任的工作区".to_string();
             }
         }
     }
@@ -325,23 +338,24 @@ impl EditorState {
     /// 不重启 LSP、不保存设置、不显示加载 spinner、不自动打开 README。
     /// 用于 AI 新建/删除文件后即时同步资源管理器，避免用户手动刷新。
     pub fn refresh_file_tree_light(&mut self) {
-        let Some(folder) = self.current_folder.clone() else {
+        let Some(folder) = self.fs.current_folder.clone() else {
             return;
         };
         let expanded = self.capture_expanded_dir_paths();
         let mut tree = FileTree::new();
         Self::rebuild_tree_level(&mut tree, &folder, u32::MAX, 0, &folder, &expanded);
-        self.file_tree = Some(tree);
+        self.fs.file_tree = Some(tree);
         self.mark_file_tree_rows_dirty();
         // 文件可能变化，刷新 Git 状态
-        self.git.detect(&folder);
-        self.dirty_tracker.mark_full_window();
+        self.ui.git.detect(&folder);
+        self.win.dirty_tracker.mark_full_window();
     }
 
     /// 收集当前已展开目录的相对路径集合（刷新后据此恢复展开状态）
     fn capture_expanded_dir_paths(&self) -> std::collections::HashSet<PathBuf> {
         let mut set = std::collections::HashSet::new();
-        let (Some(tree), Some(root)) = (self.file_tree.as_ref(), self.current_folder.as_ref())
+        let (Some(tree), Some(root)) =
+            (self.fs.file_tree.as_ref(), self.fs.current_folder.as_ref())
         else {
             return set;
         };
@@ -397,7 +411,7 @@ impl EditorState {
     pub fn workspace_root_signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        if let Some(folder) = self.current_folder.as_ref() {
+        if let Some(folder) = self.fs.current_folder.as_ref() {
             Self::hash_dir_level(&mut hasher, folder);
             // 已展开目录的子项也参与签名（排序保证签名稳定）
             let mut expanded: Vec<PathBuf> =
@@ -439,8 +453,8 @@ impl EditorState {
     /// 在 Windows 文件资源管理器中打开当前工作区文件夹。
     /// 通过 ShellExecuteW 调用系统 explorer.exe，无纯 Rust 依赖。
     pub fn open_in_file_explorer(&mut self) {
-        let Some(folder) = self.current_folder.clone() else {
-            self.status_message = "请先打开文件夹".to_string();
+        let Some(folder) = self.fs.current_folder.clone() else {
+            self.ui.status_message = "请先打开文件夹".to_string();
             return;
         };
         let path_str = folder.to_string_lossy().to_string();
@@ -457,50 +471,51 @@ impl EditorState {
                 windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
             );
         }
-        self.status_message = format!("已在文件资源管理器中打开: {}", path_str);
+        self.ui.status_message = format!("已在文件资源管理器中打开: {}", path_str);
     }
     /// 复制当前工作区文件夹的绝对路径到剪贴板。
     pub fn copy_folder_path(&mut self) {
-        let Some(folder) = self.current_folder.clone() else {
-            self.status_message = "请先打开文件夹".to_string();
+        let Some(folder) = self.fs.current_folder.clone() else {
+            self.ui.status_message = "请先打开文件夹".to_string();
             return;
         };
         let path_str = folder.to_string_lossy().to_string();
         if Self::set_clipboard_text(&path_str) {
-            self.status_message = format!("已复制路径: {}", path_str);
+            self.ui.status_message = format!("已复制路径: {}", path_str);
         } else {
-            self.status_message = "复制路径失败".to_string();
+            self.ui.status_message = "复制路径失败".to_string();
         }
     }
     /// 复制文件节点的绝对路径到剪贴板。
     pub fn copy_node_path(&mut self, node_idx: u32) {
         let Some(path) = self.get_node_path(node_idx) else {
-            self.status_message = "无法获取文件路径".to_string();
+            self.ui.status_message = "无法获取文件路径".to_string();
             return;
         };
         let path_str = path.to_string_lossy().to_string();
         if Self::set_clipboard_text(&path_str) {
-            self.status_message = format!("已复制路径: {}", path_str);
+            self.ui.status_message = format!("已复制路径: {}", path_str);
         } else {
-            self.status_message = "复制路径失败".to_string();
+            self.ui.status_message = "复制路径失败".to_string();
         }
     }
     /// 复制文件节点相对工作区根目录的路径到剪贴板（无法取相对则回退绝对路径）。
     pub fn copy_node_relative_path(&mut self, node_idx: u32) {
         let Some(path) = self.get_node_path(node_idx) else {
-            self.status_message = "无法获取文件路径".to_string();
+            self.ui.status_message = "无法获取文件路径".to_string();
             return;
         };
         let rel = self
+            .fs
             .current_folder
             .as_ref()
             .and_then(|root| path.strip_prefix(root).ok())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| path.to_string_lossy().to_string());
         if Self::set_clipboard_text(&rel) {
-            self.status_message = format!("已复制相对路径: {}", rel);
+            self.ui.status_message = format!("已复制相对路径: {}", rel);
         } else {
-            self.status_message = "复制路径失败".to_string();
+            self.ui.status_message = "复制路径失败".to_string();
         }
     }
     /// 在文件资源管理器中打开/定位指定节点。
@@ -509,7 +524,7 @@ impl EditorState {
     /// - 文件夹：直接用 explorer 打开该文件夹内容。
     pub fn open_node_in_explorer(&mut self, node_idx: u32) {
         let Some(path) = self.get_node_path(node_idx) else {
-            self.status_message = "无法获取文件路径".to_string();
+            self.ui.status_message = "无法获取文件路径".to_string();
             return;
         };
         let path_str = path.to_string_lossy().to_string();
@@ -523,20 +538,20 @@ impl EditorState {
         }
         match cmd.spawn() {
             Ok(_) => {
-                self.status_message = format!("已在文件资源管理器中打开: {}", path_str);
+                self.ui.status_message = format!("已在文件资源管理器中打开: {}", path_str);
             }
             Err(e) => {
-                self.status_message = format!("打开文件资源管理器失败: {}", e);
+                self.ui.status_message = format!("打开文件资源管理器失败: {}", e);
             }
         }
     }
     /// 删除文件节点（文件或文件夹），删除前弹窗确认防误操作。
     pub fn delete_file_node(&mut self, node_idx: u32) {
         let Some(path) = self.get_node_path(node_idx) else {
-            self.status_message = "无法获取文件路径".to_string();
+            self.ui.status_message = "无法获取文件路径".to_string();
             return;
         };
-        let Some(tree) = self.file_tree.as_ref() else {
+        let Some(tree) = self.fs.file_tree.as_ref() else {
             return;
         };
         let Some(node) = tree.get_node(node_idx) else {
@@ -550,21 +565,22 @@ impl EditorState {
         // 使用 Windows 回收站 API（可由系统回收站恢复）
         match crate::recycle_bin::move_to_recycle_bin(&path) {
             Ok(()) => {
-                self.status_message = format!("已删除: {} (可从回收站恢复)", name);
+                self.ui.status_message = format!("已删除: {} (可从回收站恢复)", name);
                 // 记录删除操作以支持 Ctrl+Z 撤销
-                self.delete_undo_stack
+                self.fs
+                    .delete_undo_stack
                     .push(crate::undo_delete::DeleteRecord {
                         original_path: path.clone(),
                         timestamp: std::time::Instant::now(),
                     });
                 // 淡汰超过 20 条的旧记录
-                if self.delete_undo_stack.len() > 20 {
-                    self.delete_undo_stack.remove(0);
+                if self.fs.delete_undo_stack.len() > 20 {
+                    self.fs.delete_undo_stack.remove(0);
                 }
                 // 关闭已删除文件的标签页
                 let path_str = path.to_string_lossy().to_string();
                 let mut tabs_to_close: Vec<usize> = Vec::new();
-                for (i, tab) in self.tab_bar.tabs.iter().enumerate() {
+                for (i, tab) in self.editor.tab_bar.tabs.iter().enumerate() {
                     if let Some(ref fp) = tab.file_path() {
                         if fp.to_string_lossy() == path_str {
                             tabs_to_close.push(i);
@@ -574,20 +590,20 @@ impl EditorState {
                 for idx in tabs_to_close.into_iter().rev() {
                     self.close_tab(idx);
                 }
-                if let Some(ref active_path) = self.content.file_path {
+                if let Some(ref active_path) = self.editor.content.file_path {
                     if active_path.to_string_lossy() == path_str {
-                        self.content.buffer =
+                        self.editor.content.buffer =
                             aether_core::buffer::piece_table::PieceTable::from_string(String::new());
-                        self.content.file_path = None;
-                        self.content.is_dirty = false;
+                        self.editor.content.file_path = None;
+                        self.editor.content.is_dirty = false;
                     }
                 }
-                self.selected_file_node = None;
+                self.fs.selected_file_node = None;
                 // 轻量刷新：保留展开状态，不重启 LSP
                 self.refresh_file_tree_light();
             }
             Err(e) => {
-                self.status_message = format!("删除失败: {}", e);
+                self.ui.status_message = format!("删除失败: {}", e);
             }
         }
     }
@@ -601,17 +617,17 @@ impl EditorState {
         use crate::context_menu::FileNodeContextMenuItem as Item;
         match item {
             Item::NewFileInside => {
-                self.selected_file_node = Some(node_idx);
+                self.fs.selected_file_node = Some(node_idx);
                 self.start_file_tree_input_in(FileTreeInputKind::NewFile, Some(node_idx));
                 true
             }
             Item::NewFolderInside => {
-                self.selected_file_node = Some(node_idx);
+                self.fs.selected_file_node = Some(node_idx);
                 self.start_file_tree_input_in(FileTreeInputKind::NewFolder, Some(node_idx));
                 true
             }
             Item::Rename => {
-                self.selected_file_node = Some(node_idx);
+                self.fs.selected_file_node = Some(node_idx);
                 self.start_file_tree_input(FileTreeInputKind::Rename);
                 true
             }
@@ -666,7 +682,7 @@ impl EditorState {
         }
     }
     pub fn handle_sidebar_click(&mut self, mouse_x: f32, mouse_y: f32) -> bool {
-        match &self.sidebar_content {
+        match &self.ui.sidebar_content {
             crate::layout::SidebarContent::FileTree => {
                 self.handle_file_tree_click(mouse_x, mouse_y)
             }
@@ -683,22 +699,22 @@ impl EditorState {
         // 优先检测标题栏按钮点击。按钮区域存的是窗口绝对坐标，
         // 而本函数收到的是侧边栏相对坐标，需先换算（此前直接比较
         // 导致左键点击新建按钮永远未命中，按钮形同虚设）。
-        let sidebar = self.layout.sidebar_region();
+        let sidebar = self.ui.layout.sidebar_region();
         let abs_x = mouse_x + sidebar.x;
         let abs_y = mouse_y + sidebar.y;
-        if let Some(rect) = self.file_tree_new_file_btn.clone() {
+        if let Some(rect) = self.fs.file_tree_new_file_btn.clone() {
             if rect.contains(abs_x, abs_y) {
                 // 正在输入时先失焦提交，再开始新的输入
-                if self.file_tree_input.is_some() {
+                if self.fs.file_tree_input.is_some() {
                     self.confirm_file_tree_input();
                 }
                 self.start_file_tree_input(FileTreeInputKind::NewFile);
                 return true;
             }
         }
-        if let Some(rect) = self.file_tree_new_folder_btn.clone() {
+        if let Some(rect) = self.fs.file_tree_new_folder_btn.clone() {
             if rect.contains(abs_x, abs_y) {
-                if self.file_tree_input.is_some() {
+                if self.fs.file_tree_input.is_some() {
                     self.confirm_file_tree_input();
                 }
                 self.start_file_tree_input(FileTreeInputKind::NewFolder);
@@ -708,12 +724,12 @@ impl EditorState {
 
         // 正在内联输入：点击输入行自身保持输入态，
         // 点击其他区域视为失焦提交（VS Code 行为；空名等效取消）
-        if self.file_tree_input.is_some() {
+        if self.fs.file_tree_input.is_some() {
             if let Some((top, _, text_left)) = self.file_tree_input_row_geom() {
-                let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale;
+                let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.win.dpi_scale;
                 if mouse_y >= top
                     && mouse_y < top + row_h
-                    && mouse_x >= text_left - 3.0 * self.dpi_scale
+                    && mouse_x >= text_left - 3.0 * self.win.dpi_scale
                 {
                     return true;
                 }
@@ -722,28 +738,28 @@ impl EditorState {
             return true;
         }
 
-        if self.file_tree.is_none() {
+        if self.fs.file_tree.is_none() {
             return false;
         }
 
         // 根目录行（工作区文件夹名）：点击切换整棵树的展开/折叠
         let root_top = self.file_tree_list_start_y();
-        let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale;
+        let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.win.dpi_scale;
         if mouse_y >= root_top && mouse_y < root_top + row_h {
-            self.file_tree_root_expanded = !self.file_tree_root_expanded;
+            self.fs.file_tree_root_expanded = !self.fs.file_tree_root_expanded;
             self.emit_event(crate::events::EditorEvent::SidebarChanged);
             return true;
         }
-        if !self.file_tree_root_expanded {
+        if !self.fs.file_tree_root_expanded {
             return false;
         }
 
-        if self.file_tree.is_none() {
+        if self.fs.file_tree.is_none() {
             return false;
         }
 
         let start_y = self.file_tree_nodes_start_y();
-        let sidebar_width = self.layout.sidebar_width;
+        let sidebar_width = self.ui.layout.sidebar_width;
         let result = self.file_tree_hit_test(mouse_x, mouse_y, start_y, sidebar_width);
 
         if let Some((node_idx, kind, part)) = result {
@@ -751,16 +767,17 @@ impl EditorState {
                 FileKind::Directory => {
                     // 读取当前展开状态以决定是否需要懒加载
                     let will_expand = self
+                        .fs
                         .file_tree
                         .as_ref()
                         .and_then(|t| t.get_node(node_idx))
                         .map(|n| !n.is_expanded)
                         .unwrap_or(false);
-                    // 展开前确保子节点已加载
+                    // 展开前确保子节点已加载（使用异步加载避免阻塞 UI）
                     if will_expand {
-                        let _ = self.ensure_node_loaded(node_idx);
+                        let _ = self.ensure_node_loaded_async(node_idx);
                     }
-                    if let Some(tree) = self.file_tree.as_mut() {
+                    if let Some(tree) = self.fs.file_tree.as_mut() {
                         if let Some(node) = tree.get_node_mut(node_idx) {
                             node.is_expanded = !node.is_expanded;
                         }
@@ -769,7 +786,7 @@ impl EditorState {
                     self.mark_file_tree_rows_dirty();
                     // 点击名称/图标区域时同时选中该目录
                     if part == FileTreeClickPart::Label {
-                        self.selected_file_node = Some(node_idx);
+                        self.fs.selected_file_node = Some(node_idx);
                     }
                     self.emit_event(crate::events::EditorEvent::SidebarChanged);
                     return true;
@@ -777,15 +794,20 @@ impl EditorState {
                 FileKind::File => {
                     // 仅点击文件名称/图标区域才打开文件
                     if part == FileTreeClickPart::Label {
-                        self.selected_file_node = Some(node_idx);
+                        self.fs.selected_file_node = Some(node_idx);
                         self.emit_event(crate::events::EditorEvent::SidebarChanged);
                         if let Some(path) = self.get_node_path(node_idx) {
                             // 检查该文件是否已在某个标签页中打开
-                            // REQ-P1-09: 活动标签页的 file_path 在 self.content 中
-                            let active_path = self.content.file_path.clone();
-                            let active_idx = self.tab_bar.active_tab;
-                            if let Some(existing_tab) =
-                                self.tab_bar.tabs.iter().enumerate().position(|(i, tab)| {
+                            // REQ-P1-09: 活动标签页的 file_path 在 self.editor.content 中
+                            let active_path = self.editor.content.file_path.clone();
+                            let active_idx = self.editor.tab_bar.active_tab;
+                            if let Some(existing_tab) = self
+                                .editor
+                                .tab_bar
+                                .tabs
+                                .iter()
+                                .enumerate()
+                                .position(|(i, tab)| {
                                     if i == active_idx {
                                         active_path.as_ref() == Some(&path)
                                     } else {
@@ -809,61 +831,61 @@ impl EditorState {
     }
     /// 更新文件树悬停状态，返回是否需要重绘
     pub fn update_file_tree_hover(&mut self, mouse_x: f32, mouse_y: f32) -> bool {
-        match &self.sidebar_content {
+        match &self.ui.sidebar_content {
             crate::layout::SidebarContent::FileTree => {
                 self.update_local_tree_hover(mouse_x, mouse_y)
             }
             crate::layout::SidebarContent::RemoteFileTree => self.update_remote_tree_hover(mouse_y),
             _ => {
-                let old = self.hover_file_node.take();
-                let old_root = std::mem::take(&mut self.hover_file_tree_root);
+                let old = self.fs.hover_file_node.take();
+                let old_root = std::mem::take(&mut self.fs.hover_file_tree_root);
                 old.is_some() || old_root
             }
         }
     }
     pub(super) fn update_local_tree_hover(&mut self, mouse_x: f32, mouse_y: f32) -> bool {
-        if self.file_tree.is_none() {
-            let old = self.hover_file_node.take();
-            let old_root = std::mem::take(&mut self.hover_file_tree_root);
+        if self.fs.file_tree.is_none() {
+            let old = self.fs.hover_file_node.take();
+            let old_root = std::mem::take(&mut self.fs.hover_file_tree_root);
             return old.is_some() || old_root;
         }
 
         // 内联输入激活时禁用行悬停：输入行占位使行序偏移一行，
         // 且悬停高亮会干扰输入焦点（VS Code 同样不高亮）
-        if self.file_tree_input.is_some() {
-            let old = self.hover_file_node.take();
-            let old_root = std::mem::take(&mut self.hover_file_tree_root);
+        if self.fs.file_tree_input.is_some() {
+            let old = self.fs.hover_file_node.take();
+            let old_root = std::mem::take(&mut self.fs.hover_file_tree_root);
             return old.is_some() || old_root;
         }
 
         // 根目录行悬停检测（与节点悬停互斥）
         let root_top = self.file_tree_list_start_y();
-        let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.dpi_scale;
+        let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * self.win.dpi_scale;
         let new_root_hover = mouse_y >= root_top && mouse_y < root_top + row_h;
 
-        let new_hover = if new_root_hover || !self.file_tree_root_expanded {
+        let new_hover = if new_root_hover || !self.fs.file_tree_root_expanded {
             None
         } else {
             let start_y = self.file_tree_nodes_start_y();
-            let sidebar_width = self.layout.sidebar_width;
+            let sidebar_width = self.ui.layout.sidebar_width;
             self.file_tree_hit_test(mouse_x, mouse_y, start_y, sidebar_width)
                 .map(|(idx, _, _)| idx)
         };
 
         let changed =
-            self.hover_file_node != new_hover || self.hover_file_tree_root != new_root_hover;
-        self.hover_file_node = new_hover;
-        self.hover_file_tree_root = new_root_hover;
+            self.fs.hover_file_node != new_hover || self.fs.hover_file_tree_root != new_root_hover;
+        self.fs.hover_file_node = new_hover;
+        self.fs.hover_file_tree_root = new_root_hover;
         changed
     }
     /// 根据当前打开的文件路径同步文件树选中状态
     pub fn sync_file_tree_selection(&mut self) {
-        if let Some(ref path) = self.content.file_path {
-            if let Some(ref folder) = self.current_folder {
-                if let Some(ref tree) = self.file_tree {
+        if let Some(ref path) = self.editor.content.file_path {
+            if let Some(ref folder) = self.fs.current_folder {
+                if let Some(ref tree) = self.fs.file_tree {
                     // 尝试找到匹配当前文件路径的节点
                     if let Some(matched) = Self::find_node_by_path(tree, path, folder) {
-                        self.selected_file_node = Some(matched);
+                        self.fs.selected_file_node = Some(matched);
                     }
                 }
             }
@@ -915,8 +937,8 @@ impl EditorState {
         None
     }
     pub(super) fn get_node_path(&self, node_idx: u32) -> Option<PathBuf> {
-        let folder = self.current_folder.as_ref()?;
-        let tree = self.file_tree.as_ref()?;
+        let folder = self.fs.current_folder.as_ref()?;
+        let tree = self.fs.file_tree.as_ref()?;
         let mut path_parts = Vec::new();
 
         let mut current_idx = Some(node_idx);
@@ -945,7 +967,7 @@ impl EditorState {
     pub(super) fn ensure_node_loaded(&mut self, node_idx: u32) -> bool {
         // 先读取需要的信息，避免跨方法借用
         let (already_loaded, dir_path, depth) = {
-            let tree = match self.file_tree.as_ref() {
+            let tree = match self.fs.file_tree.as_ref() {
                 Some(t) => t,
                 None => return false,
             };
@@ -965,7 +987,7 @@ impl EditorState {
 
         let _ = already_loaded; // 已通过上面的判断保证为 false
         let child_depth = depth.saturating_add(1);
-        if let Some(tree) = self.file_tree.as_mut() {
+        if let Some(tree) = self.fs.file_tree.as_mut() {
             let _ = populate_children_one_level(tree, &dir_path, node_idx, child_depth);
             if let Some(node) = tree.get_node_mut(node_idx) {
                 node.is_loaded = true;
@@ -974,45 +996,159 @@ impl EditorState {
         }
         false
     }
+
+    /// 异步懒加载：启动后台线程扫描目录子项
+    /// 立即返回，不阻塞 UI 线程；扫描完成后通过 WM_APP+12 消息通知
+    /// 返回 true 表示成功启动了异步加载
+    pub(super) fn ensure_node_loaded_async(&mut self, node_idx: u32) -> bool {
+        // 检查是否已在加载中
+        if self.fs.file_tree_loading_nodes.contains(&node_idx) {
+            return false;
+        }
+
+        // 先读取需要的信息，避免跨方法借用
+        let (dir_path, depth) = {
+            let tree = match self.fs.file_tree.as_ref() {
+                Some(t) => t,
+                None => return false,
+            };
+            let node = match tree.get_node(node_idx) {
+                Some(n) => n,
+                None => return false,
+            };
+            if node.kind != FileKind::Directory || node.is_loaded || node.is_loading {
+                return false;
+            }
+            let path = match self.get_node_path(node_idx) {
+                Some(p) => p,
+                None => return false,
+            };
+            (path, node.depth)
+        };
+
+        // 标记节点为加载中状态
+        if let Some(tree) = self.fs.file_tree.as_mut() {
+            if let Some(node) = tree.get_node_mut(node_idx) {
+                node.is_loading = true;
+            }
+        }
+        self.fs.file_tree_loading_nodes.insert(node_idx);
+
+        // 启动后台线程扫描
+        let hwnd = self.win.hwnd;
+        let send_hwnd = SendHwnd(hwnd.0 as usize);
+        let child_depth = depth.saturating_add(1);
+        let dir_path_clone = dir_path.clone();
+
+        std::thread::spawn(move || {
+            let entries = scan_file_tree_entries(&dir_path_clone);
+            let result = SubdirScanResult {
+                node_idx,
+                entries,
+                dir_path: dir_path_clone,
+                child_depth,
+            };
+            let ptr = Box::into_raw(Box::new(result));
+            let hwnd = windows::Win32::Foundation::HWND(send_hwnd.0 as *mut std::ffi::c_void);
+            unsafe {
+                post_boxed_message_lparam(
+                    hwnd,
+                    windows::Win32::UI::WindowsAndMessaging::WM_APP + 12,
+                    ptr,
+                );
+            }
+        });
+
+        true
+    }
+
+    /// 处理子目录异步扫描结果（由 WM_APP+12 消息触发）
+    pub(crate) fn on_subdir_scan_result(&mut self, result: &SubdirScanResult) {
+        let node_idx = result.node_idx;
+
+        // 移除加载中标记
+        self.fs.file_tree_loading_nodes.remove(&node_idx);
+
+        // 验证节点仍然有效（可能在扫描期间被刷新）
+        let should_update = {
+            if let Some(tree) = self.fs.file_tree.as_ref() {
+                if let Some(node) = tree.get_node(node_idx) {
+                    // 验证节点仍是目录且路径匹配
+                    node.kind == FileKind::Directory
+                        && self.get_node_path(node_idx).as_ref() == Some(&result.dir_path)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+
+        if !should_update {
+            return;
+        }
+
+        // 更新文件树：添加扫描到的子项
+        if let Some(tree) = self.fs.file_tree.as_mut() {
+            // 先清除旧的子节点（如果有）
+            // 注意：这里简化处理，直接添加新节点
+            // 如果需要支持刷新，需要先移除旧子节点
+            for entry in &result.entries {
+                tree.add_node(&entry.name, entry.kind, node_idx, result.child_depth);
+            }
+
+            // 标记节点为已加载、非加载中
+            if let Some(node) = tree.get_node_mut(node_idx) {
+                node.is_loaded = true;
+                node.is_loading = false;
+            }
+        }
+
+        // 标记可见行数组需要重建
+        self.mark_file_tree_rows_dirty();
+        // 触发重绘
+        self.emit_event(crate::events::EditorEvent::SidebarChanged);
+    }
     /// 渲染前预扫描：加载所有 is_expanded 但未加载的目录节点
-    /// 分批处理，避免单帧加载过多目录导致卡顿（每帧最多加载 8 个目录）
+    /// 使用异步加载避免阻塞 UI 线程
     pub(crate) fn preload_expanded_dirs(&mut self) {
-        const MAX_LOAD_PER_FRAME: usize = 8;
         let mut to_load: Vec<u32> = Vec::new();
 
-        // 收集需要加载的节点（已展开但未加载的目录）
-        if let Some(tree) = self.file_tree.as_ref() {
+        // 收集需要加载的节点（已展开但未加载且未在加载中的目录）
+        if let Some(tree) = self.fs.file_tree.as_ref() {
             for (i, node) in tree.nodes_iter().enumerate() {
-                if node.kind == FileKind::Directory && node.is_expanded && !node.is_loaded {
+                if node.kind == FileKind::Directory
+                    && node.is_expanded
+                    && !node.is_loaded
+                    && !node.is_loading
+                {
                     to_load.push(i as u32);
-                    if to_load.len() >= MAX_LOAD_PER_FRAME {
-                        break;
-                    }
                 }
             }
         }
 
+        // 启动异步加载（不阻塞 UI 线程）
         for idx in to_load {
-            let _ = self.ensure_node_loaded(idx);
+            let _ = self.ensure_node_loaded_async(idx);
         }
     }
     /// P5-1: 标记可见行数组需要重建（展开/折叠等不改变节点数的变更后调用）
     pub(crate) fn mark_file_tree_rows_dirty(&mut self) {
-        self.file_tree_rows_dirty = true;
+        self.fs.file_tree_rows_dirty = true;
     }
 
     /// P5-1: 确保可见行数组与当前树状态一致（脏标志或节点数变化时重建）
     pub(crate) fn ensure_file_tree_rows(&mut self) {
-        let tree_len = self.file_tree.as_ref().map(|t| t.len()).unwrap_or(0);
-        if !self.file_tree_rows_dirty && self.file_tree_rows_tree_len == tree_len {
+        let tree_len = self.fs.file_tree.as_ref().map(|t| t.len()).unwrap_or(0);
+        if !self.fs.file_tree_rows_dirty && self.fs.file_tree_rows_tree_len == tree_len {
             return;
         }
-        self.file_tree_visible_rows.clear();
-        if let Some(tree) = self.file_tree.as_ref() {
-            Self::collect_visible_rows(tree, u32::MAX, &mut self.file_tree_visible_rows);
+        self.fs.file_tree_visible_rows.clear();
+        if let Some(tree) = self.fs.file_tree.as_ref() {
+            Self::collect_visible_rows(tree, u32::MAX, &mut self.fs.file_tree_visible_rows);
         }
-        self.file_tree_rows_tree_len = tree_len;
-        self.file_tree_rows_dirty = false;
+        self.fs.file_tree_rows_tree_len = tree_len;
+        self.fs.file_tree_rows_dirty = false;
     }
 
     /// 按显示顺序（DFS，仅展开目录递归）收集可见节点索引
@@ -1052,14 +1188,14 @@ impl EditorState {
         sidebar_width: f32,
     ) -> Option<(u32, FileKind, FileTreeClickPart)> {
         self.ensure_file_tree_rows();
-        let s = self.dpi_scale;
+        let s = self.win.dpi_scale;
         let node_height = crate::layout::FILE_TREE_ROW_HEIGHT * s;
         if mouse_y < start_y || node_height <= 0.0 {
             return None;
         }
         let row = ((mouse_y - start_y) / node_height) as usize;
-        let idx = *self.file_tree_visible_rows.get(row)?;
-        let tree = self.file_tree.as_ref()?;
+        let idx = *self.fs.file_tree_visible_rows.get(row)?;
+        let tree = self.fs.file_tree.as_ref()?;
         let node = tree.get_node(idx)?;
 
         let base_x = 10.0 * s;
@@ -1124,7 +1260,7 @@ mod tests {
     fn test_hash_dir_level_detects_new_file() {
         let dir = std::env::temp_dir().join(format!(
             "aether_sig_test_{}",
-            crate::memory_store::new_id("d")
+            aether_ai_panel::memory_store::new_id("d")
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let sig1 = dir_sig(&dir);

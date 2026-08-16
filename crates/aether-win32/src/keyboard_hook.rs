@@ -304,8 +304,8 @@ unsafe fn send_to_terminal(_hwnd: HWND, bytes: &[u8]) {
     crate::window::EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             let mut st = state.borrow_mut();
-            if st.terminal_panel.focused && st.terminal_panel.running {
-                st.terminal_panel.send_bytes(bytes);
+            if st.terminal.terminal_panel.focused && st.terminal.terminal_panel.running {
+                st.terminal.terminal_panel.send_bytes(bytes);
                 drop(st);
                 crate::window::invalidate_window(_hwnd);
             }

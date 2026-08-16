@@ -170,8 +170,7 @@ impl Language {
             Language::Markdown => Box::new(markdown_lexer::MarkdownLexer::new()),
             Language::Toml => Box::new(toml_lexer::TomlLexer::new()),
             Language::Html => Box::new(html_lexer::HtmlLexer::new()),
-            // CSS 暂时没有独立 lexer，复用 HTML lexer 至少能高亮注释、字符串、标签等公共结构
-            Language::Css => Box::new(html_lexer::HtmlLexer::new()),
+            Language::Css => Box::new(css_lexer::CssLexer::new()),
             Language::PlainText => Box::new(PlainTextLexer::new()),
             Language::Image => Box::new(PlainTextLexer::new()),
         }
@@ -189,7 +188,7 @@ impl Language {
             Language::Markdown => markdown_lexer::MarkdownLexer::new().lex_full(text),
             Language::Toml => toml_lexer::TomlLexer::new().lex_full(text),
             Language::Html => html_lexer::HtmlLexer::new().lex_full(text),
-            Language::Css => html_lexer::HtmlLexer::new().lex_full(text),
+            Language::Css => css_lexer::CssLexer::new().lex_full(text),
             Language::PlainText => PlainTextLexer::new().lex_full(text),
             Language::Image => PlainTextLexer::new().lex_full(text),
         }
@@ -198,6 +197,7 @@ impl Language {
 
 pub mod c_lexer;
 pub mod common;
+pub mod css_lexer;
 pub mod html_lexer;
 pub mod js_lexer;
 pub mod json_lexer;

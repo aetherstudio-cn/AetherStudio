@@ -528,6 +528,7 @@ fn role_to_str(role: &AiRole) -> &'static str {
         AiRole::Assistant => "assistant",
         AiRole::System => "system",
         AiRole::Tool => "tool",
+        AiRole::PendingConfirmation => "pending_confirmation",
     }
 }
 
@@ -536,6 +537,7 @@ fn str_to_role(s: &str) -> AiRole {
         "user" => AiRole::User,
         "assistant" => AiRole::Assistant,
         "tool" => AiRole::Tool,
+        "pending_confirmation" => AiRole::PendingConfirmation,
         _ => AiRole::System,
     }
 }

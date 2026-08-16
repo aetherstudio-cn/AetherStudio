@@ -12,6 +12,13 @@ registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
 target = "x86_64-pc-windows-msvc"
 rustflags = ["-C", "target-cpu=sandybridge"]
 
+[env]
+# C/C++ 依赖（esaxx-rs/onig_sys 等 cc 构建）默认 /MT 静态 CRT，
+# 与 onnxruntime 预编译库（/MD）及 Rust 运行时（/MD）冲突，
+# 导致 cargo test 链接期 LNK2038 RuntimeLibrary 不匹配。统一为 /MD。
+CFLAGS = "/MD"
+CXXFLAGS = "/MD"
+
 [profile.dev]
 opt-level = 1
 incremental = true

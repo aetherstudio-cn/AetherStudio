@@ -16,6 +16,7 @@ impl EditorState {
         let knob_cx = track_x + track_w * ratio.clamp(0.0, 1.0);
         let track_bg = color_f(0.30, 0.30, 0.33, 1.0);
         let track_bg_brush = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &track_bg)
@@ -35,6 +36,7 @@ impl EditorState {
             color_f(0.0, 0.47, 0.83, 1.0)
         };
         let track_fill_brush = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &track_fill)
@@ -55,6 +57,7 @@ impl EditorState {
             color_f(0.95, 0.95, 0.95, 1.0)
         };
         let knob_brush = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &knob_color)
@@ -92,7 +95,7 @@ impl EditorState {
         } else {
             color_f(0.34, 0.34, 0.37, 1.0)
         };
-        if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &sw_bg) {
+        if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &sw_bg) {
             let sw_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
                 rect: D2D_RECT_F {
                     left: x,
@@ -112,6 +115,7 @@ impl EditorState {
             x + knob_r + 3.0
         };
         if let Ok(kb) = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
@@ -181,8 +185,9 @@ impl EditorState {
             DWRITE_MEASURING_MODE_NATURAL,
         );
         let box_y = cy + label_h;
-        let focused = self.settings_panel.active_field == Some(field);
+        let focused = self.ui.settings_panel.active_field == Some(field);
         let bg_brush = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.18, 0.18, 0.18, 1.0))
@@ -195,6 +200,7 @@ impl EditorState {
             color_f(0.3, 0.3, 0.3, 1.0)
         };
         let border_brush = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &border)
@@ -220,6 +226,7 @@ impl EditorState {
             color_f(0.85, 0.85, 0.85, 1.0)
         };
         let value_brush = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &text_color)
@@ -238,7 +245,8 @@ impl EditorState {
             D2D1_DRAW_TEXT_OPTIONS_NONE,
             DWRITE_MEASURING_MODE_NATURAL,
         );
-        self.settings_panel
+        self.ui
+            .settings_panel
             .add_field_region(field, x + margin, box_y, input_w, input_h);
         box_y + input_h
     }
@@ -269,7 +277,7 @@ impl EditorState {
         let x = x + ((width - form_w) / 2.0).max(0.0);
         let width = form_w;
         let input_w = form_w;
-        let scroll = self.settings_panel.scroll_offset;
+        let scroll = self.ui.settings_panel.scroll_offset;
         let mut cy = start_y - scroll;
         unsafe {
             // 裁剪到可视内容区：滚动后超出上下边界的内容不会绘制到标题栏/边界外
@@ -285,6 +293,7 @@ impl EditorState {
             let card_h = 56.0_f32;
             let card_bg = color_f(0.16, 0.18, 0.22, 1.0);
             let card_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &card_bg)
@@ -298,6 +307,7 @@ impl EditorState {
             target.FillRectangle(&card_rect, &card_bg_brush);
             let accent = color_f(0.0, 0.47, 0.83, 1.0);
             let accent_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &accent)
@@ -312,6 +322,7 @@ impl EditorState {
             let info_text = "配置 API 密钥后，AI 助手可在 Agent 模式下新建、修改、删除文件。点击「保存」时会自动验证密钥有效性并保存；新建的模型只有点击「保存」后才会真正保存。";
             let info_color = color_f(0.72, 0.74, 0.78, 1.0);
             let info_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &info_color)
@@ -334,10 +345,14 @@ impl EditorState {
             cy += card_h + gap;
 
             // 当前编辑模型指示（AI 页编辑的是当前激活模型；在「模型」页可切换/新建）
-            let model_hint = format!("正在编辑：{}", self.settings_panel.active_model_display());
+            let model_hint = format!(
+                "正在编辑：{}",
+                self.ui.settings_panel.active_model_display()
+            );
             let hint_wide: Vec<u16> = model_hint.encode_utf16().chain(Some(0)).collect();
             let hint_color = color_f(0.60, 0.78, 0.95, 1.0);
             let hint_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &hint_color)
@@ -358,7 +373,7 @@ impl EditorState {
             cy += label_h + 4.0;
 
             // 厂商下拉
-            let provider_label_text = self.settings_panel.provider_display_label();
+            let provider_label_text = self.ui.settings_panel.provider_display_label();
             let provider_items: Vec<String> =
                 crate::settings::SettingsPanel::provider_dropdown_options()
                     .into_iter()
@@ -401,9 +416,10 @@ impl EditorState {
             );
             cy += label_h;
             let apikey_focused =
-                self.settings_panel.active_field == Some(crate::settings::SettingsField::ApiKey);
+                self.ui.settings_panel.active_field == Some(crate::settings::SettingsField::ApiKey);
             let apikey_bg = color_f(0.18, 0.18, 0.18, 1.0);
             let apikey_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &apikey_bg)
@@ -414,6 +430,7 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let apikey_border_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &apikey_border)
@@ -436,17 +453,18 @@ impl EditorState {
             // 显示/隐藏 按钮（右侧）：切换明文 / 掩码。用文字避免图标字体缺失显示为方块。
             let eye_w = 48.0_f32;
             let eye_x = x + margin + input_w - eye_w;
-            let eye_color = if self.settings_panel.hover_api_key_toggle {
+            let eye_color = if self.ui.settings_panel.hover_api_key_toggle {
                 color_f(0.55, 0.78, 1.0, 1.0)
             } else {
                 color_f(0.60, 0.60, 0.62, 1.0)
             };
             let eye_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &eye_color)
                 .unwrap();
-            let eye_glyph = if self.settings_panel.show_api_key {
+            let eye_glyph = if self.ui.settings_panel.show_api_key {
                 "隐藏"
             } else {
                 "显示"
@@ -466,13 +484,13 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
-            self.settings_panel.api_key_toggle_region = Some((eye_x, cy, eye_w, input_h));
+            self.ui.settings_panel.api_key_toggle_region = Some((eye_x, cy, eye_w, input_h));
             // 密钥文本或占位符
-            let key_empty = self.settings_panel.api_key.is_empty();
+            let key_empty = self.ui.settings_panel.api_key.is_empty();
             let display_key = if key_empty {
                 "sk-...（粘贴你的密钥）".to_string()
             } else {
-                self.settings_panel.display_api_key()
+                self.ui.settings_panel.display_api_key()
             };
             let apikey_text: Vec<u16> = display_key.encode_utf16().chain(Some(0)).collect();
             let apikey_text_rect = D2D_RECT_F {
@@ -487,6 +505,7 @@ impl EditorState {
                 color_f(0.9, 0.9, 0.9, 1.0)
             };
             let key_text_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &key_text_color)
@@ -499,7 +518,7 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
-            self.settings_panel.add_field_region(
+            self.ui.settings_panel.add_field_region(
                 crate::settings::SettingsField::ApiKey,
                 x + margin,
                 cy,
@@ -509,7 +528,7 @@ impl EditorState {
             cy += input_h + gap;
 
             // 判断是否为自定义模式（预制模式自动填充 base_url 和 model）
-            let is_custom = self.settings_panel.provider == "custom";
+            let is_custom = self.ui.settings_panel.provider == "custom";
 
             // Base URL（仅自定义模式显示，预制模式自动填充）
             if is_custom {
@@ -531,11 +550,12 @@ impl EditorState {
                 cy += label_h;
                 let baseurl_bg = color_f(0.18, 0.18, 0.18, 1.0);
                 let baseurl_bg_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &baseurl_bg)
                     .unwrap();
-                let baseurl_border = if self.settings_panel.active_field
+                let baseurl_border = if self.ui.settings_panel.active_field
                     == Some(crate::settings::SettingsField::BaseUrl)
                 {
                     color_f(0.0, 0.47, 0.83, 1.0)
@@ -543,6 +563,7 @@ impl EditorState {
                     color_f(0.3, 0.3, 0.3, 1.0)
                 };
                 let baseurl_border_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &baseurl_border)
@@ -583,6 +604,7 @@ impl EditorState {
                 target.FillRectangle(&border_left, &baseurl_border_brush);
                 target.FillRectangle(&border_right, &baseurl_border_brush);
                 let baseurl_text: Vec<u16> = self
+                    .ui
                     .settings_panel
                     .base_url
                     .encode_utf16()
@@ -602,7 +624,7 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
-                self.settings_panel.add_field_region(
+                self.ui.settings_panel.add_field_region(
                     crate::settings::SettingsField::BaseUrl,
                     x + margin,
                     cy,
@@ -614,22 +636,23 @@ impl EditorState {
 
             // Model 下拉：对所有厂商显示，选项优先来自 /models 实时拉取（失败回退预置清单）
             {
-                let model_value = if self.settings_panel.model.is_empty() {
+                let model_value = if self.ui.settings_panel.model.is_empty() {
                     "选择模型".to_string()
                 } else {
-                    self.settings_panel.model.clone()
+                    self.ui.settings_panel.model.clone()
                 };
                 let model_items: Vec<String> = self
+                    .ui
                     .settings_panel
                     .model_dropdown_options()
                     .into_iter()
                     .map(|(_id, name)| name)
                     .collect();
                 // 标签体现自动获取状态：获取中 / 失败原因
-                let model_label = if self.settings_panel.is_fetching_models {
+                let model_label = if self.ui.settings_panel.is_fetching_models {
                     "模型（正在获取…）".to_string()
-                } else if !self.settings_panel.models_fetch_status.is_empty() {
-                    format!("模型（{}）", self.settings_panel.models_fetch_status)
+                } else if !self.ui.settings_panel.models_fetch_status.is_empty() {
+                    format!("模型（{}）", self.ui.settings_panel.models_fetch_status)
                 } else {
                     "模型".to_string()
                 };
@@ -653,19 +676,42 @@ impl EditorState {
                 );
             }
 
+            // 自定义名称：用户可自由编写，用于区分不同厂商的相同模型
+            {
+                let display_name_value = self.ui.settings_panel.display_name.clone();
+                cy = self.render_dev_text_input(
+                    target,
+                    x,
+                    margin,
+                    input_w,
+                    label_h,
+                    input_h,
+                    cy,
+                    "自定义名称",
+                    &display_name_value,
+                    "用于区分不同厂商的相同模型（可选）",
+                    crate::settings::SettingsField::DisplayName,
+                    true,
+                    &label_format,
+                    &input_format,
+                    text_brush,
+                );
+                cy += gap;
+            }
+
             // 深度思考开关（DeepSeek 专属：thinking enabled/disabled）——胶囊开关 + 标签
-            if self.settings_panel.provider == "deepseek" {
+            if self.ui.settings_panel.provider == "deepseek" {
                 let sw_w = 38.0_f32;
                 let sw_h = 20.0_f32;
                 let sw_x = x + margin;
                 let sw_y = cy;
-                let checked = self.settings_panel.thinking;
+                let checked = self.ui.settings_panel.thinking;
                 let sw_bg = if checked {
                     color_f(0.0, 0.47, 0.83, 1.0)
                 } else {
                     color_f(0.34, 0.34, 0.37, 1.0)
                 };
-                if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &sw_bg) {
+                if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &sw_bg) {
                     let sw_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
                         rect: D2D_RECT_F {
                             left: sw_x,
@@ -685,6 +731,7 @@ impl EditorState {
                     sw_x + knob_r + 3.0
                 };
                 if let Ok(kb) = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
@@ -722,7 +769,7 @@ impl EditorState {
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
                 // 命中区覆盖开关 + 标签一段，便于点击切换
-                self.settings_panel.thinking_toggle_region =
+                self.ui.settings_panel.thinking_toggle_region =
                     Some((sw_x, sw_y, sw_w + 10.0 + 240.0, sw_h));
                 cy += sw_h + gap;
 
@@ -749,8 +796,8 @@ impl EditorState {
                         [("high", "高（默认）"), ("max", "最大")];
                     for (i, (val, disp)) in segments.iter().enumerate() {
                         let seg_x = seg_x0 + i as f32 * (seg_w + 8.0);
-                        let selected = self.settings_panel.reasoning_effort == *val;
-                        let hovered = self.settings_panel.hover_effort == Some(*val);
+                        let selected = self.ui.settings_panel.reasoning_effort == *val;
+                        let hovered = self.ui.settings_panel.hover_effort == Some(*val);
                         let seg_bg = if selected {
                             color_f(0.0, 0.47, 0.83, 1.0)
                         } else if hovered {
@@ -769,11 +816,12 @@ impl EditorState {
                             radiusX: 4.0,
                             radiusY: 4.0,
                         };
-                        if let Ok(sb) = self.render_ctx.brush_cache.get_brush(target, &seg_bg) {
+                        if let Ok(sb) = self.win.render_ctx.brush_cache.get_brush(target, &seg_bg) {
                             target.FillRoundedRectangle(&seg_rounded, &sb);
                         }
                         if !selected {
                             if let Ok(bb) = self
+                                .win
                                 .render_ctx
                                 .brush_cache
                                 .get_brush(target, &color_f(0.32, 0.32, 0.35, 1.0))
@@ -787,6 +835,7 @@ impl EditorState {
                             color_f(0.78, 0.78, 0.80, 1.0)
                         };
                         if let Ok(tb) = self
+                            .win
                             .render_ctx
                             .brush_cache
                             .get_brush(target, &seg_text_color)
@@ -801,7 +850,8 @@ impl EditorState {
                                 DWRITE_MEASURING_MODE_NATURAL,
                             );
                         }
-                        self.settings_panel
+                        self.ui
+                            .settings_panel
                             .effort_regions
                             .push((val, seg_x, cy, seg_w, seg_h));
                     }
@@ -810,9 +860,10 @@ impl EditorState {
             }
 
             // 采样参数禁用态：DeepSeek 思考模式下 temperature/top_p 不生效（官方文档）
-            let sampling_disabled = self.settings_panel.sampling_disabled_by_thinking();
+            let sampling_disabled = self.ui.settings_panel.sampling_disabled_by_thinking();
             let disabled_text_color = color_f(0.50, 0.50, 0.53, 1.0);
             let disabled_text_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &disabled_text_color)
@@ -820,6 +871,7 @@ impl EditorState {
 
             // 温度：滑块（0.0 - 2.0，步进 0.1）——比裸文本框更直观，且天然合法
             let temp_val = self
+                .ui
                 .settings_panel
                 .temperature
                 .trim()
@@ -863,7 +915,7 @@ impl EditorState {
                 sampling_disabled,
             );
             // 禁用态不注册命中区，点击/拖拽自然失效
-            self.settings_panel.temp_slider_region = if sampling_disabled {
+            self.ui.settings_panel.temp_slider_region = if sampling_disabled {
                 None
             } else {
                 Some(temp_region)
@@ -872,6 +924,7 @@ impl EditorState {
 
             // Top-p：核采样滑块（0.0 - 1.0，步进 0.05），与温度二选一调节为宜
             let top_p_val = self
+                .ui
                 .settings_panel
                 .top_p
                 .trim()
@@ -912,7 +965,7 @@ impl EditorState {
                 top_p_val,
                 sampling_disabled,
             );
-            self.settings_panel.top_p_slider_region = if sampling_disabled {
+            self.ui.settings_panel.top_p_slider_region = if sampling_disabled {
                 None
             } else {
                 Some(top_p_region)
@@ -920,8 +973,8 @@ impl EditorState {
             cy += 24.0 + gap;
 
             // 最大输入 Token（上下文预算，正整数）——限制发送给模型的历史上下文量
-            let maxin_valid = self.settings_panel.max_input_tokens_valid();
-            let maxin_label_text = if self.settings_panel.provider == "deepseek" {
+            let maxin_valid = self.ui.settings_panel.max_input_tokens_valid();
+            let maxin_label_text = if self.ui.settings_panel.provider == "deepseek" {
                 "最大输入 Token（上下文预算，DeepSeek V4 上下文上限 1M）"
             } else {
                 "最大输入 Token（上下文预算）"
@@ -942,9 +995,10 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
             cy += label_h;
-            let maxin_focused = self.settings_panel.active_field
+            let maxin_focused = self.ui.settings_panel.active_field
                 == Some(crate::settings::SettingsField::MaxInputTokens);
             let maxin_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.18, 0.18, 0.18, 1.0))
@@ -957,6 +1011,7 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let maxin_border_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &maxin_border)
@@ -978,11 +1033,11 @@ impl EditorState {
                 input_h,
                 &maxin_border_brush,
             );
-            let maxin_empty = self.settings_panel.max_input_tokens.is_empty();
+            let maxin_empty = self.ui.settings_panel.max_input_tokens.is_empty();
             let maxin_display = if maxin_empty {
                 "如 24000".to_string()
             } else {
-                self.settings_panel.max_input_tokens.clone()
+                self.ui.settings_panel.max_input_tokens.clone()
             };
             let maxin_text: Vec<u16> = maxin_display.encode_utf16().chain(Some(0)).collect();
             let maxin_text_color = if maxin_empty {
@@ -991,6 +1046,7 @@ impl EditorState {
                 color_f(0.9, 0.9, 0.9, 1.0)
             };
             let maxin_text_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &maxin_text_color)
@@ -1008,7 +1064,7 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
-            self.settings_panel.add_field_region(
+            self.ui.settings_panel.add_field_region(
                 crate::settings::SettingsField::MaxInputTokens,
                 x + margin,
                 cy,
@@ -1018,6 +1074,7 @@ impl EditorState {
             cy += input_h;
             if !maxin_valid {
                 let warn_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.90, 0.45, 0.45, 1.0))
@@ -1044,8 +1101,8 @@ impl EditorState {
             cy += gap;
 
             // 最大输出 Token（回复长度，正整数）——带合法性校验
-            let maxtok_valid = self.settings_panel.max_tokens_valid();
-            let maxtok_label_text = if self.settings_panel.provider == "deepseek" {
+            let maxtok_valid = self.ui.settings_panel.max_tokens_valid();
+            let maxtok_label_text = if self.ui.settings_panel.provider == "deepseek" {
                 "最大输出 Token（回复长度，DeepSeek V4 输出上限 384K）"
             } else {
                 "最大输出 Token（回复长度）"
@@ -1066,10 +1123,11 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
             cy += label_h;
-            let maxtok_focused =
-                self.settings_panel.active_field == Some(crate::settings::SettingsField::MaxTokens);
+            let maxtok_focused = self.ui.settings_panel.active_field
+                == Some(crate::settings::SettingsField::MaxTokens);
             let maxtok_bg = color_f(0.18, 0.18, 0.18, 1.0);
             let maxtok_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &maxtok_bg)
@@ -1082,6 +1140,7 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let maxtok_border_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &maxtok_border)
@@ -1101,11 +1160,11 @@ impl EditorState {
                 input_h,
                 &maxtok_border_brush,
             );
-            let maxtok_empty = self.settings_panel.max_tokens.is_empty();
+            let maxtok_empty = self.ui.settings_panel.max_tokens.is_empty();
             let maxtok_display = if maxtok_empty {
                 "如 2048".to_string()
             } else {
-                self.settings_panel.max_tokens.clone()
+                self.ui.settings_panel.max_tokens.clone()
             };
             let maxtok_text: Vec<u16> = maxtok_display.encode_utf16().chain(Some(0)).collect();
             let maxtok_text_rect = D2D_RECT_F {
@@ -1120,6 +1179,7 @@ impl EditorState {
                 color_f(0.9, 0.9, 0.9, 1.0)
             };
             let maxtok_text_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &maxtok_text_color)
@@ -1132,7 +1192,7 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
-            self.settings_panel.add_field_region(
+            self.ui.settings_panel.add_field_region(
                 crate::settings::SettingsField::MaxTokens,
                 x + margin,
                 cy,
@@ -1143,6 +1203,7 @@ impl EditorState {
             if !maxtok_valid {
                 let warn_color = color_f(0.90, 0.45, 0.45, 1.0);
                 let warn_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &warn_color)
@@ -1188,11 +1249,12 @@ impl EditorState {
             cy += label_h;
             let sysp_bg = color_f(0.18, 0.18, 0.18, 1.0);
             let sysp_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &sysp_bg)
                 .unwrap();
-            let sysp_border = if self.settings_panel.active_field
+            let sysp_border = if self.ui.settings_panel.active_field
                 == Some(crate::settings::SettingsField::SystemPrompt)
             {
                 color_f(0.0, 0.47, 0.83, 1.0)
@@ -1200,6 +1262,7 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let sysp_border_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &sysp_border)
@@ -1213,10 +1276,10 @@ impl EditorState {
             };
             target.FillRectangle(&sysp_rect, &sysp_bg_brush);
             draw_input_borders(target, x + margin, cy, input_w, sysp_h, &sysp_border_brush);
-            let sysp_display: String = if self.settings_panel.system_prompt.is_empty() {
+            let sysp_display: String = if self.ui.settings_panel.system_prompt.is_empty() {
                 "（留空使用默认）".to_string()
             } else {
-                self.settings_panel.system_prompt.clone()
+                self.ui.settings_panel.system_prompt.clone()
             };
             let sysp_text: Vec<u16> = sysp_display.encode_utf16().chain(Some(0)).collect();
             let sysp_text_rect = D2D_RECT_F {
@@ -1225,12 +1288,13 @@ impl EditorState {
                 right: x + margin + input_w - 6.0,
                 bottom: cy + sysp_h - 4.0,
             };
-            let sysp_text_color = if self.settings_panel.system_prompt.is_empty() {
+            let sysp_text_color = if self.ui.settings_panel.system_prompt.is_empty() {
                 color_f(0.5, 0.5, 0.5, 1.0)
             } else {
                 color_f(0.85, 0.85, 0.85, 1.0)
             };
             let sysp_text_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &sysp_text_color)
@@ -1243,7 +1307,7 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
-            self.settings_panel.add_field_region(
+            self.ui.settings_panel.add_field_region(
                 crate::settings::SettingsField::SystemPrompt,
                 x + margin,
                 cy,
@@ -1254,6 +1318,7 @@ impl EditorState {
 
             // ---- 开发者参数（可折叠）----
             let dev_sep_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.28, 0.28, 0.30, 1.0))
@@ -1268,10 +1333,11 @@ impl EditorState {
                 &dev_sep_brush,
             );
             cy += 10.0;
-            let dev_expanded = self.settings_panel.dev_params_expanded;
+            let dev_expanded = self.ui.settings_panel.dev_params_expanded;
             let header_h = 24.0_f32;
             // Lucide 风格矢量 chevron：折叠时 '>'，展开时 'v'（10px，1.5 描边）
             let chev_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.62, 0.62, 0.65, 1.0))
@@ -1338,6 +1404,7 @@ impl EditorState {
                 .chain(Some(0))
                 .collect();
             let dev_title_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.70, 0.70, 0.73, 1.0))
@@ -1355,13 +1422,14 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
-            self.settings_panel.dev_params_toggle_region =
+            self.ui.settings_panel.dev_params_toggle_region =
                 Some((x + margin, cy, input_w, header_h));
             cy += header_h + 8.0;
 
             if dev_expanded {
                 // 频率惩罚滑块（-2.0 ~ 2.0，步进 0.1）
                 let freq_val = self
+                    .ui
                     .settings_panel
                     .frequency_penalty
                     .trim()
@@ -1400,7 +1468,7 @@ impl EditorState {
                     (freq_val + 2.0) / 4.0,
                     sampling_disabled,
                 );
-                self.settings_panel.freq_slider_region = if sampling_disabled {
+                self.ui.settings_panel.freq_slider_region = if sampling_disabled {
                     None
                 } else {
                     Some(freq_region)
@@ -1409,6 +1477,7 @@ impl EditorState {
 
                 // 存在惩罚滑块（-2.0 ~ 2.0，步进 0.1）
                 let pres_val = self
+                    .ui
                     .settings_panel
                     .presence_penalty
                     .trim()
@@ -1447,7 +1516,7 @@ impl EditorState {
                     (pres_val + 2.0) / 4.0,
                     sampling_disabled,
                 );
-                self.settings_panel.pres_slider_region = if sampling_disabled {
+                self.ui.settings_panel.pres_slider_region = if sampling_disabled {
                     None
                 } else {
                     Some(pres_region)
@@ -1455,7 +1524,7 @@ impl EditorState {
                 cy += 24.0 + gap;
 
                 // 停止序列（逗号分隔，最多 16 个）
-                let stop_value = self.settings_panel.stop.clone();
+                let stop_value = self.ui.settings_panel.stop.clone();
                 let stop_bottom = self.render_dev_text_input(
                     target,
                     x,
@@ -1497,8 +1566,8 @@ impl EditorState {
                     [("text", "文本（默认）"), ("json_object", "JSON")];
                 for (i, (val, disp)) in fmt_segments.iter().enumerate() {
                     let seg_x = fmt_seg_x0 + i as f32 * (fmt_seg_w + 8.0);
-                    let selected = self.settings_panel.response_format == *val;
-                    let hovered = self.settings_panel.hover_response_format == Some(*val);
+                    let selected = self.ui.settings_panel.response_format == *val;
+                    let hovered = self.ui.settings_panel.hover_response_format == Some(*val);
                     let seg_bg = if selected {
                         color_f(0.0, 0.47, 0.83, 1.0)
                     } else if hovered {
@@ -1517,11 +1586,12 @@ impl EditorState {
                         radiusX: 4.0,
                         radiusY: 4.0,
                     };
-                    if let Ok(sb) = self.render_ctx.brush_cache.get_brush(target, &seg_bg) {
+                    if let Ok(sb) = self.win.render_ctx.brush_cache.get_brush(target, &seg_bg) {
                         target.FillRoundedRectangle(&seg_rounded, &sb);
                     }
                     if !selected {
                         if let Ok(bb) = self
+                            .win
                             .render_ctx
                             .brush_cache
                             .get_brush(target, &color_f(0.32, 0.32, 0.35, 1.0))
@@ -1535,6 +1605,7 @@ impl EditorState {
                         color_f(0.78, 0.78, 0.80, 1.0)
                     };
                     if let Ok(tb) = self
+                        .win
                         .render_ctx
                         .brush_cache
                         .get_brush(target, &seg_text_color)
@@ -1549,14 +1620,15 @@ impl EditorState {
                             DWRITE_MEASURING_MODE_NATURAL,
                         );
                     }
-                    self.settings_panel
+                    self.ui
+                        .settings_panel
                         .response_format_regions
                         .push((val, seg_x, cy, fmt_seg_w, fmt_seg_h));
                 }
                 cy += fmt_seg_h + gap;
 
                 // logprobs 调试开关
-                let logprobs_on = self.settings_panel.logprobs;
+                let logprobs_on = self.ui.settings_panel.logprobs;
                 let logprobs_region = self.render_pill_switch(
                     target,
                     x + margin,
@@ -1566,13 +1638,13 @@ impl EditorState {
                     &label_format,
                     text_brush,
                 );
-                self.settings_panel.logprobs_toggle_region = Some(logprobs_region);
+                self.ui.settings_panel.logprobs_toggle_region = Some(logprobs_region);
                 cy += 20.0 + gap;
 
                 // top_logprobs（仅 logprobs 开启时显示）
                 if logprobs_on {
-                    let top_lp_valid = self.settings_panel.top_logprobs_valid();
-                    let top_lp_value = self.settings_panel.top_logprobs.clone();
+                    let top_lp_valid = self.ui.settings_panel.top_logprobs_valid();
+                    let top_lp_value = self.ui.settings_panel.top_logprobs.clone();
                     let top_lp_bottom = self.render_dev_text_input(
                         target,
                         x,
@@ -1594,7 +1666,7 @@ impl EditorState {
                 }
 
                 // 流式用量统计开关
-                let usage_on = self.settings_panel.include_usage;
+                let usage_on = self.ui.settings_panel.include_usage;
                 let usage_region = self.render_pill_switch(
                     target,
                     x + margin,
@@ -1604,11 +1676,11 @@ impl EditorState {
                     &label_format,
                     text_brush,
                 );
-                self.settings_panel.include_usage_toggle_region = Some(usage_region);
+                self.ui.settings_panel.include_usage_toggle_region = Some(usage_region);
                 cy += 20.0 + gap;
 
                 // 用户标识 user_id
-                let user_id_value = self.settings_panel.user_id.clone();
+                let user_id_value = self.ui.settings_panel.user_id.clone();
                 let uid_bottom = self.render_dev_text_input(
                     target,
                     x,
@@ -1631,9 +1703,10 @@ impl EditorState {
             cy += 4.0;
 
             // 未保存更改提示
-            if self.settings_panel.is_dirty() {
+            if self.ui.settings_panel.is_dirty() {
                 let dot_color = color_f(0.95, 0.65, 0.20, 1.0);
                 let dot_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &dot_color)
@@ -1672,7 +1745,7 @@ impl EditorState {
 
             // 操作按钮：左「保存」（验证密钥后写入）+ 右「测试连接」（只测不存，便于调参）
             let btn_h = 34.0_f32;
-            let is_testing = self.settings_panel.is_testing;
+            let is_testing = self.ui.settings_panel.is_testing;
             let btn_gap = 10.0_f32;
             let save_x = x + margin;
             let save_btn_w = (input_w - btn_gap) * 0.62;
@@ -1681,7 +1754,7 @@ impl EditorState {
 
             // 保存设置（主按钮；保存时会自动先测试密钥有效性）
             let save_hover =
-                self.settings_panel.hover_button == Some(crate::settings::SettingsButton::Save);
+                self.ui.settings_panel.hover_button == Some(crate::settings::SettingsButton::Save);
             let save_bg = if is_testing {
                 color_f(0.0, 0.30, 0.52, 1.0)
             } else if save_hover {
@@ -1690,6 +1763,7 @@ impl EditorState {
                 color_f(0.0, 0.47, 0.83, 1.0)
             };
             let save_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &save_bg)
@@ -1706,7 +1780,7 @@ impl EditorState {
                 radiusY: 4.0,
             };
             target.FillRoundedRectangle(&save_rounded, &save_bg_brush);
-            let save_label = if is_testing && self.settings_panel.pending_save {
+            let save_label = if is_testing && self.ui.settings_panel.pending_save {
                 "验证并保存中…"
             } else {
                 "保存"
@@ -1714,6 +1788,7 @@ impl EditorState {
             let save_text: Vec<u16> = save_label.encode_utf16().chain(Some(0)).collect();
             let btn_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let btn_text_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_text_color)
@@ -1726,7 +1801,7 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
-            self.settings_panel.add_button_region(
+            self.ui.settings_panel.add_button_region(
                 crate::settings::SettingsButton::Save,
                 save_x,
                 cy,
@@ -1735,7 +1810,7 @@ impl EditorState {
             );
 
             // 测试连接（次要描边按钮：只验证当前参数能否连通，不写入配置）
-            let test_hover = self.settings_panel.hover_button
+            let test_hover = self.ui.settings_panel.hover_button
                 == Some(crate::settings::SettingsButton::TestConnection);
             let test_rect = D2D_RECT_F {
                 left: test_x,
@@ -1748,12 +1823,12 @@ impl EditorState {
                 radiusX: 4.0,
                 radiusY: 4.0,
             };
-            let test_bg = if (is_testing && !self.settings_panel.pending_save) || test_hover {
+            let test_bg = if (is_testing && !self.ui.settings_panel.pending_save) || test_hover {
                 color_f(0.20, 0.24, 0.30, 1.0)
             } else {
                 color_f(0.16, 0.16, 0.18, 1.0)
             };
-            if let Ok(tb) = self.render_ctx.brush_cache.get_brush(target, &test_bg) {
+            if let Ok(tb) = self.win.render_ctx.brush_cache.get_brush(target, &test_bg) {
                 target.FillRoundedRectangle(&test_rounded, &tb);
             }
             let test_border = if test_hover {
@@ -1761,10 +1836,15 @@ impl EditorState {
             } else {
                 color_f(0.34, 0.34, 0.37, 1.0)
             };
-            if let Ok(bb) = self.render_ctx.brush_cache.get_brush(target, &test_border) {
+            if let Ok(bb) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &test_border)
+            {
                 target.DrawRoundedRectangle(&test_rounded, &bb, 1.0, None);
             }
-            let test_label = if is_testing && !self.settings_panel.pending_save {
+            let test_label = if is_testing && !self.ui.settings_panel.pending_save {
                 "测试中…"
             } else {
                 "测试连接"
@@ -1776,6 +1856,7 @@ impl EditorState {
                 color_f(0.84, 0.86, 0.90, 1.0)
             };
             if let Ok(ttb) = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &test_text_color)
@@ -1789,7 +1870,7 @@ impl EditorState {
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
             }
-            self.settings_panel.add_button_region(
+            self.ui.settings_panel.add_button_region(
                 crate::settings::SettingsButton::TestConnection,
                 test_x,
                 cy,
@@ -1799,13 +1880,13 @@ impl EditorState {
             cy += btn_h + 12.0;
 
             // 状态消息卡片
-            if !self.settings_panel.test_status.is_empty() {
-                let (status_bg, status_fg) = if self.settings_panel.is_testing {
+            if !self.ui.settings_panel.test_status.is_empty() {
+                let (status_bg, status_fg) = if self.ui.settings_panel.is_testing {
                     (
                         color_f(0.20, 0.20, 0.12, 1.0),
                         color_f(0.90, 0.85, 0.40, 1.0),
                     )
-                } else if self.settings_panel.test_status.starts_with('✓') {
+                } else if self.ui.settings_panel.test_status.starts_with('✓') {
                     (
                         color_f(0.12, 0.22, 0.14, 1.0),
                         color_f(0.40, 0.85, 0.45, 1.0),
@@ -1817,6 +1898,7 @@ impl EditorState {
                     )
                 };
                 let status_bg_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &status_bg)
@@ -1830,11 +1912,13 @@ impl EditorState {
                 };
                 target.FillRectangle(&status_rect, &status_bg_brush);
                 let status_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &status_fg)
                     .unwrap();
                 let status_format = self
+                    .win
                     .render_ctx
                     .text_format_cache
                     .get_format(
@@ -1845,6 +1929,7 @@ impl EditorState {
                     )
                     .unwrap();
                 let status_text: Vec<u16> = self
+                    .ui
                     .settings_panel
                     .test_status
                     .encode_utf16()
@@ -1872,19 +1957,21 @@ impl EditorState {
             target.PopAxisAlignedClip();
             let total_content = (cy + scroll) - start_y;
             let max_scroll = (total_content - avail_h).max(0.0);
-            self.settings_panel.content_height = max_scroll;
-            if self.settings_panel.scroll_offset > max_scroll {
-                self.settings_panel.scroll_offset = max_scroll;
+            self.ui.settings_panel.content_height = max_scroll;
+            if self.ui.settings_panel.scroll_offset > max_scroll {
+                self.ui.settings_panel.scroll_offset = max_scroll;
             }
             if max_scroll > 0.0 && total_content > 0.0 {
                 let sb_w = 6.0_f32;
                 let sb_x = content_left + content_width - sb_w - 2.0;
                 let visible_ratio = (avail_h / total_content).clamp(0.1, 1.0);
                 let thumb_h = (avail_h * visible_ratio).max(30.0);
-                let scroll_ratio = (self.settings_panel.scroll_offset / max_scroll).clamp(0.0, 1.0);
+                let scroll_ratio =
+                    (self.ui.settings_panel.scroll_offset / max_scroll).clamp(0.0, 1.0);
                 let thumb_y = start_y + (avail_h - thumb_h) * scroll_ratio;
                 let thumb_color = color_f(0.4, 0.4, 0.45, 1.0);
                 let thumb_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &thumb_color)
@@ -1925,7 +2012,7 @@ impl EditorState {
         text_brush: &windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush,
     ) -> f32 {
         unsafe {
-            let is_open = self.settings_panel.open_dropdown == Some(kind);
+            let is_open = self.ui.settings_panel.open_dropdown == Some(kind);
             // 标签
             let label_color = if required {
                 color_f(0.92, 0.30, 0.30, 1.0)
@@ -1933,6 +2020,7 @@ impl EditorState {
                 color_f(0.85, 0.85, 0.85, 1.0)
             };
             let label_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &label_color)
@@ -1973,6 +2061,7 @@ impl EditorState {
             // 下拉框背景
             let input_bg = color_f(0.18, 0.18, 0.18, 1.0);
             let input_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg)
@@ -1983,6 +2072,7 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let input_border_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &input_border)
@@ -2027,6 +2117,7 @@ impl EditorState {
                 color_f(0.95, 0.95, 0.95, 1.0)
             };
             let value_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &value_color)
@@ -2063,7 +2154,7 @@ impl EditorState {
             );
 
             // 保存触发区域
-            self.settings_panel.dropdown_trigger_regions.push((
+            self.ui.settings_panel.dropdown_trigger_regions.push((
                 kind,
                 x + margin,
                 cy,
@@ -2078,12 +2169,14 @@ impl EditorState {
                 let item_h = 28.0f32;
                 let item_bg = color_f(0.22, 0.22, 0.24, 1.0);
                 let item_bg_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &item_bg)
                     .unwrap();
                 let selected_color = color_f(0.14, 0.30, 0.45, 1.0);
                 let selected_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &selected_color)
@@ -2091,26 +2184,27 @@ impl EditorState {
                 // 当前已选项的强调色（左侧竖条），与主题强调蓝一致
                 let accent_color = color_f(0.0, 0.47, 0.83, 1.0);
                 let accent_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &accent_color)
                     .unwrap();
                 for (i, item_label) in items.iter().enumerate() {
                     let iy = next_cy + i as f32 * item_h;
-                    let is_hover = self.settings_panel.hover_dropdown == Some(kind)
-                        && self.settings_panel.hover_dropdown_index == Some(i);
+                    let is_hover = self.ui.settings_panel.hover_dropdown == Some(kind)
+                        && self.ui.settings_panel.hover_dropdown_index == Some(i);
                     let is_selected = match kind {
                         crate::settings::SettingsDropdownKind::Provider => {
                             // dropdown_items() 顺序：DeepSeek, Kimi, 自定义
                             matches!(
-                                (self.settings_panel.current_provider_button(), i),
+                                (self.ui.settings_panel.current_provider_button(), i),
                                 (Some(ProviderTemplateButton::DeepSeek), 0)
                                     | (Some(ProviderTemplateButton::Kimi), 1)
                                     | (Some(ProviderTemplateButton::Custom), 2)
                             )
                         }
                         crate::settings::SettingsDropdownKind::Model => {
-                            self.settings_panel.model == *item_label
+                            self.ui.settings_panel.model == *item_label
                         }
                     };
                     // hover 与当前选中项统一显示预选中效果（蓝色高亮底 + 左侧强调竖条）
@@ -2153,7 +2247,7 @@ impl EditorState {
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
-                    self.settings_panel.dropdown_item_regions.push((
+                    self.ui.settings_panel.dropdown_item_regions.push((
                         kind,
                         i,
                         x + margin,

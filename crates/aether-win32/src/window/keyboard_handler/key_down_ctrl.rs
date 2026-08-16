@@ -35,14 +35,18 @@ unsafe fn okd_ctrl_terminal_clear(hwnd: HWND, vk: VIRTUAL_KEY) {
     let term_focused = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().terminal_panel.focused)
+            .map(|state| state.borrow().terminal.terminal_panel.focused)
             .unwrap_or(false)
     });
     if term_focused {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
                 // 发送 Ctrl+L (0x0C Form Feed)，shell 会执行清屏并重新绘制提示符
-                state.borrow_mut().terminal_panel.send_bytes(b"\x0c");
+                state
+                    .borrow_mut()
+                    .terminal
+                    .terminal_panel
+                    .send_bytes(b"\x0c");
                 invalidate_window(hwnd);
             }
         });
@@ -75,7 +79,7 @@ unsafe fn okd_ctrl_file_ops(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 } else {
                     EDITOR_STATE.with(|s| {
                         if let Some(state) = s.borrow().as_ref() {
-                            state.borrow_mut().status_message =
+                            state.borrow_mut().ui.status_message =
                                 "已取消打开不受信任的工作区".to_string();
                             invalidate_window(hwnd);
                         }
@@ -97,7 +101,7 @@ unsafe fn okd_ctrl_file_ops(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 let need_dialog = EDITOR_STATE.with(|s| {
                     s.borrow()
                         .as_ref()
-                        .map(|state| state.borrow().content.file_path.is_none())
+                        .map(|state| state.borrow().editor.content.file_path.is_none())
                         .unwrap_or(true)
                 });
                 if need_dialog {
@@ -140,7 +144,7 @@ unsafe fn okd_ctrl_view(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     let st = &mut *state.borrow_mut();
-                    st.lsp.request_completion(&st.content);
+                    st.lsp.lsp.request_completion(&st.editor.content);
                     // 不立即 render：补全结果到达后由 WM_APP+3 触发重绘
                 }
             });
@@ -148,7 +152,7 @@ unsafe fn okd_ctrl_view(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
         VK_B => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().layout.toggle_sidebar();
+                    state.borrow_mut().ui.layout.toggle_sidebar();
                     invalidate_window(hwnd);
                 }
             });
@@ -159,8 +163,8 @@ unsafe fn okd_ctrl_view(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 // 原 Ctrl+Shift+G 的 > 前缀行为迁移至此
                 EDITOR_STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
-                        state.borrow_mut().command_palette.show();
-                        state.borrow_mut().command_palette.update_query(">");
+                        state.borrow_mut().ui.command_palette.show();
+                        state.borrow_mut().ui.command_palette.update_query(">");
                         invalidate_window(hwnd);
                     }
                 });
@@ -168,7 +172,7 @@ unsafe fn okd_ctrl_view(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 // P2-3: Ctrl+P 也打开命令面板（VS Code 中为 Quick Open；此处复用命令面板）
                 EDITOR_STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
-                        state.borrow_mut().command_palette.show();
+                        state.borrow_mut().ui.command_palette.show();
                         invalidate_window(hwnd);
                     }
                 });
@@ -178,24 +182,24 @@ unsafe fn okd_ctrl_view(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             // Ctrl+` 切换底部终端面板
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().layout.toggle_terminal_panel();
-                    if state.borrow().layout.bottom_panel_visible {
+                    state.borrow_mut().ui.layout.toggle_terminal_panel();
+                    if state.borrow().ui.layout.bottom_panel_visible {
                         // 打开时聚焦终端并按需启动 shell
-                        state.borrow_mut().terminal_panel.focused = true;
+                        state.borrow_mut().terminal.terminal_panel.focused = true;
                         state.borrow_mut().set_terminal_ime_bypass(true);
-                        if !state.borrow().terminal_panel.running {
-                            let _ = state.borrow_mut().terminal_panel.start();
+                        if !state.borrow().terminal.terminal_panel.running {
+                            let _ = state.borrow_mut().terminal.terminal_panel.start();
                         }
                         // 启动周期刷新定时器以显示异步输出
                         let _ = SetTimer(hwnd, TERM_TIMER_ID, TERM_REFRESH_MS, None);
                     } else {
-                        state.borrow_mut().terminal_panel.focused = false;
+                        state.borrow_mut().terminal.terminal_panel.focused = false;
                         state.borrow_mut().set_terminal_ime_bypass(false);
                         // 关闭时停止刷新定时器
                         let _ = KillTimer(hwnd, TERM_TIMER_ID);
                     }
-                    state.borrow_mut().status_message =
-                        if state.borrow().layout.bottom_panel_visible {
+                    state.borrow_mut().ui.status_message =
+                        if state.borrow().ui.layout.bottom_panel_visible {
                             "终端已打开 (Ctrl+` 关闭, Ctrl+C 中断)"
                         } else {
                             "终端已关闭"
@@ -218,7 +222,6 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     st.open_settings_tab();
-                    drop(st);
                     invalidate_window(hwnd);
                 }
             });
@@ -227,21 +230,21 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
         VK_J => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().layout.toggle_terminal_panel();
-                    if state.borrow().layout.bottom_panel_visible {
-                        state.borrow_mut().terminal_panel.focused = true;
+                    state.borrow_mut().ui.layout.toggle_terminal_panel();
+                    if state.borrow().ui.layout.bottom_panel_visible {
+                        state.borrow_mut().terminal.terminal_panel.focused = true;
                         state.borrow_mut().set_terminal_ime_bypass(true);
-                        if !state.borrow().terminal_panel.running {
-                            let _ = state.borrow_mut().terminal_panel.start();
+                        if !state.borrow().terminal.terminal_panel.running {
+                            let _ = state.borrow_mut().terminal.terminal_panel.start();
                         }
                         let _ = SetTimer(hwnd, TERM_TIMER_ID, TERM_REFRESH_MS, None);
                     } else {
-                        state.borrow_mut().terminal_panel.focused = false;
+                        state.borrow_mut().terminal.terminal_panel.focused = false;
                         state.borrow_mut().set_terminal_ime_bypass(false);
                         let _ = KillTimer(hwnd, TERM_TIMER_ID);
                     }
-                    state.borrow_mut().status_message =
-                        if state.borrow().layout.bottom_panel_visible {
+                    state.borrow_mut().ui.status_message =
+                        if state.borrow().ui.layout.bottom_panel_visible {
                             "底部面板已打开 (Ctrl+J 关闭)"
                         } else {
                             "底部面板已关闭"
@@ -256,15 +259,16 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
-                    st.activity_bar
+                    st.ui
+                        .activity_bar
                         .switch_to_view(crate::layout::ActivityBarView::Explorer);
-                    st.activity_view = crate::layout::ActivityBarView::Explorer;
-                    if !st.layout.sidebar_visible {
-                        st.layout.toggle_sidebar();
+                    st.ui.activity_view = crate::layout::ActivityBarView::Explorer;
+                    if !st.ui.layout.sidebar_visible {
+                        st.ui.layout.toggle_sidebar();
                     }
-                    st.sidebar_content = crate::layout::SidebarContent::from_view(st.activity_view);
-                    st.status_message = "已切换到资源管理器".to_string();
-                    drop(st);
+                    st.ui.sidebar_content =
+                        crate::layout::SidebarContent::from_view(st.ui.activity_view);
+                    st.ui.status_message = "已切换到资源管理器".to_string();
                     invalidate_window(hwnd);
                 }
             });
@@ -275,7 +279,6 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     st.toggle_markdown_preview();
-                    drop(st);
                     invalidate_window(hwnd);
                 }
             });
@@ -290,7 +293,9 @@ unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
     let is_image = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().content.language == aether_core::lexer::Language::Image)
+            .map(|state| {
+                state.borrow().editor.content.language == aether_core::lexer::Language::Image
+            })
             .unwrap_or(false)
     });
 
@@ -301,7 +306,7 @@ unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
                     let mut st = state.borrow_mut();
                     if is_image {
                         // 图片预览：Ctrl+= 放大图片
-                        st.image_zoom = (st.image_zoom + 0.1).min(10.0);
+                        st.win.image_zoom = (st.win.image_zoom + 0.1).min(10.0);
                     } else {
                         // P2-3: Ctrl+= 放大字体
                         st.zoom_font(Some(1.0));
@@ -316,7 +321,7 @@ unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
                     let mut st = state.borrow_mut();
                     if is_image {
                         // 图片预览：Ctrl+- 缩小图片
-                        st.image_zoom = (st.image_zoom - 0.1).max(0.1);
+                        st.win.image_zoom = (st.win.image_zoom - 0.1).max(0.1);
                     } else {
                         // P2-3: Ctrl+- 缩小字体
                         st.zoom_font(Some(-1.0));
@@ -331,9 +336,9 @@ unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
                     let mut st = state.borrow_mut();
                     if is_image {
                         // 图片预览：Ctrl+0 重置缩放
-                        st.image_zoom = 1.0;
-                        st.image_offset_x = 0.0;
-                        st.image_offset_y = 0.0;
+                        st.win.image_zoom = 1.0;
+                        st.win.image_offset_x = 0.0;
+                        st.win.image_offset_y = 0.0;
                     } else {
                         // P2-3: Ctrl+0 重置字体大小
                         st.zoom_font(None);
@@ -348,24 +353,24 @@ unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
                 EDITOR_STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
                         let mut st = state.borrow_mut();
-                        st.activity_bar
+                        st.ui
+                            .activity_bar
                             .switch_to_view(crate::layout::ActivityBarView::SourceControl);
-                        st.activity_view = crate::layout::ActivityBarView::SourceControl;
-                        if !st.layout.sidebar_visible {
-                            st.layout.toggle_sidebar();
+                        st.ui.activity_view = crate::layout::ActivityBarView::SourceControl;
+                        if !st.ui.layout.sidebar_visible {
+                            st.ui.layout.toggle_sidebar();
                         }
-                        st.sidebar_content =
-                            crate::layout::SidebarContent::from_view(st.activity_view);
-                        st.status_message = "已切换到源代码管理".to_string();
-                        drop(st);
+                        st.ui.sidebar_content =
+                            crate::layout::SidebarContent::from_view(st.ui.activity_view);
+                        st.ui.status_message = "已切换到源代码管理".to_string();
                         invalidate_window(hwnd);
                     }
                 });
             } else {
                 EDITOR_STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
-                        state.borrow_mut().command_palette.show();
-                        state.borrow_mut().command_palette.update_query(":");
+                        state.borrow_mut().ui.command_palette.show();
+                        state.borrow_mut().ui.command_palette.update_query(":");
                         invalidate_window(hwnd);
                     }
                 });
@@ -383,14 +388,14 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             let term_focused = EDITOR_STATE.with(|s| {
                 s.borrow()
                     .as_ref()
-                    .map(|state| state.borrow().terminal_panel.focused)
+                    .map(|state| state.borrow().terminal.terminal_panel.focused)
                     .unwrap_or(false)
             });
             if term_focused {
                 EDITOR_STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
-                        state.borrow_mut().terminal_panel.send_interrupt();
-                        state.borrow_mut().status_message = "终端已中断 (Ctrl+C)".to_string();
+                        state.borrow_mut().terminal.terminal_panel.send_interrupt();
+                        state.borrow_mut().ui.status_message = "终端已中断 (Ctrl+C)".to_string();
                         invalidate_window(hwnd);
                     }
                 });
@@ -418,7 +423,10 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                     .as_ref()
                     .map(|state| {
                         let st = state.borrow();
-                        (st.ai_panel.input_focused, st.terminal_panel.focused)
+                        (
+                            st.ai.ai_panel.input_focused,
+                            st.terminal.terminal_panel.focused,
+                        )
                     })
                     .unwrap_or((false, false))
             });
@@ -426,8 +434,8 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(text) = crate::editor::EditorState::get_clipboard_text() {
                     EDITOR_STATE.with(|s| {
                         if let Some(state) = s.borrow().as_ref() {
-                            state.borrow_mut().ai_panel.paste_text(&text);
-                            state.borrow_mut().ai_panel.caret_visible = true;
+                            state.borrow_mut().ai.ai_panel.paste_text(&text);
+                            state.borrow_mut().ai.ai_panel.caret_visible = true;
                             invalidate_window(hwnd);
                         }
                     });
@@ -438,6 +446,7 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                         if let Some(state) = s.borrow().as_ref() {
                             state
                                 .borrow_mut()
+                                .terminal
                                 .terminal_panel
                                 .send_bytes(text.as_bytes());
                             invalidate_window(hwnd);
@@ -459,11 +468,12 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 EDITOR_STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
                         let st = &mut *state.borrow_mut();
-                        st.layout.right_panel_visible = !st.layout.right_panel_visible;
-                        if st.layout.right_panel_visible && st.layout.right_panel_width < 1.0 {
-                            st.layout.right_panel_width = 320.0;
+                        st.ui.layout.right_panel_visible = !st.ui.layout.right_panel_visible;
+                        if st.ui.layout.right_panel_visible && st.ui.layout.right_panel_width < 1.0
+                        {
+                            st.ui.layout.right_panel_width = 320.0;
                         }
-                        st.status_message = if st.layout.right_panel_visible {
+                        st.ui.status_message = if st.ui.layout.right_panel_visible {
                             "AI 面板已打开".to_string()
                         } else {
                             "AI 面板已关闭".to_string()
@@ -494,17 +504,17 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                     {
                         let st = &mut *state.borrow_mut();
                         if shift {
-                            st.find.toggle_replace(&st.content);
+                            st.editor.find.toggle_replace(&st.editor.content);
                         } else {
-                            st.find.toggle_find(&st.content);
+                            st.editor.find.toggle_find(&st.editor.content);
                         }
                     }
                     // 如果有选中文本，自动填充到查找框
                     if let Some(text) = selected {
                         if !text.is_empty() && text.len() < 200 {
                             let st = &mut *state.borrow_mut();
-                            st.find.query = text;
-                            st.find.find_all(&st.content);
+                            st.editor.find.query = text;
+                            st.editor.find.find_all(&st.editor.content);
                         }
                     }
                     invalidate_window(hwnd);
@@ -515,7 +525,7 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     let st = &mut *state.borrow_mut();
-                    st.find.toggle_replace(&st.content);
+                    st.editor.find.toggle_replace(&st.editor.content);
                     invalidate_window(hwnd);
                 }
             });
@@ -530,13 +540,14 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                         // 优先级：如果最近 2 秒内刚删除了文件，优先撤销删除；
                         // 否则尝试文本编辑撤销；文本也无可撤则回退到删除撤销。
                         let recent_delete = st
+                            .fs
                             .delete_undo_stack
                             .last()
                             .map(|r| r.timestamp.elapsed().as_secs() < 2)
                             .unwrap_or(false);
                         if recent_delete {
                             if let Some(path) =
-                                crate::undo_delete::pop_last_delete(&mut st.delete_undo_stack)
+                                crate::undo_delete::pop_last_delete(&mut st.fs.delete_undo_stack)
                             {
                                 let name = path
                                     .file_name()
@@ -544,16 +555,16 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                                     .unwrap_or_else(|| path.to_string_lossy().to_string());
                                 if path.exists() {
                                     st.refresh_file_tree_light();
-                                    st.status_message = format!("已恢复: {}", name);
+                                    st.ui.status_message = format!("已恢复: {}", name);
                                 } else {
-                                    st.status_message =
+                                    st.ui.status_message =
                                         format!("已撤销删除: {} (请从回收站还原)", name);
                                 }
                             }
-                        } else if st.content.history.can_undo() {
+                        } else if st.editor.content.history.can_undo() {
                             st.undo();
                         } else if let Some(path) =
-                            crate::undo_delete::pop_last_delete(&mut st.delete_undo_stack)
+                            crate::undo_delete::pop_last_delete(&mut st.fs.delete_undo_stack)
                         {
                             let name = path
                                 .file_name()
@@ -561,9 +572,9 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                                 .unwrap_or_else(|| path.to_string_lossy().to_string());
                             if path.exists() {
                                 st.refresh_file_tree_light();
-                                st.status_message = format!("已恢复: {}", name);
+                                st.ui.status_message = format!("已恢复: {}", name);
                             } else {
-                                st.status_message =
+                                st.ui.status_message =
                                     format!("已撤销删除: {} (请从回收站还原)", name);
                             }
                         }
@@ -710,18 +721,17 @@ unsafe fn okd_ctrl_word_move(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if shift {
-                        if st.content.selection_start.is_none() {
+                        if st.editor.content.selection_start.is_none() {
                             st.start_selection();
                         }
                         st.move_cursor_word_left();
                         st.update_selection();
                     } else {
-                        if st.content.selection_start.is_some() {
+                        if st.editor.content.selection_start.is_some() {
                             st.clear_selection();
                         }
                         st.move_cursor_word_left();
                     }
-                    drop(st);
                     invalidate_window(hwnd);
                 }
             });
@@ -731,18 +741,17 @@ unsafe fn okd_ctrl_word_move(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if shift {
-                        if st.content.selection_start.is_none() {
+                        if st.editor.content.selection_start.is_none() {
                             st.start_selection();
                         }
                         st.move_cursor_word_right();
                         st.update_selection();
                     } else {
-                        if st.content.selection_start.is_some() {
+                        if st.editor.content.selection_start.is_some() {
                             st.clear_selection();
                         }
                         st.move_cursor_word_right();
                     }
-                    drop(st);
                     invalidate_window(hwnd);
                 }
             });

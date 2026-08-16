@@ -12,8 +12,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::{
     compute_cursor_for_pos, create_editor_window, get_and_set_state, invalidate_window,
-    AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HIGHLIGHT_TIMER_ID,
-    HOVER_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, SANDBOX_TIMER_ID, TERM_TIMER_ID,
+    AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HOVER_TIMER_ID,
+    LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, SANDBOX_TIMER_ID, TERM_TIMER_ID,
     TOOLTIP_TIMER_ID, UI_ANIM_TIMER_ID,
 };
 use crate::auto_save::{AUTOSAVE_DEBOUNCE_TIMER_ID, AUTOSAVE_PERIODIC_TIMER_ID};
@@ -34,9 +34,6 @@ pub(crate) unsafe fn on_timer(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LP
     }
     if wparam.0 == AI_TIMER_ID {
         return on_timer_ai_refresh(hwnd);
-    }
-    if wparam.0 == HIGHLIGHT_TIMER_ID {
-        return on_timer_highlight_refresh(hwnd);
     }
     if wparam.0 == LP_TIMER_ID {
         return on_timer_long_press(hwnd);
@@ -71,9 +68,9 @@ unsafe fn on_timer_sandbox(hwnd: HWND) -> LRESULT {
     };
     let (dirty, active) = {
         let mut st = state.borrow_mut();
-        let app = st.app_settings.clone();
-        let dirty = st.sandbox_eval.tick(&app);
-        (dirty, st.sandbox_eval.is_active())
+        let app = st.ui.app_settings.clone();
+        let dirty = st.ui.sandbox_eval.tick(&app);
+        (dirty, st.ui.sandbox_eval.is_active())
     };
     if dirty {
         invalidate_window(hwnd);
@@ -91,7 +88,7 @@ unsafe fn on_timer_power(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
         if let Ok(mut st) = state.try_borrow_mut() {
             if !st.power.frozen
-                && !st.focus_manager.is_window_focused()
+                && !st.input.focus_manager.is_window_focused()
                 && st.power.idle_secs() >= crate::power::IDLE_FREEZE_SECS
             {
                 st.enter_frozen();
@@ -106,7 +103,7 @@ unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
     let animating = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow_mut().ai_panel.tick_history_anim())
+            .map(|state| state.borrow_mut().ai.ai_panel.tick_history_anim())
             .unwrap_or(false)
     });
     if !animating {
@@ -120,7 +117,7 @@ unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
 /// AI 温数据归档：周期检查空闲会话并异步归档进 MemoryStore（SQLite）
 unsafe fn on_timer_ai_archive(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
-        state.borrow_mut().ai_panel.trigger_warm_archive();
+        state.borrow_mut().ai.ai_panel.trigger_warm_archive();
     }
     LRESULT(0)
 }
@@ -131,14 +128,14 @@ unsafe fn on_timer_hover(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
         let mut st = state.borrow_mut();
         // 仅在仍有悬停目标时计算 tooltip
-        if st.hover_file_node.is_some() || st.remote.hover_node.is_some() {
+        if st.fs.hover_file_node.is_some() || st.remote.hover_node.is_some() {
             if let Some(text) = st.compute_hover_tooltip_text() {
                 // tooltip 定位：鼠标右下方，预留 16px 间距
-                let tx = st.hover.last_mouse_x + 16.0;
-                let ty = st.hover.last_mouse_y + 16.0;
+                let tx = st.input.hover.last_mouse_x + 16.0;
+                let ty = st.input.hover.last_mouse_y + 16.0;
                 let max_w = 400.0;
-                st.hover.tooltip = Some(crate::editor::HoverTooltip::new(text, tx, ty, max_w));
-                drop(st);
+                st.input.hover.tooltip =
+                    Some(crate::editor::HoverTooltip::new(text, tx, ty, max_w));
                 invalidate_window(hwnd);
             }
         }
@@ -152,15 +149,14 @@ unsafe fn on_timer_tooltip(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
         let mut st = state.borrow_mut();
         // 仅在 hover_key 仍有效且 tooltip 尚未显示时触发
-        if st.tooltip_state.hover_key.is_some() && st.tooltip_state.visible_text.is_none() {
+        if st.ui.tooltip_state.hover_key.is_some() && st.ui.tooltip_state.visible_text.is_none() {
             let (_, tooltip_text) = st.compute_tooltip_hover_key();
             if let Some(text) = tooltip_text {
-                st.tooltip_state.visible_text = Some(text);
-                st.tooltip_state.show_pos = (
-                    st.tooltip_state.anchor.x as f32,
-                    st.tooltip_state.anchor.y as f32,
+                st.ui.tooltip_state.visible_text = Some(text);
+                st.ui.tooltip_state.show_pos = (
+                    st.ui.tooltip_state.anchor.x as f32,
+                    st.ui.tooltip_state.anchor.y as f32,
                 );
-                drop(st);
                 invalidate_window(hwnd);
             }
         }
@@ -179,7 +175,7 @@ unsafe fn on_timer_term_refresh(hwnd: HWND) -> LRESULT {
             .as_ref()
             .map(|state| {
                 let st = state.borrow();
-                (st.layout.bottom_panel_visible, st.power.frozen)
+                (st.ui.layout.bottom_panel_visible, st.power.frozen)
             })
             .unwrap_or((false, false))
     });
@@ -193,33 +189,33 @@ unsafe fn on_timer_term_refresh(hwnd: HWND) -> LRESULT {
         st.pump_background_tasks();
         // 设置面板轮询（测试连接 / 模型列表拉取）
         let mut dirty = false;
-        match st.settings_panel.poll_test_result() {
+        match st.ui.settings_panel.poll_test_result() {
             crate::settings::TestPollResult::SuccessWithPendingSave => {
                 st.save_ai_settings();
-                st.settings_panel.model_editing = false;
-                st.dirty_tracker.mark_full_window();
+                st.ui.settings_panel.model_editing = false;
+                st.win.dirty_tracker.mark_full_window();
                 dirty = true;
             }
             crate::settings::TestPollResult::Success
             | crate::settings::TestPollResult::Failed
             | crate::settings::TestPollResult::FailedWithPendingSave => {
-                st.dirty_tracker.mark_full_window();
+                st.win.dirty_tracker.mark_full_window();
                 dirty = true;
             }
             crate::settings::TestPollResult::Pending => {}
         }
-        if st.settings_panel.poll_models_fetch() {
-            st.dirty_tracker.mark_full_window();
+        if st.ui.settings_panel.poll_models_fetch() {
+            st.win.dirty_tracker.mark_full_window();
             dirty = true;
         }
         // 文件系统监控（AI 命令后检测工作区变化）
-        if let Some(until) = st.fs_watch_until {
+        if let Some(until) = st.fs.fs_watch_until {
             if std::time::Instant::now() >= until {
-                st.fs_watch_until = None;
+                st.fs.fs_watch_until = None;
             } else {
                 let sig = st.workspace_root_signature();
-                if sig != st.fs_last_root_sig {
-                    st.fs_last_root_sig = sig;
+                if sig != st.fs.fs_last_root_sig {
+                    st.fs.fs_last_root_sig = sig;
                     st.refresh_file_tree_light();
                     dirty = true;
                 }
@@ -227,7 +223,7 @@ unsafe fn on_timer_term_refresh(hwnd: HWND) -> LRESULT {
         }
         // 懒加载预扫描
         st.preload_expanded_dirs();
-        dirty || st.dirty_tracker.has_dirty()
+        dirty || st.win.dirty_tracker.has_dirty()
     } else {
         false
     };
@@ -256,9 +252,9 @@ unsafe fn on_timer_ai_refresh(hwnd: HWND) -> LRESULT {
             .try_borrow_mut()
             .map(|mut st| {
                 st.pump_background_tasks();
-                st.ai_panel.any_generating()
-                    || st.settings_panel.is_testing
-                    || st.terminal_panel.has_agent_activity()
+                st.ai.ai_panel.any_generating()
+                    || st.ui.settings_panel.is_testing
+                    || st.terminal.terminal_panel.has_agent_activity()
             })
             .unwrap_or(true);
         if !keep {
@@ -268,34 +264,12 @@ unsafe fn on_timer_ai_refresh(hwnd: HWND) -> LRESULT {
     }
     let active = state
         .try_borrow()
-        .map(|st| st.ai_panel.any_generating() || st.settings_panel.is_testing)
+        .map(|st| st.ai.ai_panel.any_generating() || st.ui.settings_panel.is_testing)
         .unwrap_or(false);
     if active {
         invalidate_window(hwnd);
     } else {
         let _ = KillTimer(hwnd, AI_TIMER_ID);
-    }
-    LRESULT(0)
-}
-
-/// 语法高亮刷新：打开文件后周期性重绘，直到当前 buffer 版本的后台高亮结果到达并着色，
-/// 随后自动停止。解决“文件打开后停留在无高亮纯文本、直到下一次无关事件才着色”的卡顿感。
-unsafe fn on_timer_highlight_refresh(hwnd: HWND) -> LRESULT {
-    // done == true 表示：当前 buffer 版本的高亮请求已发出且结果已被消费。
-    let done = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| {
-                let st = state.borrow();
-                st.hl_request_version == st.content.buffer_version
-                    && !st.bg_highlighter.has_pending()
-            })
-            .unwrap_or(true)
-    });
-    if done {
-        let _ = KillTimer(hwnd, HIGHLIGHT_TIMER_ID);
-    } else {
-        invalidate_window(hwnd);
     }
     LRESULT(0)
 }
@@ -306,23 +280,23 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
         let mut st = state.borrow_mut();
         let mut need_invalidate = false;
         let mut any_active = false;
-        if st.new_project_dialog.visible {
-            st.new_project_dialog.caret_visible = !st.new_project_dialog.caret_visible;
+        if st.ui.new_project_dialog.visible {
+            st.ui.new_project_dialog.caret_visible = !st.ui.new_project_dialog.caret_visible;
             need_invalidate = true;
             any_active = true;
         }
-        if st.file_tree_input.is_some() {
-            if let Some(input) = st.file_tree_input.as_mut() {
+        if st.fs.file_tree_input.is_some() {
+            if let Some(input) = st.fs.file_tree_input.as_mut() {
                 input.caret_visible = !input.caret_visible;
             }
             need_invalidate = true;
             any_active = true;
         }
         // AI 助手输入框光标闪烁（右侧面板）
-        if st.ai_panel.input_focused {
-            st.ai_panel.caret_visible = !st.ai_panel.caret_visible;
-            let rp = st.layout.right_panel_region().clone();
-            st.dirty_tracker.mark_region(
+        if st.ai.ai_panel.input_focused {
+            st.ai.ai_panel.caret_visible = !st.ai.ai_panel.caret_visible;
+            let rp = st.ui.layout.right_panel_region().clone();
+            st.win.dirty_tracker.mark_region(
                 rp.x,
                 rp.y,
                 rp.width,
@@ -333,10 +307,10 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             any_active = true;
         }
         // 沙盒评测页输入框光标闪烁（编辑器内容区）
-        if st.sandbox_eval.active_field.is_some() {
-            st.sandbox_eval.caret_visible = !st.sandbox_eval.caret_visible;
-            let er = st.layout.editor_region().clone();
-            st.dirty_tracker.mark_region(
+        if st.ui.sandbox_eval.active_field.is_some() {
+            st.ui.sandbox_eval.caret_visible = !st.ui.sandbox_eval.caret_visible;
+            let er = st.ui.layout.editor_region().clone();
+            st.win.dirty_tracker.mark_region(
                 er.x,
                 er.y,
                 er.width,
@@ -348,15 +322,16 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
         }
         // 编辑器内容区光标闪烁（文件编辑状态）
         if st
+            .editor
             .tab_bar
             .tabs
-            .get(st.tab_bar.active_tab)
+            .get(st.editor.tab_bar.active_tab)
             .map(|t| t.is_file())
             .unwrap_or(false)
         {
-            st.content.caret_visible = !st.content.caret_visible;
-            let er = st.layout.editor_region().clone();
-            st.dirty_tracker.mark_region(
+            st.editor.content.caret_visible = !st.editor.content.caret_visible;
+            let er = st.ui.layout.editor_region().clone();
+            st.win.dirty_tracker.mark_region(
                 er.x,
                 er.y,
                 er.width,
@@ -371,15 +346,14 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             let _ = KillTimer(hwnd, CARET_TIMER_ID);
         }
         if need_invalidate {
-            let region = st.layout.sidebar_region().clone();
-            st.dirty_tracker.mark_region(
+            let region = st.ui.layout.sidebar_region().clone();
+            st.win.dirty_tracker.mark_region(
                 region.x,
                 region.y,
                 region.width,
                 region.height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
-            drop(st);
             invalidate_window(hwnd);
         }
     }
@@ -391,26 +365,25 @@ unsafe fn on_timer_long_press(hwnd: HWND) -> LRESULT {
     let _ = KillTimer(hwnd, LP_TIMER_ID);
     if let Some(state) = get_and_set_state(hwnd) {
         let mut st = state.borrow_mut();
-        if st.mouse_press.lbutton_down {
-            if let Some(target) = st.mouse_press.lpress_target {
+        if st.input.mouse_press.lbutton_down {
+            if let Some(target) = st.input.mouse_press.lpress_target {
                 // 检查按下时间是否达到长按阈值
-                if let Some(start) = st.mouse_press.lpress_start {
+                if let Some(start) = st.input.mouse_press.lpress_start {
                     if start.elapsed() >= std::time::Duration::from_millis(LP_THRESHOLD_MS as u64) {
-                        let idx = st.mouse_press.lpress_index;
+                        let idx = st.input.mouse_press.lpress_index;
                         match target {
                             crate::input::PressTarget::ActivityBar => {
-                                st.activity_bar.begin_drag(idx);
-                                st.status_message =
+                                st.ui.activity_bar.begin_drag(idx);
+                                st.ui.status_message =
                                     "活动栏自定义模式（拖拽排序，Esc 退出）".to_string();
                             }
                             crate::input::PressTarget::MenuBar => {
-                                st.menu_bar.begin_drag(idx);
-                                st.status_message =
+                                st.ui.menu_bar.begin_drag(idx);
+                                st.ui.status_message =
                                     "菜单栏自定义模式（拖拽排序，Esc 退出）".to_string();
                             }
                         }
-                        st.mouse_press.lpress_start = None;
-                        drop(st);
+                        st.input.mouse_press.lpress_start = None;
                         invalidate_window(hwnd);
                         return LRESULT(0);
                     }
@@ -469,9 +442,10 @@ pub(crate) unsafe fn on_wm_app_3(
             let st = &mut *state.borrow_mut();
             if let Some(msg) = st
                 .lsp
-                .handle_event(event.clone(), st.content.file_path.as_ref())
+                .lsp
+                .handle_event(event.clone(), st.editor.content.file_path.as_ref())
             {
-                st.status_message = msg;
+                st.ui.status_message = msg;
             }
         }
     });
@@ -497,6 +471,27 @@ pub(crate) unsafe fn on_wm_app_7(
             // 由 window 层负责重建 Box 并持有 _batch_guard；向 editor 传引用，
             // 避免 editor 内部再次 from_raw 同一块内存造成 double-free。
             state.borrow_mut().on_folder_scan_batch_ref(&_batch_guard);
+        }
+    });
+    // REQ-P1-07: 不直接调用 render()，触发 WM_PAINT 统一渲染，避免双重渲染
+    invalidate_window(_hwnd);
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 12
+pub(crate) unsafe fn on_wm_app_12(
+    _hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    // 子目录异步扫描完成
+    let raw = lparam.0 as usize;
+    // 立即重建 Box 确保 Rust drop 语义保证清理
+    let _result_guard = unsafe { Box::from_raw(raw as *mut crate::editor::SubdirScanResult) };
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            state.borrow_mut().on_subdir_scan_result(&_result_guard);
         }
     });
     // REQ-P1-07: 不直接调用 render()，触发 WM_PAINT 统一渲染，避免双重渲染
@@ -574,7 +569,7 @@ pub(crate) unsafe fn on_wm_app_8(
     // 清除检查中状态
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            state.borrow_mut().update_checking = false;
+            state.borrow_mut().ui.update_checking = false;
         }
     });
     match &msg.result {
@@ -599,7 +594,7 @@ pub(crate) unsafe fn on_wm_app_8(
             // 设置 badge 状态（齿轮图标绿点 + 设置页提示）
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().update_available_version = Some(version.clone());
+                    state.borrow_mut().ui.update_available_version = Some(version.clone());
                 }
             });
             invalidate_window(hwnd);
@@ -635,7 +630,7 @@ pub(crate) unsafe fn on_wm_app_9(
         } else {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().status_message = "已取消打开不受信任的工作区".to_string();
+                    state.borrow_mut().ui.status_message = "已取消打开不受信任的工作区".to_string();
                 }
             });
         }
@@ -715,7 +710,7 @@ pub(crate) unsafe fn on_dropfiles(
                 } else {
                     EDITOR_STATE.with(|s| {
                         if let Some(state) = s.borrow().as_ref() {
-                            state.borrow_mut().status_message =
+                            state.borrow_mut().ui.status_message =
                                 "已取消打开不受信任的工作区".to_string();
                             invalidate_window(hwnd);
                         }
@@ -750,7 +745,7 @@ pub(crate) unsafe fn on_size(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
             let was_frozen;
             {
                 let mut st = state.borrow_mut();
-                st.is_maximized = is_max;
+                st.win.is_maximized = is_max;
                 was_frozen = st.power.frozen && !is_min;
                 if is_min {
                     // 最小化：立即进入冰冻态释放内存（AI/Agent 经无头泵保活）
@@ -766,7 +761,13 @@ pub(crate) unsafe fn on_size(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
                 }
             }
             // 若最大化且用户设置了显示任务栏，调整窗口为工作区大小
-            let need_adjust = is_max && state.borrow().app_settings.ui.show_taskbar_when_maximized;
+            let need_adjust = is_max
+                && state
+                    .borrow()
+                    .ui
+                    .app_settings
+                    .ui
+                    .show_taskbar_when_maximized;
             if need_adjust {
                 use windows::Win32::Graphics::Gdi::{
                     GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -831,24 +832,23 @@ pub(crate) unsafe fn on_dpichanged(
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             let mut st = state.borrow_mut();
-            st.dpi_scale = new_scale;
-            st.render_ctx.set_dpi(new_dpi);
-            st.text_renderer.set_dpi_scale(new_scale);
+            st.win.dpi_scale = new_scale;
+            st.win.render_ctx.set_dpi(new_dpi);
+            st.win.text_renderer.set_dpi_scale(new_scale);
             // REQ-P2-07: DPI 变化时重新缩放布局常量
-            st.layout.apply_dpi_scale(new_scale);
+            st.ui.layout.apply_dpi_scale(new_scale);
             // REQ-P2-04: IME 候选/合成窗口尺寸按新 DPI 缩放
-            st.ime.set_dpi_scale(new_scale);
-            st.status_message =
+            st.ui.ime.set_dpi_scale(new_scale);
+            st.ui.status_message =
                 format!("DPI: {} ({}%)", new_dpi as u32, (new_scale * 100.0) as u32);
             // UI-M09: DPI 切换后重建渲染目标，确保尺寸与新 DPI 匹配
             let _ = st.init_render_target();
             // P3-1: DPI 切换后必须重建 text_format_cache 与 brush_cache，
             // 否则缓存的 IDWriteTextFormat 仍使用旧 font_size，导致渲染尺寸不一致
             // Theme 已 derive(Copy)，按值拷贝避免借用冲突
-            let theme = st.theme;
-            let font_size = st.text_renderer.font_size();
-            st.render_ctx.init_common_resources(&theme, font_size);
-            drop(st);
+            let theme = st.win.theme;
+            let font_size = st.win.text_renderer.font_size();
+            st.win.render_ctx.init_common_resources(&theme, font_size);
             invalidate_window(hwnd);
         }
     });
@@ -991,8 +991,8 @@ pub(crate) unsafe fn on_paint(hwnd: HWND, _msg: u32, _wparam: WPARAM, _lparam: L
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             let mut st = state.borrow_mut();
-            if !st.dirty_tracker.has_dirty() {
-                st.dirty_tracker.mark_full_window();
+            if !st.win.dirty_tracker.has_dirty() {
+                st.win.dirty_tracker.mark_full_window();
             }
         }
     });
@@ -1033,7 +1033,7 @@ pub(crate) unsafe fn on_set_focus(
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             if let Ok(mut st) = state.try_borrow_mut() {
-                st.focus_manager.on_set_focus();
+                st.input.focus_manager.on_set_focus();
                 st.power.note_input();
                 // 冰冻态获焦（非最小化）：立即解冻
                 if st.power.frozen && !st.power.minimized {
@@ -1062,7 +1062,7 @@ pub(crate) unsafe fn on_kill_focus(
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             if let Ok(mut st) = state.try_borrow_mut() {
-                st.focus_manager.on_kill_focus();
+                st.input.focus_manager.on_kill_focus();
                 // 自动保存：失焦立即保存（用户离开编辑场景的瞬间落盘）
                 st.autosave_on_focus_loss();
             } else {

@@ -30,27 +30,50 @@ fn cmd_path() -> String {
         .unwrap_or_else(|| r"C:\Windows\System32\cmd.exe".to_string())
 }
 
-/// 在后台线程里持续读取管道直到 EOF，通道返回累计字节。
+/// 在后台线程里持续读取管道，累计字节直到满足停止条件、EOF 或超时。
 ///
 /// 之所以需要后台线程 + 通道 + 超时：
 /// - `PipeReader::read` 是阻塞 `ReadFile`，主线程直接调会卡死
-/// - 让子进程执行 `exit` 后管道自然关闭，read 循环收到 0 后退出
-/// - 主线程用 `recv_timeout` 兜底，防止极端情况下永久挂起
-fn drain_to_eof(mut reader: PipeReader, timeout: Duration) -> Vec<u8> {
+///
+/// 注意：不能用“等到 EOF 再返回全部字节”的模式：
+/// - ConPTY 模式下输出管道在 `ClosePseudoConsole` 前不会关闭，而会话在
+///   断言前仍存活，EOF 永远等不到；旧实现 `recv_timeout + unwrap_or_default`
+///   会在超时时丢弃已收集的全部数据，导致明明有输出却断言 0 bytes
+/// - 因此改为流式累计：有数据就累计，满足 stop 条件或超时即返回已累计内容
+fn drain_until<F>(mut reader: PipeReader, timeout: Duration, stop: F) -> Vec<u8>
+where
+    F: Fn(&[u8]) -> bool,
+{
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     std::thread::spawn(move || {
-        let mut collected = Vec::new();
         let mut buf = [0u8; 4096];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break, // EOF：管道关闭，子进程退出
-                Ok(n) => collected.extend_from_slice(&buf[..n]),
+                Ok(n) => {
+                    // 主线程已返回时通道关闭，退出读循环
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
                 Err(_) => break,
             }
         }
-        let _ = tx.send(collected);
     });
-    rx.recv_timeout(timeout).unwrap_or_default()
+    let mut collected = Vec::new();
+    let deadline = std::time::Instant::now() + timeout;
+    while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+        match rx.recv_timeout(remaining) {
+            Ok(chunk) => {
+                collected.extend_from_slice(&chunk);
+                if stop(&collected) {
+                    break;
+                }
+            }
+            Err(_) => break, // 超时或读线程退出：返回已累计内容
+        }
+    }
+    collected
 }
 
 /// 烟雾测试 1：spawn 应成功，cmd.exe 至少 500ms 内不退出。
@@ -86,11 +109,14 @@ fn conpty_smoke_reads_initial_banner() {
         .write_input(b"ver\r\nexit\r\n")
         .expect("write_input 失败");
 
-    // CI 环境给予更长的超时时间
-    let bytes = drain_to_eof(PipeReader::new(read_handle), Duration::from_secs(10));
+    // CI 环境给予更长的超时时间；一旦读到任何字节即可返回（不等 EOF）
+    let bytes = drain_until(PipeReader::new(read_handle), Duration::from_secs(10), |c| {
+        !c.is_empty()
+    });
     assert!(
         !bytes.is_empty(),
-        "应能读取到 cmd.exe 的输出，但读到 0 bytes"
+        "应能读取到 cmd.exe 的输出，但读到 0 bytes (backend={})",
+        if session.is_pipe() { "pipe" } else { "ConPTY" }
     );
     // 抓一段 ASCII 可读文本作概览，方便排错
     let preview: String = bytes
@@ -121,13 +147,17 @@ fn conpty_smoke_round_trip_echo() {
         .write_input(cmd.as_bytes())
         .expect("write_input 失败");
 
-    let bytes = drain_to_eof(PipeReader::new(read_handle), Duration::from_secs(5));
+    // 读到包含标记字符串即返回（不等 EOF）
+    let bytes = drain_until(PipeReader::new(read_handle), Duration::from_secs(5), |c| {
+        String::from_utf8_lossy(c).contains(marker)
+    });
     let output = String::from_utf8_lossy(&bytes);
     assert!(
         output.contains(marker),
-        "输出中应包含回显文本 '{}'，实际输出 ({} bytes):\n{}",
+        "输出中应包含回显文本 '{}'，实际输出 ({} bytes, backend={}):\n{}",
         marker,
         bytes.len(),
+        if session.is_pipe() { "pipe" } else { "ConPTY" },
         output
     );
     println!(

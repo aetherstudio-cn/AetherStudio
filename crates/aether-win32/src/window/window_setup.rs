@@ -199,7 +199,7 @@ pub(crate) fn persist_window_state(state: &EditorState, hwnd: HWND) {
         unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_ok() };
     if rect_ok {
         // 最大化时只记录最大化标志,不覆盖正常矩形(下次启动用 SW_MAXIMIZE 恢复)
-        if !state.is_maximized {
+        if !state.win.is_maximized {
             let w = (rect.right - rect.left).max(0) as u32;
             let h = (rect.bottom - rect.top).max(0) as u32;
             // 拒绝异常尺寸(例如最小化后的退化矩形)
@@ -210,7 +210,53 @@ pub(crate) fn persist_window_state(state: &EditorState, hwnd: HWND) {
                 settings.ui.window_height = Some(h);
             }
         }
-        settings.ui.window_maximized = state.is_maximized;
+        settings.ui.window_maximized = state.win.is_maximized;
+    }
+
+    // 保存当前工作区的 AI 打开标签页快照（供下次启动恢复，已关闭的标签不恢复）
+    if let Some(ref folder) = state.fs.current_folder {
+        let ws_hash = EditorState::workspace_path_hash(folder);
+        let conv_ids: Vec<String> = state
+            .ai
+            .ai_panel
+            .conversations
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        // 过滤掉仅含欢迎消息的空对话（无用户消息），避免无意义标签页残留
+        let meaningful: Vec<String> = state
+            .ai
+            .ai_panel
+            .conversations
+            .iter()
+            .filter(|c| {
+                c.messages
+                    .iter()
+                    .any(|m| m.role == crate::ai_panel::AiRole::User)
+            })
+            .map(|c| c.id.clone())
+            .collect();
+        if !meaningful.is_empty() {
+            // 活动索引需映射到过滤后的列表
+            let active_id = conv_ids
+                .get(state.ai.ai_panel.active)
+                .cloned()
+                .unwrap_or_default();
+            let active_idx = meaningful
+                .iter()
+                .position(|id| *id == active_id)
+                .unwrap_or(0);
+            settings.ui.ai_open_tabs.insert(
+                ws_hash,
+                aether_shared::settings::AiOpenTabsSnapshot {
+                    conversation_ids: meaningful,
+                    active: active_idx,
+                },
+            );
+        } else {
+            // 无有效对话：清除该工作区的快照，避免下次启动恢复空标签
+            settings.ui.ai_open_tabs.remove(&ws_hash);
+        }
     }
 
     if let Err(e) = settings.save() {
@@ -226,18 +272,18 @@ pub(crate) fn apply_launch_args(state: &mut EditorState, args: &LaunchArgs) {
     for path in &args.paths {
         if path.is_dir() {
             // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
-            if crate::editor::files::check_workspace_trust(state.hwnd, path) {
+            if crate::editor::files::check_workspace_trust(state.win.hwnd, path) {
                 state.open_folder(path.clone());
             } else {
-                state.status_message = "已取消打开不受信任的工作区".to_string();
+                state.ui.status_message = "已取消打开不受信任的工作区".to_string();
             }
         } else if path.is_file() {
             // 文件：先打开所在文件夹作为工作区，再加载文件到标签页
             if let Some(parent) = path.parent() {
-                if crate::editor::files::check_workspace_trust(state.hwnd, parent) {
+                if crate::editor::files::check_workspace_trust(state.win.hwnd, parent) {
                     state.open_folder(parent.to_path_buf());
                 } else {
-                    state.status_message = "已取消打开不受信任的工作区".to_string();
+                    state.ui.status_message = "已取消打开不受信任的工作区".to_string();
                 }
             }
             state.load_file(path.clone());
@@ -257,7 +303,7 @@ pub(crate) fn apply_launch_args(state: &mut EditorState, args: &LaunchArgs) {
     }
 
     // REQ-P1-07: 不直接调用 render()，标记全窗口脏区域，由调用方触发 WM_PAINT
-    state.dirty_tracker.mark_full_window();
+    state.win.dirty_tracker.mark_full_window();
 }
 
 /// WM_COPYDATA：接收来自第二个实例或 CLI 的启动参数
@@ -307,8 +353,8 @@ pub(crate) unsafe fn on_destroy(
             let mut state = rc.borrow_mut();
             // 退出前同步归档 AI 会话到 SQLite（等待落盘完成），
             // 保证聊完不足 30 秒就退出的场景对话不丢失
-            state.ai_panel.archive_all_on_exit();
-            if state.is_main_window {
+            state.ai.ai_panel.archive_all_on_exit();
+            if state.win.is_main_window {
                 persist_window_state(&state, hwnd);
             }
         }

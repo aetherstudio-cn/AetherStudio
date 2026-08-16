@@ -30,8 +30,7 @@ pub struct TabContent {
     // 渲染缓存（同crate内可访问）
     // P0-A: 行文本缓存改为滑动窗口（仅覆盖可见行±缓冲），
     // 内存从 O(文件行数) 降到 O(视口行数)；
-    // cached_tokens 仍为全文件索引（后台 tree-sitter 高亮结果整体接管，
-    // LexemeSpan 压缩后内存可接受）
+    // cached_tokens 仍为全文件索引（LexemeSpan 压缩后内存可接受）
     /// 窗口首行对应的全局行号
     pub(crate) cache_window_start: usize,
     /// 窗口内每行文本（下标 = 全局行号 - cache_window_start）
@@ -192,8 +191,7 @@ impl TabContent {
     }
 
     /// 冰冻态：释放渲染缓存（行文本/高亮 token/行偏移），PieceTable 本体保留。
-    /// 唤醒后由 rebuild_cache 签名机制按可见窗口自动重建；
-    /// tokens_trimmed 置位使 tree-sitter 语言强制重新请求后台高亮。
+    /// 唤醒后由 rebuild_cache 签名机制按可见窗口自动重建。
     pub(crate) fn trim_caches(&mut self) {
         self.cache_window_start = 0;
         self.cached_lines = Vec::new();

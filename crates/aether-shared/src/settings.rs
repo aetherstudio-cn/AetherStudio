@@ -17,6 +17,9 @@ pub struct AppSettings {
     /// 自动更新设置
     #[serde(default)]
     pub update: UpdateSettings,
+    /// 计费历史记录
+    #[serde(default)]
+    pub billing_history: BillingHistory,
 }
 
 impl std::fmt::Debug for AppSettings {
@@ -117,6 +120,97 @@ pub struct AiSettings {
     pub user_id: Option<String>,
 }
 
+/// 每日计费统计
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DailyBillingStats {
+    /// 日期（格式：YYYY-MM-DD）
+    pub date: String,
+    /// 模型名称
+    pub model: String,
+    /// 输入 token 数量
+    pub input_tokens: usize,
+    /// 输出 token 数量
+    pub output_tokens: usize,
+    /// 缓存命中输入 token 数量
+    pub cached_input_tokens: usize,
+    /// 总 token 数量
+    pub total_tokens: usize,
+    /// 费用（人民币元）
+    pub cost: f64,
+}
+
+/// 计费历史记录
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct BillingHistory {
+    /// 每日统计列表
+    pub daily_stats: Vec<DailyBillingStats>,
+}
+
+impl BillingHistory {
+    /// 添加一条计费记录
+    pub fn add_record(&mut self, record: DailyBillingStats) {
+        // 检查是否已存在相同日期和模型的记录
+        if let Some(existing) = self
+            .daily_stats
+            .iter_mut()
+            .find(|s| s.date == record.date && s.model == record.model)
+        {
+            // 更新现有记录
+            existing.input_tokens += record.input_tokens;
+            existing.output_tokens += record.output_tokens;
+            existing.cached_input_tokens += record.cached_input_tokens;
+            existing.total_tokens += record.total_tokens;
+            existing.cost += record.cost;
+        } else {
+            // 添加新记录
+            self.daily_stats.push(record);
+        }
+    }
+
+    /// 按日期范围查询统计
+    pub fn query_by_date_range(&self, start_date: &str, end_date: &str) -> Vec<&DailyBillingStats> {
+        self.daily_stats
+            .iter()
+            .filter(|s| s.date.as_str() >= start_date && s.date.as_str() <= end_date)
+            .collect()
+    }
+
+    /// 获取指定日期的统计
+    pub fn get_by_date(&self, date: &str) -> Vec<&DailyBillingStats> {
+        self.daily_stats.iter().filter(|s| s.date == date).collect()
+    }
+
+    /// 获取指定模型的统计
+    pub fn get_by_model(&self, model: &str) -> Vec<&DailyBillingStats> {
+        self.daily_stats
+            .iter()
+            .filter(|s| s.model == model)
+            .collect()
+    }
+
+    /// 计算总费用
+    pub fn total_cost(&self) -> f64 {
+        self.daily_stats.iter().map(|s| s.cost).sum()
+    }
+
+    /// 计算总 token 数量
+    pub fn total_tokens(&self) -> usize {
+        self.daily_stats.iter().map(|s| s.total_tokens).sum()
+    }
+
+    /// 计算缓存命中率
+    pub fn cache_hit_rate(&self) -> f64 {
+        let total_input: usize = self.daily_stats.iter().map(|s| s.input_tokens).sum();
+        let total_cached: usize = self.daily_stats.iter().map(|s| s.cached_input_tokens).sum();
+
+        if total_input == 0 {
+            0.0
+        } else {
+            total_cached as f64 / total_input as f64
+        }
+    }
+}
+
 impl std::fmt::Debug for AiSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AiSettings")
@@ -204,9 +298,6 @@ fn default_true() -> bool {
     true
 }
 
-/// 用于兼容旧版单一 api_key 存储的特殊键名
-const LEGACY_KEY_ID: &str = "__legacy_single__";
-
 impl AiModelProfile {
     /// 转换为运行时 AiSettings
     pub fn to_ai_settings(&self) -> AiSettings {
@@ -230,38 +321,6 @@ impl AiModelProfile {
             logprobs: self.logprobs,
             top_logprobs: self.top_logprobs,
             user_id: self.user_id.clone(),
-        }
-    }
-
-    /// 从 AiSettings 生成一个模型档案（用于旧配置迁移）
-    pub fn from_ai_settings(
-        id: impl Into<String>,
-        display_name: impl Into<String>,
-        ai: &AiSettings,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            display_name: display_name.into(),
-            provider: ai.provider.clone(),
-            api_key: ai.api_key.clone(),
-            base_url: ai.base_url.clone(),
-            model: ai.model.clone(),
-            temperature: ai.temperature,
-            top_p: ai.top_p,
-            max_tokens: ai.max_tokens,
-            max_input_tokens: ai.max_input_tokens,
-            system_prompt: ai.system_prompt.clone(),
-            enabled: true,
-            thinking: ai.thinking,
-            reasoning_effort: ai.reasoning_effort.clone(),
-            frequency_penalty: ai.frequency_penalty,
-            presence_penalty: ai.presence_penalty,
-            stop: ai.stop.clone(),
-            response_format: ai.response_format.clone(),
-            include_usage: ai.include_usage,
-            logprobs: ai.logprobs,
-            top_logprobs: ai.top_logprobs,
-            user_id: ai.user_id.clone(),
         }
     }
 }
@@ -331,6 +390,18 @@ pub struct UiSettings {
     /// 最大化时是否显示 Windows 任务栏（默认 true）
     #[serde(default = "default_true")]
     pub show_taskbar_when_maximized: bool,
+    /// 各工作区退出时仍打开的 AI 对话标签页（工作区哈希 → 标签页快照）
+    #[serde(default)]
+    pub ai_open_tabs: std::collections::HashMap<String, AiOpenTabsSnapshot>,
+}
+
+/// AI 面板打开标签页的快照（持久化到 settings.json）
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct AiOpenTabsSnapshot {
+    /// 打开的对话 ID 列表（按标签页顺序）
+    pub conversation_ids: Vec<String>,
+    /// 活动标签页在 conversation_ids 中的索引
+    pub active: usize,
 }
 
 impl Default for UiSettings {
@@ -348,6 +419,7 @@ impl Default for UiSettings {
             window_maximized: false,
             last_workspace: None,
             show_taskbar_when_maximized: true,
+            ai_open_tabs: std::collections::HashMap::new(),
         }
     }
 }
@@ -386,9 +458,6 @@ pub struct RemoteSettings {
     /// 已保存的 SSH 服务器配置列表
     #[serde(default)]
     pub ssh_servers: Vec<SshServerConfig>,
-    /// 兼容旧版本字段（已废弃，读取时忽略）
-    #[serde(default, skip_serializing)]
-    pub ssh_hosts: Vec<String>,
 }
 
 impl AppSettings {
@@ -404,6 +473,30 @@ impl AppSettings {
             return m.to_ai_settings();
         }
         self.ai.clone()
+    }
+
+    /// 返回当前激活模型的显示名称（供 AI 面板显示）。
+    /// 优先级：display_name → model → "未配置模型"。
+    pub fn active_model_display_name(&self) -> String {
+        if let Some(id) = &self.active_model_id {
+            if let Some(m) = self.ai_models.iter().find(|m| &m.id == id && m.enabled) {
+                if !m.display_name.is_empty() {
+                    return m.display_name.clone();
+                }
+                if !m.model.is_empty() {
+                    return m.model.clone();
+                }
+            }
+        }
+        if let Some(m) = self.ai_models.iter().find(|m| m.enabled) {
+            if !m.display_name.is_empty() {
+                return m.display_name.clone();
+            }
+            if !m.model.is_empty() {
+                return m.model.clone();
+            }
+        }
+        "未配置模型".to_string()
     }
 
     pub fn settings_path() -> PathBuf {
@@ -438,59 +531,16 @@ impl AppSettings {
                                 std::collections::BTreeMap<String, String>,
                             >(&decrypted)
                             {
-                                // 新格式：JSON map（model_id -> key）
+                                // JSON map（model_id -> key）
                                 for m in settings.ai_models.iter_mut() {
                                     if let Some(k) = map.get(&m.id) {
                                         m.api_key = k.clone();
                                     }
                                 }
-                                if let Some(legacy) = map.get(LEGACY_KEY_ID) {
-                                    settings.ai.api_key = legacy.clone();
-                                }
-                            } else {
-                                // 旧格式：单一明文 key
-                                settings.ai.api_key = decrypted;
                             }
                         }
                     }
 
-                    // 多模型迁移：无模型但旧 ai 配置有效 → 生成默认模型并激活
-                    if settings.ai_models.is_empty()
-                        && (!settings.ai.provider.is_empty() || !settings.ai.model.is_empty())
-                    {
-                        let display = if settings.ai.model.is_empty() {
-                            "默认模型".to_string()
-                        } else {
-                            settings.ai.model.clone()
-                        };
-                        let profile =
-                            AiModelProfile::from_ai_settings("default", display, &settings.ai);
-                        settings.active_model_id = Some(profile.id.clone());
-                        settings.ai_models.push(profile);
-                    }
-
-                    // P1-2: 密码认证禁用——加载时扫描并中和遗留的 password 配置。
-                    // 将 auth_type == "password" 的服务器迁移为 "agent"，确保旧版本
-                    // 保存的配置在加载后不会生成 Password 认证（纵深防御 + 实时同步）。
-                    let migrated = settings
-                        .remote
-                        .ssh_servers
-                        .iter_mut()
-                        .filter(|s| s.auth_type == "password")
-                        .map(|s| {
-                            s.auth_type = "agent".to_string();
-                            s.name.clone()
-                        })
-                        .collect::<Vec<_>>();
-                    if !migrated.is_empty() {
-                        eprintln!(
-                            "[P1-2] 已禁用 {} 个服务器的密码认证并迁移为 Agent: {:?}",
-                            migrated.len(),
-                            migrated
-                        );
-                        // 持久化迁移结果（best-effort，失败不影响加载）
-                        let _ = settings.save_to(settings_path, api_key_path);
-                    }
                     return settings;
                 }
                 Err(e) => {
@@ -601,10 +651,6 @@ impl AppSettings {
             if !m.api_key.is_empty() {
                 key_map.insert(m.id.clone(), m.api_key.clone());
             }
-        }
-        // 兼容：旧的单一 ai.api_key 以特殊键保存
-        if !self.ai.api_key.is_empty() {
-            key_map.insert(LEGACY_KEY_ID.to_string(), self.ai.api_key.clone());
         }
         if key_map.is_empty() {
             let _ = std::fs::remove_file(api_key_path);
@@ -730,6 +776,7 @@ impl Default for AppSettings {
             ai_models: Vec::new(),
             active_model_id: None,
             update: UpdateSettings::default(),
+            billing_history: BillingHistory::default(),
         }
     }
 }
@@ -801,7 +848,6 @@ mod tests {
         assert_eq!(s.ui.font_size, 0);
         assert!(!s.ui.sidebar_visible);
         assert!(s.remote.ssh_servers.is_empty());
-        assert!(s.remote.ssh_hosts.is_empty());
     }
 
     #[test]
@@ -848,9 +894,31 @@ mod tests {
         let api_key_path = dir.join("api_key.enc");
 
         let mut s = AppSettings::default();
-        s.ai.provider = "custom".to_string();
-        s.ai.model = "custom-model".to_string();
-        s.ai.api_key = "sk-roundtrip".to_string();
+        s.ai_models.push(AiModelProfile {
+            id: "test-model".to_string(),
+            display_name: "custom-model".to_string(),
+            provider: "custom".to_string(),
+            api_key: "sk-roundtrip".to_string(),
+            base_url: None,
+            model: String::new(),
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            max_input_tokens: None,
+            system_prompt: None,
+            enabled: true,
+            thinking: None,
+            reasoning_effort: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: None,
+            response_format: None,
+            include_usage: None,
+            logprobs: None,
+            top_logprobs: None,
+            user_id: None,
+        });
+        s.active_model_id = Some("test-model".to_string());
         s.ui.font_size = 16;
         s.ui.theme = "dark".to_string();
         s.remote.ssh_servers.push(SshServerConfig {
@@ -873,8 +941,8 @@ mod tests {
         // 加密文件应存在且可解密
         assert!(api_key_path.exists());
         let loaded = AppSettings::load_from(&settings_path, &api_key_path);
-        assert_eq!(loaded.ai.api_key, "sk-roundtrip");
-        assert_eq!(loaded.ai.provider, "custom");
+        assert_eq!(loaded.ai_models[0].api_key, "sk-roundtrip");
+        assert_eq!(loaded.ai_models[0].provider, "custom");
         assert_eq!(loaded.ui.font_size, 16);
         assert_eq!(loaded.remote.ssh_servers.len(), 1);
         assert_eq!(loaded.remote.ssh_servers[0].auth_type, "key");
@@ -909,45 +977,40 @@ mod tests {
     }
 
     #[test]
-    fn test_settings_password_auth_migration() {
-        let dir = temp_test_dir("aether-settings-migrate");
-        let settings_path = dir.join("settings.json");
-        let api_key_path = dir.join("api_key.enc");
-
-        let mut s = AppSettings::default();
-        s.remote.ssh_servers.push(SshServerConfig {
-            name: "legacy".to_string(),
-            host: "h".to_string(),
-            port: 22,
-            username: "u".to_string(),
-            auth_type: "password".to_string(),
-            key_path: String::new(),
-        });
-        s.save_to(&settings_path, &api_key_path).unwrap();
-
-        let loaded = AppSettings::load_from(&settings_path, &api_key_path);
-        assert_eq!(loaded.remote.ssh_servers[0].auth_type, "agent");
-
-        // 迁移后持久化的文件也应是 agent
-        let migrated_json = std::fs::read_to_string(&settings_path).unwrap();
-        assert!(migrated_json.contains("agent"));
-        assert!(!migrated_json.contains("password"));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn test_settings_empty_api_key_removes_encrypted_file() {
         let dir = temp_test_dir("aether-settings-nokey");
         let settings_path = dir.join("settings.json");
         let api_key_path = dir.join("api_key.enc");
 
         let mut s = AppSettings::default();
-        s.ai.api_key = "temp-key".to_string();
+        s.ai_models.push(AiModelProfile {
+            id: "m1".to_string(),
+            display_name: String::new(),
+            provider: String::new(),
+            api_key: "temp-key".to_string(),
+            base_url: None,
+            model: String::new(),
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            max_input_tokens: None,
+            system_prompt: None,
+            enabled: true,
+            thinking: None,
+            reasoning_effort: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: None,
+            response_format: None,
+            include_usage: None,
+            logprobs: None,
+            top_logprobs: None,
+            user_id: None,
+        });
         s.save_to(&settings_path, &api_key_path).unwrap();
         assert!(api_key_path.exists());
 
-        s.ai.api_key.clear();
+        s.ai_models[0].api_key.clear();
         s.save_to(&settings_path, &api_key_path).unwrap();
         assert!(!api_key_path.exists());
 
