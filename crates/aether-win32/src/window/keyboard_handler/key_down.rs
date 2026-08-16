@@ -968,7 +968,8 @@ unsafe fn okd_ssh_manager(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().ui.sidebar_content == crate::layout::SidebarContent::RemoteManagerPanel
+                state.borrow().ui.sidebar_content
+                    == crate::layout::SidebarContent::RemoteManagerPanel
                     && state.borrow().remote.ssh_manager_panel.editing
             })
             .unwrap_or(false)

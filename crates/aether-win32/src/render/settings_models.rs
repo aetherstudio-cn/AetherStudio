@@ -29,7 +29,8 @@ impl EditorState {
                 "已添加的模型（点击卡片切换当前使用的模型，可编辑 / 删除）；点击下方「添加模型」新增配置。";
             let info_color = color_f(0.55, 0.55, 0.55, 1.0);
             let info_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &info_color)
                 .unwrap();
@@ -59,7 +60,8 @@ impl EditorState {
 
             // "当前使用"标记用的右对齐文本格式（放在名称行右侧，避免与变长名称重叠）
             let cur_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -70,25 +72,29 @@ impl EditorState {
                 .unwrap();
             let name_color = color_f(0.90, 0.90, 0.90, 1.0);
             let name_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &name_color)
                 .unwrap();
             let active_name_color = color_f(0.45, 0.74, 1.0, 1.0);
             let active_name_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &active_name_color)
                 .unwrap();
             let desc_color = color_f(0.55, 0.55, 0.55, 1.0);
             let desc_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &desc_color)
                 .unwrap();
             let provider_color = color_f(0.65, 0.65, 0.65, 1.0);
             let provider_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &provider_color)
                 .unwrap();
@@ -124,7 +130,8 @@ impl EditorState {
                     color_f(0.18, 0.18, 0.20, 1.0)
                 };
                 let card_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &card_bg)
                     .unwrap();
@@ -147,7 +154,8 @@ impl EditorState {
                     color_f(0.28, 0.28, 0.30, 1.0)
                 };
                 let card_border_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &card_border)
                     .unwrap();
@@ -156,7 +164,8 @@ impl EditorState {
                 // 激活卡片左侧强调短条（上下内缩，避免压住圆角）
                 if is_active {
                     let accent_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &color_f(0.0, 0.55, 0.95, 1.0))
                         .unwrap();
@@ -220,7 +229,8 @@ impl EditorState {
                 // "● 当前使用"标记（名称行右侧、右对齐，避免与变长名称重叠）
                 if is_active {
                     let cur_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &color_f(0.40, 0.72, 1.0, 1.0))
                         .unwrap();
@@ -281,7 +291,8 @@ impl EditorState {
                     color_f(0.34, 0.34, 0.37, 1.0)
                 };
                 let toggle_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &toggle_bg)
                     .unwrap();
@@ -299,7 +310,8 @@ impl EditorState {
                     toggle_x + knob_r + 4.0
                 };
                 let knob_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
                     .unwrap();
@@ -333,7 +345,8 @@ impl EditorState {
                     color_f(0.60, 0.60, 0.62, 1.0)
                 };
                 let state_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &state_color)
                     .unwrap();
@@ -368,7 +381,8 @@ impl EditorState {
                     color_f(0.16, 0.16, 0.18, 1.0)
                 };
                 let del_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &del_bg)
                     .unwrap();
@@ -384,7 +398,8 @@ impl EditorState {
                     color_f(0.40, 0.32, 0.32, 1.0)
                 };
                 let del_border_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &del_border)
                     .unwrap();
@@ -395,7 +410,8 @@ impl EditorState {
                     color_f(0.84, 0.62, 0.62, 1.0)
                 };
                 let del_txt_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &del_txt_color)
                     .unwrap();
@@ -432,7 +448,8 @@ impl EditorState {
                     color_f(0.16, 0.16, 0.18, 1.0)
                 };
                 let edit_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &edit_bg)
                     .unwrap();
@@ -448,7 +465,8 @@ impl EditorState {
                     color_f(0.34, 0.34, 0.37, 1.0)
                 };
                 let edit_border_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &edit_border)
                     .unwrap();
@@ -459,7 +477,8 @@ impl EditorState {
                     color_f(0.84, 0.86, 0.90, 1.0)
                 };
                 let edit_txt_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &edit_txt_color)
                     .unwrap();
@@ -496,7 +515,8 @@ impl EditorState {
                     color_f(0.16, 0.16, 0.18, 1.0)
                 };
                 let eval_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &eval_bg)
                     .unwrap();
@@ -512,7 +532,8 @@ impl EditorState {
                     color_f(0.34, 0.34, 0.37, 1.0)
                 };
                 let eval_border_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &eval_border)
                     .unwrap();
@@ -523,7 +544,8 @@ impl EditorState {
                     color_f(0.50, 0.80, 0.60, 1.0)
                 };
                 let eval_txt_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &eval_txt_color)
                     .unwrap();
@@ -565,15 +587,16 @@ impl EditorState {
             let add_btn_h = 34.0f32;
             let add_btn_x = x + margin;
             let add_btn_y = cy + 4.0;
-            let is_add_hover =
-                self.ui.settings_panel.hover_model_button == Some(crate::settings::ModelButton::Add);
+            let is_add_hover = self.ui.settings_panel.hover_model_button
+                == Some(crate::settings::ModelButton::Add);
             let add_bg = if is_add_hover {
                 color_f(0.0, 0.55, 0.95, 1.0)
             } else {
                 color_f(0.0, 0.47, 0.83, 1.0)
             };
             let add_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &add_bg)
                 .unwrap();
@@ -591,7 +614,8 @@ impl EditorState {
             target.FillRoundedRectangle(&add_rounded, &add_bg_brush);
             let add_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let add_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &add_text_color)
                 .unwrap();
@@ -626,7 +650,12 @@ impl EditorState {
             let btn_w = 132.0f32;
             let btn_h = 28.0f32;
             let bg = color_f(0.18, 0.18, 0.20, 1.0);
-            let bg_brush = self.win.render_ctx.brush_cache.get_brush(target, &bg).unwrap();
+            let bg_brush = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &bg)
+                .unwrap();
             let rect = D2D_RECT_F {
                 left: x,
                 top: y,
@@ -641,13 +670,19 @@ impl EditorState {
             target.FillRoundedRectangle(&back_rounded, &bg_brush);
             let border = color_f(0.35, 0.35, 0.37, 1.0);
             let border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &border)
                 .unwrap();
             target.DrawRoundedRectangle(&back_rounded, &border_brush, 1.0, None);
             let tc = color_f(0.85, 0.85, 0.85, 1.0);
-            let tb = self.win.render_ctx.brush_cache.get_brush(target, &tc).unwrap();
+            let tb = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &tc)
+                .unwrap();
             let txt: Vec<u16> = "← 返回模型列表".encode_utf16().chain(Some(0)).collect();
             target.DrawText(
                 &txt,

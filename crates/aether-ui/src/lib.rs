@@ -3,7 +3,6 @@
 
 pub mod activity_bar;
 pub mod activity_bar_context_menu;
-pub mod layout;
 pub mod bitmap_loader;
 pub mod command_palette;
 pub mod context_menu;
@@ -17,6 +16,7 @@ pub(crate) mod icons_svg;
 pub(crate) mod icons_svg_defs;
 pub mod ime;
 pub mod input;
+pub mod layout;
 pub mod logging;
 pub mod menu_bar;
 pub mod new_project_dialog;

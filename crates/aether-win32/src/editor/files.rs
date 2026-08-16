@@ -218,10 +218,7 @@ pub(super) fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Resu
 /// 流式原子写入：通过回调函数写入数据，避免在内存中构造完整的 &[u8]。
 /// 用于保存大文件时避免 get_all_text 的中间 String/Vec 分配。
 /// 语义与 atomic_write 一致：临时文件 + fsync + rename。
-pub(super) fn atomic_write_stream<F>(
-    path: &std::path::Path,
-    writer_fn: F,
-) -> std::io::Result<()>
+pub(super) fn atomic_write_stream<F>(path: &std::path::Path, writer_fn: F) -> std::io::Result<()>
 where
     F: FnOnce(&mut std::fs::File) -> std::io::Result<()>,
 {
@@ -559,7 +556,10 @@ fn save_current_workspace_ai_session(state: &mut EditorState) {
             conversations: state.ai.ai_panel.conversations.clone(),
             active: state.ai.ai_panel.active,
         };
-        state.ai.workspace_ai_sessions.insert(workspace_hash, snapshot);
+        state
+            .ai
+            .workspace_ai_sessions
+            .insert(workspace_hash, snapshot);
     }
 }
 
@@ -575,7 +575,8 @@ fn load_workspace_ai_session(state: &mut EditorState, workspace_hash: &str) {
             state.ai.ai_panel.load_slot_into_active(active);
         }
         state.ai.current_workspace_ai_session = state
-            .ai.ai_panel
+            .ai
+            .ai_panel
             .conversations
             .get(active)
             .map(|c| c.id.clone());
@@ -589,7 +590,8 @@ fn load_workspace_ai_session(state: &mut EditorState, workspace_hash: &str) {
         if !ws_hash.is_empty() {
             // 优先使用退出时持久化的打开标签页快照，只恢复用户未关闭的标签
             let saved_tabs = state
-                .ui.app_settings
+                .ui
+                .app_settings
                 .ui
                 .ai_open_tabs
                 .get(workspace_hash)
@@ -609,7 +611,8 @@ fn load_workspace_ai_session(state: &mut EditorState, workspace_hash: &str) {
                     state.ai.ai_panel.conversations = loaded_convs;
                     state.ai.ai_panel.load_slot_into_active(active);
                     state.ai.current_workspace_ai_session = state
-                        .ai.ai_panel
+                        .ai
+                        .ai_panel
                         .conversations
                         .get(active)
                         .map(|c| c.id.clone());

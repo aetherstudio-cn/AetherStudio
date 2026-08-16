@@ -23,8 +23,8 @@ pub(crate) use url::Url;
 
 pub(crate) use crate::activity_bar::ActivityBar;
 pub(crate) use crate::ai_panel::AiEdit;
-pub(crate) use crate::ai_panel::{truncate_middle, wrap_code_block, AiContextAttachment};
 pub(crate) use crate::ai_panel::AiPanel;
+pub(crate) use crate::ai_panel::{truncate_middle, wrap_code_block, AiContextAttachment};
 pub(crate) use crate::command_palette::CommandPalette;
 pub(crate) use crate::dialogs::Dialogs;
 pub(crate) use crate::focus_manager::FocusManager;
@@ -976,7 +976,8 @@ impl EditorState {
             state.ui.activity_bar.apply_order(&activity_order);
             // 应用顺序后修正当前活动视图
             state.ui.activity_view = state.ui.activity_bar.active_view();
-            state.ui.sidebar_content = crate::layout::SidebarContent::from_view(state.ui.activity_view);
+            state.ui.sidebar_content =
+                crate::layout::SidebarContent::from_view(state.ui.activity_view);
         }
         if !menu_order.is_empty() {
             state.ui.menu_bar.apply_order(&menu_order);
@@ -1198,7 +1199,8 @@ impl EditorState {
                 }
                 // 显示绝对路径：工作区根 + 相对路径，用平台原生分隔符
                 let abs = self
-    .fs.current_folder
+                    .fs
+                    .current_folder
                     .as_ref()
                     .map(|root| {
                         let mut p = root.clone();

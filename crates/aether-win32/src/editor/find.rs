@@ -210,7 +210,9 @@ impl FindState {
 /// 替换所有匹配
 /// REQ-P0-02: 使用 begin_group/end_group 包裹，记录撤销历史
 pub fn replace_all(state: &mut EditorState) -> usize {
-    if state.editor.find.query.is_empty() || state.editor.find.query == state.editor.find.replace_text {
+    if state.editor.find.query.is_empty()
+        || state.editor.find.query == state.editor.find.replace_text
+    {
         return 0;
     }
     state.editor.find.find_all(&state.editor.content);
@@ -223,7 +225,8 @@ pub fn replace_all(state: &mut EditorState) -> usize {
     let query_len = state.editor.find.query.len();
     let replace_text = state.editor.find.replace_text.clone();
     let mut global_offsets: Vec<usize> = state
-        .editor.find
+        .editor
+        .find
         .results
         .iter()
         .map(|(line, col)| state.line_byte_start(*line) + *col)
@@ -232,7 +235,10 @@ pub fn replace_all(state: &mut EditorState) -> usize {
     global_offsets.sort_by(|a, b| b.cmp(a));
 
     // REQ-P0-02: 记录替换前的光标位置，用于撤销后恢复
-    let cursor_before = CursorPosition::new(state.editor.content.cursor_line, state.editor.content.cursor_col);
+    let cursor_before = CursorPosition::new(
+        state.editor.content.cursor_line,
+        state.editor.content.cursor_col,
+    );
 
     // REQ-P0-02: 开始撤销组，所有替换作为一个原子撤销单元
     state.editor.content.history.begin_group();
@@ -260,7 +266,12 @@ pub fn replace_all(state: &mut EditorState) -> usize {
     state.editor.content.history.end_group();
 
     state.editor.content.is_dirty = true;
-    if let Some(tab) = state.editor.tab_bar.tabs.get_mut(state.editor.tab_bar.active_tab) {
+    if let Some(tab) = state
+        .editor
+        .tab_bar
+        .tabs
+        .get_mut(state.editor.tab_bar.active_tab)
+    {
         tab.mark_dirty();
     }
     state.editor.content.buffer_version += 1;

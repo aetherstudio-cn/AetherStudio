@@ -41,7 +41,8 @@ pub(crate) unsafe fn on_m_button_down(
         if editor.contains(mouse_x, mouse_y) {
             st.input.mouse_press.image_dragging = true;
             st.input.mouse_press.image_drag_start = Some((mouse_x, mouse_y));
-            st.input.mouse_press.image_drag_offset = Some((st.win.image_offset_x, st.win.image_offset_y));
+            st.input.mouse_press.image_drag_offset =
+                Some((st.win.image_offset_x, st.win.image_offset_y));
             return LRESULT(0);
         }
     }

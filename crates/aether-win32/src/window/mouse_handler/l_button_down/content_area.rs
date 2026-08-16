@@ -30,7 +30,8 @@ pub(super) unsafe fn lbd_activity_bar(
     }
     let mut st = state.borrow_mut();
     let idx = st
-        .ui.activity_bar
+        .ui
+        .activity_bar
         .hit_test(mouse_x, mouse_y, activity_region.y)?;
     // 长按检测
     st.input.mouse_press.lpress_start = Some(std::time::Instant::now());
@@ -311,7 +312,8 @@ pub(super) unsafe fn lbd_right_panel(
     {
         let hit = {
             let st = state.borrow();
-            st.ai.ai_panel
+            st.ai
+                .ai_panel
                 .reasoning_toggle_regions
                 .iter()
                 .find(|(_, rx, ry, rw, rh)| {
@@ -508,7 +510,8 @@ unsafe fn lbd_right_panel_tabs(
         if let Some(i) = del_hit {
             let mut st = state.borrow_mut();
             let content = st
-                .ai.ai_panel
+                .ai
+                .ai_panel
                 .playbook_items
                 .get(i)
                 .map(|b| b.content.clone())
@@ -654,7 +657,7 @@ unsafe fn lbd_right_panel_apply_input(
             return Some(LRESULT(0));
         }
     }
-    
+
     // ===== "重试" 按钮 =====
     if let Some((bx, by, bw, bh)) = state.borrow().ai.ai_panel.retry_button_region {
         if rp_rel_x >= bx && rp_rel_x < bx + bw && rp_rel_y >= by && rp_rel_y < by + bh {
@@ -672,7 +675,12 @@ unsafe fn lbd_right_panel_apply_input(
     }
 
     // ===== 文件卡片：点击标题行切换展开/折叠预览（窗口绝对坐标）=====
-    if let Some((mi, bi)) = state.borrow().ai.ai_panel.hit_test_file_card(mouse_x, mouse_y) {
+    if let Some((mi, bi)) = state
+        .borrow()
+        .ai
+        .ai_panel
+        .hit_test_file_card(mouse_x, mouse_y)
+    {
         let mut st = state.borrow_mut();
         st.ai.ai_panel.toggle_file_card_expand(mi, bi);
         st.win.dirty_tracker.mark_full_window();
@@ -693,7 +701,8 @@ unsafe fn lbd_right_panel_apply_input(
             // 收集已启用模型（可作为"当前使用"的候选）
             let models: Vec<(String, String)> = {
                 let st = state.borrow();
-                st.ui.app_settings
+                st.ui
+                    .app_settings
                     .ai_models
                     .iter()
                     .filter(|m| m.enabled)
@@ -806,7 +815,7 @@ unsafe fn lbd_right_panel_apply_input(
         && rp_rel_y < send_btn_y + send_btn_size
     {
         let mut st = state.borrow_mut();
-        
+
         // 如果正在生成，则触发中断
         if st.ai.ai_panel.is_generating {
             st.ai.ai_panel.stop_generation();
@@ -814,7 +823,7 @@ unsafe fn lbd_right_panel_apply_input(
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
-        
+
         // 否则发送消息（使用当前模式 + 编辑器上下文，与 Enter 键行为一致，
         // 以便 Agent 模式收到工具指令并输出 FILE/RUN 标记）
         let settings = st.ui.app_settings.active_ai_settings();
@@ -822,7 +831,8 @@ unsafe fn lbd_right_panel_apply_input(
         let attachments = st.ai.ai_panel.attachments.clone();
         let context = st.gather_context(&attachments);
         if let Err(e) = st
-            .ai.ai_panel
+            .ai
+            .ai_panel
             .send_message_with_prepared_context(&settings, context, mode)
         {
             st.ui.status_message = e;
@@ -904,7 +914,11 @@ pub(super) unsafe fn lbd_settings_page(
 
     // 1. 下拉展开时，优先处理选项点击
     if st.ui.settings_panel.open_dropdown.is_some() {
-        if let Some((kind, idx)) = st.ui.settings_panel.hit_test_dropdown_item(mouse_x, mouse_y) {
+        if let Some((kind, idx)) = st
+            .ui
+            .settings_panel
+            .hit_test_dropdown_item(mouse_x, mouse_y)
+        {
             match kind {
                 crate::settings::SettingsDropdownKind::Provider => {
                     st.ui.settings_panel.select_provider_by_index(idx);
@@ -921,7 +935,8 @@ pub(super) unsafe fn lbd_settings_page(
 
     // 2. 下拉触发区 → 开/关（以当前状态切换）
     if let Some(kind) = st
-        .ui.settings_panel
+        .ui
+        .settings_panel
         .hit_test_dropdown_trigger(mouse_x, mouse_y)
     {
         let opening = st.ui.settings_panel.open_dropdown != Some(kind);
@@ -1039,13 +1054,21 @@ pub(super) unsafe fn lbd_settings_page(
             && st.ui.settings_panel.model_editing)
     {
         // API 密钥显隐切换
-        if st.ui.settings_panel.hit_test_api_key_toggle(mouse_x, mouse_y) {
+        if st
+            .ui
+            .settings_panel
+            .hit_test_api_key_toggle(mouse_x, mouse_y)
+        {
             st.ui.settings_panel.toggle_api_key_visibility();
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
         // 深度思考开关切换（DeepSeek 专属）
-        if st.ui.settings_panel.hit_test_thinking_toggle(mouse_x, mouse_y) {
+        if st
+            .ui
+            .settings_panel
+            .hit_test_thinking_toggle(mouse_x, mouse_y)
+        {
             st.ui.settings_panel.toggle_thinking();
             st.ui.settings_panel.active_field = None;
             invalidate_window(hwnd);
@@ -1076,7 +1099,8 @@ pub(super) unsafe fn lbd_settings_page(
         }
         // 开发者参数区：标题点击展开/折叠
         if st
-            .ui.settings_panel
+            .ui
+            .settings_panel
             .hit_test_dev_params_toggle(mouse_x, mouse_y)
         {
             st.ui.settings_panel.dev_params_expanded = !st.ui.settings_panel.dev_params_expanded;
@@ -1085,14 +1109,22 @@ pub(super) unsafe fn lbd_settings_page(
             return Some(LRESULT(0));
         }
         // 响应格式分段切换（文本 / JSON）
-        if let Some(fmt) = st.ui.settings_panel.hit_test_response_format(mouse_x, mouse_y) {
+        if let Some(fmt) = st
+            .ui
+            .settings_panel
+            .hit_test_response_format(mouse_x, mouse_y)
+        {
             st.ui.settings_panel.response_format = fmt.to_string();
             st.ui.settings_panel.active_field = None;
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
         // logprobs 调试开关切换
-        if st.ui.settings_panel.hit_test_logprobs_toggle(mouse_x, mouse_y) {
+        if st
+            .ui
+            .settings_panel
+            .hit_test_logprobs_toggle(mouse_x, mouse_y)
+        {
             st.ui.settings_panel.logprobs = !st.ui.settings_panel.logprobs;
             st.ui.settings_panel.active_field = None;
             invalidate_window(hwnd);
@@ -1100,7 +1132,8 @@ pub(super) unsafe fn lbd_settings_page(
         }
         // 流式用量统计开关切换
         if st
-            .ui.settings_panel
+            .ui
+            .settings_panel
             .hit_test_include_usage_toggle(mouse_x, mouse_y)
         {
             st.ui.settings_panel.include_usage = !st.ui.settings_panel.include_usage;
@@ -1161,7 +1194,8 @@ pub(super) unsafe fn lbd_settings_page(
     if st.ui.settings_panel.active_tab == crate::settings::SettingsTab::Models
         && !st.ui.settings_panel.model_editing
     {
-        if let Some((btn, model_id)) = st.ui.settings_panel.hit_test_model_button(mouse_x, mouse_y) {
+        if let Some((btn, model_id)) = st.ui.settings_panel.hit_test_model_button(mouse_x, mouse_y)
+        {
             match btn {
                 crate::settings::ModelButton::Add => {
                     // 新建：进入空白草稿编辑表单，但不加入列表、不持久化；
@@ -1193,7 +1227,8 @@ pub(super) unsafe fn lbd_settings_page(
                 crate::settings::ModelButton::Eval => {
                     // 从该模型的配置生成 AiSettings 并跳转到沙盒评测页
                     let model_name = st
-                        .ui.settings_panel
+                        .ui
+                        .settings_panel
                         .models
                         .iter()
                         .find(|m| m.id == model_id)
@@ -1316,7 +1351,8 @@ pub(super) unsafe fn lbd_tab_bar(
                     let (is_dirty, file_name) = if is_active {
                         let dirty = st.editor.content.is_dirty;
                         let name = st
-                            .editor.content
+                            .editor
+                            .content
                             .file_path
                             .as_ref()
                             .and_then(|p| p.file_name())
@@ -1325,13 +1361,15 @@ pub(super) unsafe fn lbd_tab_bar(
                         (dirty, name)
                     } else {
                         let dirty = st
-                            .editor.tab_bar
+                            .editor
+                            .tab_bar
                             .tabs
                             .get(index)
                             .map(|t| t.is_dirty())
                             .unwrap_or(false);
                         let name = st
-                            .editor.tab_bar
+                            .editor
+                            .tab_bar
                             .tabs
                             .get(index)
                             .and_then(|t| t.file_path())
@@ -1412,7 +1450,11 @@ pub(super) unsafe fn lbd_find_panel(
     }
     let show_tab_bar = st.show_tab_bar();
     let editor_region = layout.editor_content_region(show_tab_bar);
-    let panel_height = if st.editor.find.replace_visible { 72.0 } else { 40.0 };
+    let panel_height = if st.editor.find.replace_visible {
+        72.0
+    } else {
+        40.0
+    };
     let panel_width = editor_region.width.min(600.0);
     let panel_x = editor_region.x + editor_region.width - panel_width - 10.0;
     let panel_y = editor_region.y;
@@ -1617,7 +1659,9 @@ pub(super) unsafe fn lbd_welcome_or_editor(
             }
         }
         // Markdown 预览模式下点击编辑区不设置光标（预览不可编辑）
-        if st.editor.content.language == aether_core::lexer::Language::Markdown && st.editor.markdown_preview {
+        if st.editor.content.language == aether_core::lexer::Language::Markdown
+            && st.editor.markdown_preview
+        {
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
@@ -1950,7 +1994,8 @@ pub(super) unsafe fn lbd_history_window(
     if let Some(i) = hit(&state.borrow().ai.ai_panel.history_delete_regions) {
         let mut st = state.borrow_mut();
         let title = st
-            .ai.ai_panel
+            .ai
+            .ai_panel
             .history
             .get(i)
             .map(|m| m.title.clone())
@@ -1974,7 +2019,8 @@ pub(super) unsafe fn lbd_history_window(
         if let Some(conv_id) = conv_id {
             let is_double = state
                 .borrow_mut()
-                .ai.ai_panel
+                .ai
+                .ai_panel
                 .history_click_or_double(&conv_id);
             if is_double {
                 // 双击：进入标题编辑态

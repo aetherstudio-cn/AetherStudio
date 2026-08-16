@@ -16,7 +16,8 @@ impl EditorState {
         let knob_cx = track_x + track_w * ratio.clamp(0.0, 1.0);
         let track_bg = color_f(0.30, 0.30, 0.33, 1.0);
         let track_bg_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &track_bg)
             .unwrap();
@@ -35,7 +36,8 @@ impl EditorState {
             color_f(0.0, 0.47, 0.83, 1.0)
         };
         let track_fill_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &track_fill)
             .unwrap();
@@ -55,7 +57,8 @@ impl EditorState {
             color_f(0.95, 0.95, 0.95, 1.0)
         };
         let knob_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &knob_color)
             .unwrap();
@@ -112,7 +115,8 @@ impl EditorState {
             x + knob_r + 3.0
         };
         if let Ok(kb) = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
         {
@@ -183,7 +187,8 @@ impl EditorState {
         let box_y = cy + label_h;
         let focused = self.ui.settings_panel.active_field == Some(field);
         let bg_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.18, 0.18, 0.18, 1.0))
             .unwrap();
@@ -195,7 +200,8 @@ impl EditorState {
             color_f(0.3, 0.3, 0.3, 1.0)
         };
         let border_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &border)
             .unwrap();
@@ -220,7 +226,8 @@ impl EditorState {
             color_f(0.85, 0.85, 0.85, 1.0)
         };
         let value_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &text_color)
             .unwrap();
@@ -238,7 +245,8 @@ impl EditorState {
             D2D1_DRAW_TEXT_OPTIONS_NONE,
             DWRITE_MEASURING_MODE_NATURAL,
         );
-        self.ui.settings_panel
+        self.ui
+            .settings_panel
             .add_field_region(field, x + margin, box_y, input_w, input_h);
         box_y + input_h
     }
@@ -285,7 +293,8 @@ impl EditorState {
             let card_h = 56.0_f32;
             let card_bg = color_f(0.16, 0.18, 0.22, 1.0);
             let card_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &card_bg)
                 .unwrap();
@@ -298,7 +307,8 @@ impl EditorState {
             target.FillRectangle(&card_rect, &card_bg_brush);
             let accent = color_f(0.0, 0.47, 0.83, 1.0);
             let accent_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &accent)
                 .unwrap();
@@ -312,7 +322,8 @@ impl EditorState {
             let info_text = "配置 API 密钥后，AI 助手可在 Agent 模式下新建、修改、删除文件。点击「保存」时会自动验证密钥有效性并保存；新建的模型只有点击「保存」后才会真正保存。";
             let info_color = color_f(0.72, 0.74, 0.78, 1.0);
             let info_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &info_color)
                 .unwrap();
@@ -334,11 +345,15 @@ impl EditorState {
             cy += card_h + gap;
 
             // 当前编辑模型指示（AI 页编辑的是当前激活模型；在「模型」页可切换/新建）
-            let model_hint = format!("正在编辑：{}", self.ui.settings_panel.active_model_display());
+            let model_hint = format!(
+                "正在编辑：{}",
+                self.ui.settings_panel.active_model_display()
+            );
             let hint_wide: Vec<u16> = model_hint.encode_utf16().chain(Some(0)).collect();
             let hint_color = color_f(0.60, 0.78, 0.95, 1.0);
             let hint_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hint_color)
                 .unwrap();
@@ -404,7 +419,8 @@ impl EditorState {
                 self.ui.settings_panel.active_field == Some(crate::settings::SettingsField::ApiKey);
             let apikey_bg = color_f(0.18, 0.18, 0.18, 1.0);
             let apikey_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &apikey_bg)
                 .unwrap();
@@ -414,7 +430,8 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let apikey_border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &apikey_border)
                 .unwrap();
@@ -442,7 +459,8 @@ impl EditorState {
                 color_f(0.60, 0.60, 0.62, 1.0)
             };
             let eye_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &eye_color)
                 .unwrap();
@@ -487,7 +505,8 @@ impl EditorState {
                 color_f(0.9, 0.9, 0.9, 1.0)
             };
             let key_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &key_text_color)
                 .unwrap();
@@ -531,7 +550,8 @@ impl EditorState {
                 cy += label_h;
                 let baseurl_bg = color_f(0.18, 0.18, 0.18, 1.0);
                 let baseurl_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &baseurl_bg)
                     .unwrap();
@@ -543,7 +563,8 @@ impl EditorState {
                     color_f(0.3, 0.3, 0.3, 1.0)
                 };
                 let baseurl_border_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &baseurl_border)
                     .unwrap();
@@ -583,7 +604,8 @@ impl EditorState {
                 target.FillRectangle(&border_left, &baseurl_border_brush);
                 target.FillRectangle(&border_right, &baseurl_border_brush);
                 let baseurl_text: Vec<u16> = self
-    .ui.settings_panel
+                    .ui
+                    .settings_panel
                     .base_url
                     .encode_utf16()
                     .chain(Some(0))
@@ -620,7 +642,8 @@ impl EditorState {
                     self.ui.settings_panel.model.clone()
                 };
                 let model_items: Vec<String> = self
-    .ui.settings_panel
+                    .ui
+                    .settings_panel
                     .model_dropdown_options()
                     .into_iter()
                     .map(|(_id, name)| name)
@@ -708,7 +731,8 @@ impl EditorState {
                     sw_x + knob_r + 3.0
                 };
                 if let Ok(kb) = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
                 {
@@ -797,7 +821,8 @@ impl EditorState {
                         }
                         if !selected {
                             if let Ok(bb) = self
-    .win.render_ctx
+                                .win
+                                .render_ctx
                                 .brush_cache
                                 .get_brush(target, &color_f(0.32, 0.32, 0.35, 1.0))
                             {
@@ -810,7 +835,8 @@ impl EditorState {
                             color_f(0.78, 0.78, 0.80, 1.0)
                         };
                         if let Ok(tb) = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(target, &seg_text_color)
                         {
@@ -824,7 +850,8 @@ impl EditorState {
                                 DWRITE_MEASURING_MODE_NATURAL,
                             );
                         }
-                        self.ui.settings_panel
+                        self.ui
+                            .settings_panel
                             .effort_regions
                             .push((val, seg_x, cy, seg_w, seg_h));
                     }
@@ -836,14 +863,16 @@ impl EditorState {
             let sampling_disabled = self.ui.settings_panel.sampling_disabled_by_thinking();
             let disabled_text_color = color_f(0.50, 0.50, 0.53, 1.0);
             let disabled_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &disabled_text_color)
                 .unwrap();
 
             // 温度：滑块（0.0 - 2.0，步进 0.1）——比裸文本框更直观，且天然合法
             let temp_val = self
-    .ui.settings_panel
+                .ui
+                .settings_panel
                 .temperature
                 .trim()
                 .parse::<f32>()
@@ -895,7 +924,8 @@ impl EditorState {
 
             // Top-p：核采样滑块（0.0 - 1.0，步进 0.05），与温度二选一调节为宜
             let top_p_val = self
-    .ui.settings_panel
+                .ui
+                .settings_panel
                 .top_p
                 .trim()
                 .parse::<f32>()
@@ -968,7 +998,8 @@ impl EditorState {
             let maxin_focused = self.ui.settings_panel.active_field
                 == Some(crate::settings::SettingsField::MaxInputTokens);
             let maxin_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.18, 0.18, 0.18, 1.0))
                 .unwrap();
@@ -980,7 +1011,8 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let maxin_border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &maxin_border)
                 .unwrap();
@@ -1014,7 +1046,8 @@ impl EditorState {
                 color_f(0.9, 0.9, 0.9, 1.0)
             };
             let maxin_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &maxin_text_color)
                 .unwrap();
@@ -1041,7 +1074,8 @@ impl EditorState {
             cy += input_h;
             if !maxin_valid {
                 let warn_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.90, 0.45, 0.45, 1.0))
                     .unwrap();
@@ -1089,11 +1123,12 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
             cy += label_h;
-            let maxtok_focused =
-                self.ui.settings_panel.active_field == Some(crate::settings::SettingsField::MaxTokens);
+            let maxtok_focused = self.ui.settings_panel.active_field
+                == Some(crate::settings::SettingsField::MaxTokens);
             let maxtok_bg = color_f(0.18, 0.18, 0.18, 1.0);
             let maxtok_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &maxtok_bg)
                 .unwrap();
@@ -1105,7 +1140,8 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let maxtok_border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &maxtok_border)
                 .unwrap();
@@ -1143,7 +1179,8 @@ impl EditorState {
                 color_f(0.9, 0.9, 0.9, 1.0)
             };
             let maxtok_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &maxtok_text_color)
                 .unwrap();
@@ -1166,7 +1203,8 @@ impl EditorState {
             if !maxtok_valid {
                 let warn_color = color_f(0.90, 0.45, 0.45, 1.0);
                 let warn_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &warn_color)
                     .unwrap();
@@ -1211,7 +1249,8 @@ impl EditorState {
             cy += label_h;
             let sysp_bg = color_f(0.18, 0.18, 0.18, 1.0);
             let sysp_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sysp_bg)
                 .unwrap();
@@ -1223,7 +1262,8 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let sysp_border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sysp_border)
                 .unwrap();
@@ -1254,7 +1294,8 @@ impl EditorState {
                 color_f(0.85, 0.85, 0.85, 1.0)
             };
             let sysp_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sysp_text_color)
                 .unwrap();
@@ -1277,7 +1318,8 @@ impl EditorState {
 
             // ---- 开发者参数（可折叠）----
             let dev_sep_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.28, 0.28, 0.30, 1.0))
                 .unwrap();
@@ -1295,7 +1337,8 @@ impl EditorState {
             let header_h = 24.0_f32;
             // Lucide 风格矢量 chevron：折叠时 '>'，展开时 'v'（10px，1.5 描边）
             let chev_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.62, 0.62, 0.65, 1.0))
                 .unwrap();
@@ -1361,7 +1404,8 @@ impl EditorState {
                 .chain(Some(0))
                 .collect();
             let dev_title_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.70, 0.70, 0.73, 1.0))
                 .unwrap();
@@ -1385,7 +1429,8 @@ impl EditorState {
             if dev_expanded {
                 // 频率惩罚滑块（-2.0 ~ 2.0，步进 0.1）
                 let freq_val = self
-    .ui.settings_panel
+                    .ui
+                    .settings_panel
                     .frequency_penalty
                     .trim()
                     .parse::<f32>()
@@ -1432,7 +1477,8 @@ impl EditorState {
 
                 // 存在惩罚滑块（-2.0 ~ 2.0，步进 0.1）
                 let pres_val = self
-    .ui.settings_panel
+                    .ui
+                    .settings_panel
                     .presence_penalty
                     .trim()
                     .parse::<f32>()
@@ -1545,7 +1591,8 @@ impl EditorState {
                     }
                     if !selected {
                         if let Ok(bb) = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(target, &color_f(0.32, 0.32, 0.35, 1.0))
                         {
@@ -1558,7 +1605,8 @@ impl EditorState {
                         color_f(0.78, 0.78, 0.80, 1.0)
                     };
                     if let Ok(tb) = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &seg_text_color)
                     {
@@ -1572,7 +1620,8 @@ impl EditorState {
                             DWRITE_MEASURING_MODE_NATURAL,
                         );
                     }
-                    self.ui.settings_panel
+                    self.ui
+                        .settings_panel
                         .response_format_regions
                         .push((val, seg_x, cy, fmt_seg_w, fmt_seg_h));
                 }
@@ -1657,7 +1706,8 @@ impl EditorState {
             if self.ui.settings_panel.is_dirty() {
                 let dot_color = color_f(0.95, 0.65, 0.20, 1.0);
                 let dot_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &dot_color)
                     .unwrap();
@@ -1713,7 +1763,8 @@ impl EditorState {
                 color_f(0.0, 0.47, 0.83, 1.0)
             };
             let save_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &save_bg)
                 .unwrap();
@@ -1737,7 +1788,8 @@ impl EditorState {
             let save_text: Vec<u16> = save_label.encode_utf16().chain(Some(0)).collect();
             let btn_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let btn_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_text_color)
                 .unwrap();
@@ -1784,7 +1836,12 @@ impl EditorState {
             } else {
                 color_f(0.34, 0.34, 0.37, 1.0)
             };
-            if let Ok(bb) = self.win.render_ctx.brush_cache.get_brush(target, &test_border) {
+            if let Ok(bb) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &test_border)
+            {
                 target.DrawRoundedRectangle(&test_rounded, &bb, 1.0, None);
             }
             let test_label = if is_testing && !self.ui.settings_panel.pending_save {
@@ -1799,7 +1856,8 @@ impl EditorState {
                 color_f(0.84, 0.86, 0.90, 1.0)
             };
             if let Ok(ttb) = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &test_text_color)
             {
@@ -1840,7 +1898,8 @@ impl EditorState {
                     )
                 };
                 let status_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &status_bg)
                     .unwrap();
@@ -1853,12 +1912,14 @@ impl EditorState {
                 };
                 target.FillRectangle(&status_rect, &status_bg_brush);
                 let status_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &status_fg)
                     .unwrap();
                 let status_format = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .get_format(
                         12.0,
@@ -1868,7 +1929,8 @@ impl EditorState {
                     )
                     .unwrap();
                 let status_text: Vec<u16> = self
-    .ui.settings_panel
+                    .ui
+                    .settings_panel
                     .test_status
                     .encode_utf16()
                     .chain(Some(0))
@@ -1904,11 +1966,13 @@ impl EditorState {
                 let sb_x = content_left + content_width - sb_w - 2.0;
                 let visible_ratio = (avail_h / total_content).clamp(0.1, 1.0);
                 let thumb_h = (avail_h * visible_ratio).max(30.0);
-                let scroll_ratio = (self.ui.settings_panel.scroll_offset / max_scroll).clamp(0.0, 1.0);
+                let scroll_ratio =
+                    (self.ui.settings_panel.scroll_offset / max_scroll).clamp(0.0, 1.0);
                 let thumb_y = start_y + (avail_h - thumb_h) * scroll_ratio;
                 let thumb_color = color_f(0.4, 0.4, 0.45, 1.0);
                 let thumb_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &thumb_color)
                     .unwrap();
@@ -1956,7 +2020,8 @@ impl EditorState {
                 color_f(0.85, 0.85, 0.85, 1.0)
             };
             let label_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &label_color)
                 .unwrap();
@@ -1996,7 +2061,8 @@ impl EditorState {
             // 下拉框背景
             let input_bg = color_f(0.18, 0.18, 0.18, 1.0);
             let input_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg)
                 .unwrap();
@@ -2006,7 +2072,8 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let input_border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &input_border)
                 .unwrap();
@@ -2050,7 +2117,8 @@ impl EditorState {
                 color_f(0.95, 0.95, 0.95, 1.0)
             };
             let value_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &value_color)
                 .unwrap();
@@ -2101,20 +2169,23 @@ impl EditorState {
                 let item_h = 28.0f32;
                 let item_bg = color_f(0.22, 0.22, 0.24, 1.0);
                 let item_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &item_bg)
                     .unwrap();
                 let selected_color = color_f(0.14, 0.30, 0.45, 1.0);
                 let selected_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &selected_color)
                     .unwrap();
                 // 当前已选项的强调色（左侧竖条），与主题强调蓝一致
                 let accent_color = color_f(0.0, 0.47, 0.83, 1.0);
                 let accent_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &accent_color)
                     .unwrap();

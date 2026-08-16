@@ -36,7 +36,12 @@ impl EditorState {
 
             // 阴影（右侧 + 底部，与 user_menu 一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &shadow_color)
+            {
                 let shadow_right = D2D_RECT_F {
                     left: menu_rect.right,
                     top: menu_rect.top + 4.0,
@@ -57,7 +62,12 @@ impl EditorState {
 
             // 边框
             let border_color = color_f(0.3, 0.3, 0.3, 1.0);
-            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &border_color)
+            {
                 target.DrawRectangle(&menu_rect, &border_brush, 1.0, None);
             }
 
@@ -70,7 +80,12 @@ impl EditorState {
             ));
 
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
-            let text_brush = match self.win.render_ctx.brush_cache.get_brush(target, &text_color) {
+            let text_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &text_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
@@ -80,13 +95,19 @@ impl EditorState {
                 Err(_) => return,
             };
             let sep_color = color_f(0.3, 0.3, 0.3, 1.0);
-            let sep_brush = match self.win.render_ctx.brush_cache.get_brush(target, &sep_color) {
+            let sep_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &sep_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
 
             let text_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -175,7 +196,12 @@ impl EditorState {
 
             // 阴影（右侧 + 底部，与 user_menu 一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &shadow_color)
+            {
                 let shadow_right = D2D_RECT_F {
                     left: menu_rect.right,
                     top: menu_rect.top + 4.0,
@@ -196,7 +222,12 @@ impl EditorState {
 
             // 边框
             let border_color = color_f(0.3, 0.3, 0.3, 1.0);
-            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &border_color)
+            {
                 target.DrawRectangle(&menu_rect, &border_brush, 1.0, None);
             }
 
@@ -209,7 +240,12 @@ impl EditorState {
             ));
 
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
-            let text_brush = match self.win.render_ctx.brush_cache.get_brush(target, &text_color) {
+            let text_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &text_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
@@ -219,20 +255,30 @@ impl EditorState {
                 Err(_) => return,
             };
             let sep_color = color_f(0.3, 0.3, 0.3, 1.0);
-            let sep_brush = match self.win.render_ctx.brush_cache.get_brush(target, &sep_color) {
+            let sep_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &sep_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
             // 危险项（删除）：红色文字；hover 时红底白字，与普通项蓝底区分
             let danger_text = color_f(0.94, 0.42, 0.42, 1.0);
-            let danger_text_brush =
-                match self.win.render_ctx.brush_cache.get_brush(target, &danger_text) {
-                    Ok(b) => b,
-                    Err(_) => return,
-                };
+            let danger_text_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &danger_text)
+            {
+                Ok(b) => b,
+                Err(_) => return,
+            };
             let danger_hover_bg = color_f(0.78, 0.22, 0.22, 1.0);
             let danger_hover_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &danger_hover_bg)
             {
@@ -246,13 +292,19 @@ impl EditorState {
             };
             // 快捷键提示：右对齐淡色小字
             let hint_color = color_f(0.55, 0.55, 0.55, 1.0);
-            let hint_brush = match self.win.render_ctx.brush_cache.get_brush(target, &hint_color) {
+            let hint_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &hint_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
 
             let text_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -262,7 +314,8 @@ impl EditorState {
                 )
                 .unwrap();
             let hint_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -387,13 +440,23 @@ impl EditorState {
 
             // 边框：1px 细线
             let border_color = color_f(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0, 1.0);
-            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &border_color)
+            {
                 target.DrawRoundedRectangle(&rounded_rect, &border_brush, 1.0, None);
             }
 
             // 阴影（右侧 + 底部，与其他菜单一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &shadow_color)
+            {
                 let shadow_right = D2D_RECT_F {
                     left: menu_rect.right,
                     top: menu_rect.top + 4.0,
@@ -413,7 +476,8 @@ impl EditorState {
             // 文本画刷
             let normal_text_color = color_f(220.0 / 255.0, 220.0 / 255.0, 220.0 / 255.0, 1.0);
             let normal_text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &normal_text_color)
             {
@@ -422,7 +486,8 @@ impl EditorState {
             };
             let hover_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let hover_text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_text_color)
             {
@@ -431,7 +496,8 @@ impl EditorState {
             };
             let disabled_text_color = color_f(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 1.0);
             let disabled_text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &disabled_text_color)
             {
@@ -440,7 +506,8 @@ impl EditorState {
             };
             let hover_bg_color = color_f(80.0 / 255.0, 120.0 / 255.0, 200.0 / 255.0, 200.0 / 255.0);
             let hover_bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_bg_color)
             {
@@ -448,13 +515,19 @@ impl EditorState {
                 Err(_) => return,
             };
             let sep_color = color_f(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0, 200.0 / 255.0);
-            let sep_brush = match self.win.render_ctx.brush_cache.get_brush(target, &sep_color) {
+            let sep_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &sep_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
 
             let text_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -566,13 +639,23 @@ impl EditorState {
 
             // 边框：1px 细线
             let border_color = color_f(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0, 1.0);
-            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &border_color)
+            {
                 target.DrawRoundedRectangle(&rounded_rect, &border_brush, 1.0, None);
             }
 
             // 阴影（右侧 + 底部，与其他菜单一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &shadow_color)
+            {
                 let shadow_right = D2D_RECT_F {
                     left: menu_rect.right,
                     top: menu_rect.top + 4.0,
@@ -592,7 +675,8 @@ impl EditorState {
             // 文本画刷
             let normal_text_color = color_f(220.0 / 255.0, 220.0 / 255.0, 220.0 / 255.0, 1.0);
             let normal_text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &normal_text_color)
             {
@@ -601,7 +685,8 @@ impl EditorState {
             };
             let hover_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let hover_text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_text_color)
             {
@@ -610,7 +695,8 @@ impl EditorState {
             };
             let disabled_text_color = color_f(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 1.0);
             let disabled_text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &disabled_text_color)
             {
@@ -619,7 +705,8 @@ impl EditorState {
             };
             let hover_bg_color = color_f(80.0 / 255.0, 120.0 / 255.0, 200.0 / 255.0, 200.0 / 255.0);
             let hover_bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_bg_color)
             {
@@ -627,19 +714,30 @@ impl EditorState {
                 Err(_) => return,
             };
             let sep_color = color_f(80.0 / 255.0, 80.0 / 255.0, 80.0 / 255.0, 200.0 / 255.0);
-            let sep_brush = match self.win.render_ctx.brush_cache.get_brush(target, &sep_color) {
+            let sep_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &sep_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
             // 勾选标记画刷（使用 hover 文本色）
             let check_color = color_f(180.0 / 255.0, 220.0 / 255.0, 1.0, 1.0);
-            let check_brush = match self.win.render_ctx.brush_cache.get_brush(target, &check_color) {
+            let check_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &check_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
 
             let text_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -756,7 +854,8 @@ impl EditorState {
                 continue;
             }
             let label_w = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .measure_text_width(&item.label, LABEL_FONT_SIZE, normal_weight)
                 .unwrap_or(0.0);
@@ -801,19 +900,22 @@ impl EditorState {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
             let text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let disabled_color = color_f(0.5, 0.5, 0.5, 1.0);
             let disabled_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &disabled_color)
                 .unwrap();
@@ -823,30 +925,35 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let sep_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
             // 悬停项高亮（强调蓝）与提亮文字画刷
             let hover_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
                 .unwrap();
             let hover_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
                 .unwrap();
             // 快捷键说明文字弱化，拉开与菜单名的层级
             let shortcut_dim_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.55, 0.57, 0.62, 1.0))
                 .unwrap();
 
             let text_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -856,7 +963,8 @@ impl EditorState {
                 )
                 .unwrap();
             let shortcut_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -894,7 +1002,12 @@ impl EditorState {
 
             // 阴影（右侧 + 底部，与应用内其他弹出菜单一致）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
-            if let Ok(shadow_brush) = self.win.render_ctx.brush_cache.get_brush(target, &shadow_color) {
+            if let Ok(shadow_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &shadow_color)
+            {
                 let shadow_right = D2D_RECT_F {
                     left: bg_rect.right,
                     top: bg_rect.top + 4.0,
@@ -920,7 +1033,12 @@ impl EditorState {
             } else {
                 color_f(0.30, 0.32, 0.36, 1.0)
             };
-            if let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
+            if let Ok(border_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &border_color)
+            {
                 target.DrawRoundedRectangle(&bg_rounded, &border_brush, 1.0, None);
             }
 
@@ -1047,13 +1165,15 @@ impl EditorState {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let border_color = color_f(0.0, 0.47, 0.83, 1.0);
             let border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
@@ -1063,29 +1183,34 @@ impl EditorState {
                 color_f(0.12, 0.12, 0.12, 1.0)
             };
             let input_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
             let text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.text_default)
                 .unwrap();
             let selected_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             let desc_color = color_f(0.6, 0.6, 0.6, 1.0);
             let desc_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &desc_color)
                 .unwrap();
             let shortcut_color = color_f(0.5, 0.5, 0.5, 1.0);
             let shortcut_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &shortcut_color)
                 .unwrap();
@@ -1101,7 +1226,8 @@ impl EditorState {
             // 玻璃模式下添加边框和阴影
             if self.win.theme.glass_enabled {
                 let panel_border = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &self.win.theme.panel_border)
                     .unwrap();
@@ -1145,7 +1271,8 @@ impl EditorState {
             target.FillRectangle(&input_rect, &input_bg_brush);
 
             let input_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     14.0,
@@ -1172,7 +1299,8 @@ impl EditorState {
             );
 
             let item_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -1182,7 +1310,8 @@ impl EditorState {
                 )
                 .unwrap();
             let desc_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -1192,7 +1321,8 @@ impl EditorState {
                 )
                 .unwrap();
             let shortcut_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,

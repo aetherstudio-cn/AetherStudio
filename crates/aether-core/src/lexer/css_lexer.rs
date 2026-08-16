@@ -29,23 +29,35 @@ impl CssLexer {
             // 块注释 /* ... */
             b'/' if pos + 1 < bytes.len() && bytes[pos + 1] == b'*' => {
                 let end = skip_block_comment(bytes, pos);
-                (LexemeSpan::new(pos, end - pos, TokenKind::BlockComment), end)
+                (
+                    LexemeSpan::new(pos, end - pos, TokenKind::BlockComment),
+                    end,
+                )
             }
 
             // @规则：@media, @import, @keyframes, @font-face 等
             b'@' => {
                 let end = skip_at_rule(bytes, pos);
-                (LexemeSpan::new(pos, end - pos, TokenKind::Preprocessor), end)
+                (
+                    LexemeSpan::new(pos, end - pos, TokenKind::Preprocessor),
+                    end,
+                )
             }
 
             // 字符串
             b'"' => {
                 let end = skip_quoted(bytes, pos, b'"');
-                (LexemeSpan::new(pos, end - pos, TokenKind::StringLiteral), end)
+                (
+                    LexemeSpan::new(pos, end - pos, TokenKind::StringLiteral),
+                    end,
+                )
             }
             b'\'' => {
                 let end = skip_quoted(bytes, pos, b'\'');
-                (LexemeSpan::new(pos, end - pos, TokenKind::StringLiteral), end)
+                (
+                    LexemeSpan::new(pos, end - pos, TokenKind::StringLiteral),
+                    end,
+                )
             }
 
             // 十六进制颜色 #fff / #1a3a6b（仅在声明区或选择器区的 #id 之后跟十六进制字符时）
@@ -64,17 +76,26 @@ impl CssLexer {
             // 数字（含小数、负数、百分比、单位）
             b'0'..=b'9' => {
                 let end = skip_css_number(bytes, pos);
-                (LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral), end)
+                (
+                    LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral),
+                    end,
+                )
             }
             b'.' if pos + 1 < bytes.len() && bytes[pos + 1].is_ascii_digit() => {
                 // .5 形式的小数
                 let end = skip_css_number(bytes, pos);
-                (LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral), end)
+                (
+                    LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral),
+                    end,
+                )
             }
             b'-' if pos + 1 < bytes.len() && bytes[pos + 1].is_ascii_digit() => {
                 // 负数
                 let end = skip_css_number(bytes, pos);
-                (LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral), end)
+                (
+                    LexemeSpan::new(pos, end - pos, TokenKind::NumberLiteral),
+                    end,
+                )
             }
 
             // CSS 变量 --var-name
@@ -127,9 +148,7 @@ impl CssLexer {
             // 单冒号已在上面处理
 
             // 括号
-            b'(' | b')' | b'[' | b']' => {
-                (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1)
-            }
+            b'(' | b')' | b'[' | b']' => (LexemeSpan::new(pos, 1, TokenKind::Punctuation), pos + 1),
 
             // 百分比（独立出现，如 `100%` 中的 `%` 已被 skip_css_number 吞掉）
             b'%' => (LexemeSpan::new(pos, 1, TokenKind::Operator), pos + 1),
@@ -205,9 +224,7 @@ fn skip_hex_or_id_selector(bytes: &[u8], pos: usize) -> usize {
 /// 判断 # 后的文本是否是十六进制颜色值
 fn is_hex_color(text: &str) -> bool {
     let hex = &text[1..]; // 去掉 '#'
-    !hex.is_empty()
-        && hex.len() <= 8
-        && hex.chars().all(|c| c.is_ascii_hexdigit())
+    !hex.is_empty() && hex.len() <= 8 && hex.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// 跳过 CSS 数字：整数、小数、百分比、带单位
@@ -275,12 +292,7 @@ fn skip_important(bytes: &[u8], pos: usize) -> usize {
 /// - 后跟 `:` → 属性名（Attribute）
 /// - 常见 CSS 值关键字 → Keyword
 /// - 其他 → Identifier（值）
-fn classify_block_identifier(
-    bytes: &[u8],
-    _start: usize,
-    end: usize,
-    text: &str,
-) -> TokenKind {
+fn classify_block_identifier(bytes: &[u8], _start: usize, end: usize, text: &str) -> TokenKind {
     // 检查是否紧跟 `(`（函数调用）
     let mut i = end;
     while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {

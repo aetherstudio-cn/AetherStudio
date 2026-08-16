@@ -217,14 +217,16 @@ pub(crate) fn persist_window_state(state: &EditorState, hwnd: HWND) {
     if let Some(ref folder) = state.fs.current_folder {
         let ws_hash = EditorState::workspace_path_hash(folder);
         let conv_ids: Vec<String> = state
-            .ai.ai_panel
+            .ai
+            .ai_panel
             .conversations
             .iter()
             .map(|c| c.id.clone())
             .collect();
         // 过滤掉仅含欢迎消息的空对话（无用户消息），避免无意义标签页残留
         let meaningful: Vec<String> = state
-            .ai.ai_panel
+            .ai
+            .ai_panel
             .conversations
             .iter()
             .filter(|c| {
@@ -236,7 +238,10 @@ pub(crate) fn persist_window_state(state: &EditorState, hwnd: HWND) {
             .collect();
         if !meaningful.is_empty() {
             // 活动索引需映射到过滤后的列表
-            let active_id = conv_ids.get(state.ai.ai_panel.active).cloned().unwrap_or_default();
+            let active_id = conv_ids
+                .get(state.ai.ai_panel.active)
+                .cloned()
+                .unwrap_or_default();
             let active_idx = meaningful
                 .iter()
                 .position(|id| *id == active_id)

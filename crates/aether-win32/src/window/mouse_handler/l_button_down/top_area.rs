@@ -262,9 +262,10 @@ unsafe fn lbd_titlebar_menu(
     titlebar_region: &crate::layout::Region,
 ) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
-    let idx = st
-        .ui.menu_bar
-        .hit_test(mouse_x, mouse_y - titlebar_region.y, titlebar_region.height)?;
+    let idx =
+        st.ui
+            .menu_bar
+            .hit_test(mouse_x, mouse_y - titlebar_region.y, titlebar_region.height)?;
     // 长按检测：记录按下信息并启动定时器
     st.input.mouse_press.lpress_start = Some(std::time::Instant::now());
     st.input.mouse_press.lpress_x = mouse_x;
@@ -415,7 +416,12 @@ pub(super) unsafe fn lbd_file_node_context_menu(
         return None;
     }
     // 命中菜单项 → 执行动作
-    if let Some(idx) = st.ui.context_menus.file_node.hit_test_menu(mouse_x, mouse_y) {
+    if let Some(idx) = st
+        .ui
+        .context_menus
+        .file_node
+        .hit_test_menu(mouse_x, mouse_y)
+    {
         let item = st.ui.context_menus.file_node.items[idx];
         let node_idx = st.ui.context_menus.file_node.target_node;
         st.ui.context_menus.file_node.close();
@@ -462,7 +468,8 @@ pub(super) unsafe fn lbd_tab_context_menu(
     if let Some(item_idx) = st.ui.context_menus.tab.hit_test(mouse_x, mouse_y) {
         // disabled 项不响应
         let enabled = st
-            .ui.context_menus
+            .ui
+            .context_menus
             .tab
             .items
             .get(item_idx)
@@ -499,7 +506,8 @@ pub(super) unsafe fn lbd_tab_context_menu(
             crate::tab_context_menu::TabContextMenuCommand::CopyPath => {
                 if let Some(idx) = tab_idx {
                     if let Some(path) = st
-                        .editor.tab_bar
+                        .editor
+                        .tab_bar
                         .tabs
                         .get(idx)
                         .and_then(|t| t.file_path().cloned())
@@ -511,7 +519,8 @@ pub(super) unsafe fn lbd_tab_context_menu(
             crate::tab_context_menu::TabContextMenuCommand::RevealInExplorer => {
                 if let Some(idx) = tab_idx {
                     if let Some(path) = st
-                        .editor.tab_bar
+                        .editor
+                        .tab_bar
                         .tabs
                         .get(idx)
                         .and_then(|t| t.file_path().cloned())
@@ -550,7 +559,8 @@ pub(super) unsafe fn lbd_activity_bar_context_menu(
     // 命中菜单项 → 执行动作
     if let Some(item_idx) = st.ui.context_menus.activity_bar.hit_test(mouse_x, mouse_y) {
         let enabled = st
-            .ui.context_menus
+            .ui
+            .context_menus
             .activity_bar
             .items
             .get(item_idx)
@@ -593,7 +603,9 @@ pub(super) unsafe fn lbd_activity_bar_context_menu(
                 if st.ui.layout.right_panel_width < 1.0 {
                     st.ui.layout.right_panel_width = 320.0;
                 }
-                st.ui.activity_bar.switch_to_view(ActivityBarView::AiAssistant);
+                st.ui
+                    .activity_bar
+                    .switch_to_view(ActivityBarView::AiAssistant);
                 st.ui.activity_view = ActivityBarView::AiAssistant;
                 st.ai.ai_panel.input_focused = false;
             }
@@ -622,7 +634,8 @@ pub(super) unsafe fn lbd_submenu(
     let titlebar_region = layout.title_bar_region();
     let submenu_y = titlebar_region.y + titlebar_region.height;
     let sub_idx = st
-        .ui.menu_bar
+        .ui
+        .menu_bar
         .hit_test_submenu(active_idx, mouse_x, mouse_y, submenu_x, submenu_y);
     if let Some(sub_idx) = sub_idx {
         if let Some(item) = st.ui.menu_bar.items.get(active_idx) {

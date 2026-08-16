@@ -150,7 +150,11 @@ impl BillingHistory {
     /// 添加一条计费记录
     pub fn add_record(&mut self, record: DailyBillingStats) {
         // 检查是否已存在相同日期和模型的记录
-        if let Some(existing) = self.daily_stats.iter_mut().find(|s| s.date == record.date && s.model == record.model) {
+        if let Some(existing) = self
+            .daily_stats
+            .iter_mut()
+            .find(|s| s.date == record.date && s.model == record.model)
+        {
             // 更新现有记录
             existing.input_tokens += record.input_tokens;
             existing.output_tokens += record.output_tokens;
@@ -173,10 +177,7 @@ impl BillingHistory {
 
     /// 获取指定日期的统计
     pub fn get_by_date(&self, date: &str) -> Vec<&DailyBillingStats> {
-        self.daily_stats
-            .iter()
-            .filter(|s| s.date == date)
-            .collect()
+        self.daily_stats.iter().filter(|s| s.date == date).collect()
     }
 
     /// 获取指定模型的统计
@@ -201,7 +202,7 @@ impl BillingHistory {
     pub fn cache_hit_rate(&self) -> f64 {
         let total_input: usize = self.daily_stats.iter().map(|s| s.input_tokens).sum();
         let total_cached: usize = self.daily_stats.iter().map(|s| s.cached_input_tokens).sum();
-        
+
         if total_input == 0 {
             0.0
         } else {

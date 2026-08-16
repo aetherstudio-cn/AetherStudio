@@ -186,14 +186,15 @@ impl EditorState {
     pub(crate) fn note_save_succeeded(&mut self) {
         self.editor.content.last_saved_buffer_version = self.editor.content.buffer_version;
         self.editor.content.auto_save_conflict = false;
-        self.editor.content.last_known_mtime = self.editor.content.file_path.as_ref().and_then(|p| {
-            // 仅本地文件有 mtime；远程文件（remote: 前缀）跳过
-            if p.to_str().is_some_and(|s| s.starts_with("remote:")) {
-                None
-            } else {
-                std::fs::metadata(p).and_then(|m| m.modified()).ok()
-            }
-        });
+        self.editor.content.last_known_mtime =
+            self.editor.content.file_path.as_ref().and_then(|p| {
+                // 仅本地文件有 mtime；远程文件（remote: 前缀）跳过
+                if p.to_str().is_some_and(|s| s.starts_with("remote:")) {
+                    None
+                } else {
+                    std::fs::metadata(p).and_then(|m| m.modified()).ok()
+                }
+            });
         self.stop_autosave_debounce();
     }
 

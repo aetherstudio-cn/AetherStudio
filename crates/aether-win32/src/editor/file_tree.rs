@@ -270,7 +270,12 @@ impl EditorState {
     }
     /// 按绝对路径查找节点并选中（刷新树后定位新建/重命名的节点）
     fn select_node_by_path(&mut self, path: &std::path::Path) {
-        let n = self.fs.file_tree.as_ref().map(|t| t.len() as u32).unwrap_or(0);
+        let n = self
+            .fs
+            .file_tree
+            .as_ref()
+            .map(|t| t.len() as u32)
+            .unwrap_or(0);
         for idx in 0..n {
             if self.get_node_path(idx).as_deref() == Some(path) {
                 self.fs.selected_file_node = Some(idx);
@@ -291,13 +296,21 @@ impl EditorState {
         let nodes_top = self.file_tree_nodes_start_y();
         let (row, depth) = match (input.kind, input.target_node) {
             (FileTreeInputKind::Rename, Some(idx)) => {
-                let i = self.fs.file_tree_visible_rows.iter().position(|&r| r == idx)?;
+                let i = self
+                    .fs
+                    .file_tree_visible_rows
+                    .iter()
+                    .position(|&r| r == idx)?;
                 let depth = self.fs.file_tree.as_ref()?.get_node(idx)?.depth as f32;
                 (i as f32, depth)
             }
             (FileTreeInputKind::Rename, None) => return None,
             (_, Some(p)) => {
-                let i = self.fs.file_tree_visible_rows.iter().position(|&r| r == p)?;
+                let i = self
+                    .fs
+                    .file_tree_visible_rows
+                    .iter()
+                    .position(|&r| r == p)?;
                 let depth = self.fs.file_tree.as_ref()?.get_node(p)?.depth as f32 + 1.0;
                 (i as f32 + 1.0, depth)
             }
@@ -341,7 +354,8 @@ impl EditorState {
     /// 收集当前已展开目录的相对路径集合（刷新后据此恢复展开状态）
     fn capture_expanded_dir_paths(&self) -> std::collections::HashSet<PathBuf> {
         let mut set = std::collections::HashSet::new();
-        let (Some(tree), Some(root)) = (self.fs.file_tree.as_ref(), self.fs.current_folder.as_ref())
+        let (Some(tree), Some(root)) =
+            (self.fs.file_tree.as_ref(), self.fs.current_folder.as_ref())
         else {
             return set;
         };
@@ -492,7 +506,8 @@ impl EditorState {
             return;
         };
         let rel = self
-    .fs.current_folder
+            .fs
+            .current_folder
             .as_ref()
             .and_then(|root| path.strip_prefix(root).ok())
             .map(|p| p.to_string_lossy().to_string())
@@ -552,7 +567,8 @@ impl EditorState {
             Ok(()) => {
                 self.ui.status_message = format!("已删除: {} (可从回收站恢复)", name);
                 // 记录删除操作以支持 Ctrl+Z 撤销
-                self.fs.delete_undo_stack
+                self.fs
+                    .delete_undo_stack
                     .push(crate::undo_delete::DeleteRecord {
                         original_path: path.clone(),
                         timestamp: std::time::Instant::now(),
@@ -751,7 +767,8 @@ impl EditorState {
                 FileKind::Directory => {
                     // 读取当前展开状态以决定是否需要懒加载
                     let will_expand = self
-    .fs.file_tree
+                        .fs
+                        .file_tree
                         .as_ref()
                         .and_then(|t| t.get_node(node_idx))
                         .map(|n| !n.is_expanded)
@@ -784,8 +801,13 @@ impl EditorState {
                             // REQ-P1-09: 活动标签页的 file_path 在 self.editor.content 中
                             let active_path = self.editor.content.file_path.clone();
                             let active_idx = self.editor.tab_bar.active_tab;
-                            if let Some(existing_tab) =
-                                self.editor.tab_bar.tabs.iter().enumerate().position(|(i, tab)| {
+                            if let Some(existing_tab) = self
+                                .editor
+                                .tab_bar
+                                .tabs
+                                .iter()
+                                .enumerate()
+                                .position(|(i, tab)| {
                                     if i == active_idx {
                                         active_path.as_ref() == Some(&path)
                                     } else {
@@ -1238,7 +1260,7 @@ mod tests {
     fn test_hash_dir_level_detects_new_file() {
         let dir = std::env::temp_dir().join(format!(
             "aether_sig_test_{}",
-            crate::memory_store::new_id("d")
+            aether_ai_panel::memory_store::new_id("d")
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let sig1 = dir_sig(&dir);

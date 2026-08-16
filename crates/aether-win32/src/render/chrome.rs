@@ -13,14 +13,16 @@ impl EditorState {
 
         unsafe {
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.statusbar_bg)
                 .unwrap();
             // 状态栏浅亮绿底：深绿黑文字保证对比度
             let text_color = color_f(0.08, 0.16, 0.07, 1.0);
             let text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
@@ -30,7 +32,8 @@ impl EditorState {
                 color_f(0.3, 0.3, 0.3, 1.0)
             };
             let sep_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
@@ -71,7 +74,8 @@ impl EditorState {
                 .unwrap_or(false)
             {
                 let visual_col = self
-    .editor.content
+                    .editor
+                    .content
                     .buffer
                     .get_line(self.editor.content.cursor_line)
                     .map(|line| {
@@ -129,7 +133,8 @@ impl EditorState {
 
             // 段落垂直居中：文字在状态栏内上下间距严格一致（不再用固定顶部偏移）
             let text_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -150,7 +155,8 @@ impl EditorState {
             // SubTask 10.1: hover 背景画刷（浅绿底上黑 @10% 柔和反馈）
             let hover_color = color_f(0.0, 0.0, 0.0, 0.10);
             let hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
@@ -258,13 +264,15 @@ impl EditorState {
                 color_f(0.137, 0.137, 0.137, 1.0)
             };
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
             let text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
@@ -274,13 +282,15 @@ impl EditorState {
                 color_f(0.25, 0.25, 0.25, 1.0)
             };
             let hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
             let active_color = color_f(0.16, 0.30, 0.46, 1.0);
             let active_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &active_color)
                 .unwrap();
@@ -294,7 +304,8 @@ impl EditorState {
             target.FillRectangle(&bg_rect, &bg_brush);
 
             let text_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -306,7 +317,8 @@ impl EditorState {
 
             // 悬停/激活态文字提亮画刷
             let bright_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.97, 0.97, 0.97, 1.0))
                 .unwrap();
@@ -383,7 +395,8 @@ impl EditorState {
                 color_f(0.137, 0.137, 0.137, 1.0)
             };
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
@@ -398,7 +411,8 @@ impl EditorState {
             // 玻璃模式下添加底部柔和边框和阴影
             if self.win.theme.glass_enabled {
                 let border_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &self.win.theme.panel_border)
                     .unwrap();
@@ -439,7 +453,8 @@ impl EditorState {
 
             // 在菜单栏右侧显示工作区文件夹名（加粗、左对齐）+ 前进/后退箭头
             let menu_end_x = if !self.ui.menu_bar.item_x_positions.is_empty() {
-                self.ui.menu_bar
+                self.ui
+                    .menu_bar
                     .item_x_positions
                     .last()
                     .copied()
@@ -449,7 +464,8 @@ impl EditorState {
                 8.0
             };
             let workspace_name = self
-    .fs.current_folder
+                .fs
+                .current_folder
                 .as_ref()
                 .and_then(|p| p.file_name())
                 .map(|n| n.to_string_lossy().to_string());
@@ -457,7 +473,8 @@ impl EditorState {
             let mut after_workspace_x = menu_end_x + 8.0;
             if let Some(ref ws_name) = workspace_name {
                 let ws_format = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .get_format(
                         12.0,
@@ -468,7 +485,8 @@ impl EditorState {
                     .unwrap();
                 let ws_wide: Vec<u16> = ws_name.encode_utf16().chain(Some(0)).collect();
                 let ws_text_w = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .measure_text_width(ws_name, 12.0, DWRITE_FONT_WEIGHT_BOLD.0 as u32)
                     .unwrap_or(ws_name.len() as f32 * 8.0);
@@ -480,7 +498,8 @@ impl EditorState {
                 };
                 let ws_color = color_f(0.85, 0.85, 0.85, 1.0);
                 let ws_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &ws_color)
                     .unwrap();
@@ -524,13 +543,15 @@ impl EditorState {
             let hover_close_bg = color_f(0.85, 0.15, 0.15, 1.0);
             let icon_color = color_f(0.85, 0.85, 0.85, 1.0);
             let icon_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &icon_color)
                 .unwrap();
             let active_icon_color = color_f(0.0, 0.47, 0.83, 1.0);
             let active_icon_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &active_icon_color)
                 .unwrap();
@@ -538,7 +559,8 @@ impl EditorState {
             // 在标题栏左侧绘制菜单项
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
             let text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
@@ -548,19 +570,22 @@ impl EditorState {
                 color_f(0.25, 0.25, 0.25, 1.0)
             };
             let hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
             let active_color = color_f(0.16, 0.30, 0.46, 1.0);
             let active_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &active_color)
                 .unwrap();
 
             let text_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -572,7 +597,8 @@ impl EditorState {
 
             // 悬停/激活态文字提亮画刷
             let bright_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.97, 0.97, 0.97, 1.0))
                 .unwrap();
@@ -608,7 +634,8 @@ impl EditorState {
                 if self.ui.menu_bar.customize_mode && self.ui.menu_bar.drag_index == Some(i) {
                     let drag_color = color_f(0.4, 0.6, 1.0, 0.45);
                     let drag_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &drag_color)
                         .unwrap();
@@ -658,14 +685,22 @@ impl EditorState {
                     let indicator_x = if drop_idx >= self.ui.menu_bar.items.len() {
                         // 放在最后一项的右边缘
                         let last = self.ui.menu_bar.items.len().saturating_sub(1);
-                        self.ui.menu_bar
+                        self.ui
+                            .menu_bar
                             .item_x_positions
                             .get(last)
                             .copied()
                             .unwrap_or(0.0)
-                            + self.ui.menu_bar.item_widths.get(last).copied().unwrap_or(0.0)
+                            + self
+                                .ui
+                                .menu_bar
+                                .item_widths
+                                .get(last)
+                                .copied()
+                                .unwrap_or(0.0)
                     } else {
-                        self.ui.menu_bar
+                        self.ui
+                            .menu_bar
                             .item_x_positions
                             .get(drop_idx)
                             .copied()
@@ -673,7 +708,8 @@ impl EditorState {
                     };
                     let line_color = color_f(1.0, 0.85, 0.2, 0.95);
                     let line_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &line_color)
                         .unwrap();
@@ -694,7 +730,8 @@ impl EditorState {
                 &default_bg
             };
             let min_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, min_bg)
                 .unwrap();
@@ -722,7 +759,8 @@ impl EditorState {
                 &default_bg
             };
             let max_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, max_bg)
                 .unwrap();
@@ -753,7 +791,8 @@ impl EditorState {
                     bottom: glyph_y + glyph + 2.0,
                 };
                 let mask_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &default_bg)
                     .unwrap();
@@ -777,7 +816,8 @@ impl EditorState {
                 &default_bg
             };
             let close_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, close_bg)
                 .unwrap();
@@ -793,7 +833,8 @@ impl EditorState {
             let close_icon_x = close_x + (btn_width - close_icon_size) / 2.0;
             let close_icon_y = y + (btn_height - close_icon_size) / 2.0;
             let close_brush = if self.win.titlebar_hover_button == Some(2) {
-                self.win.render_ctx
+                self.win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
                     .unwrap()
@@ -812,12 +853,14 @@ impl EditorState {
 
             // 工具栏按钮背景画刷
             let default_tool_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &default_bg)
                 .unwrap();
             let hover_tool_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_min_bg)
                 .unwrap();
@@ -886,7 +929,8 @@ impl EditorState {
 
             // 右侧分隔线（保留，但箭头已移左，分隔线现在分割工具按钮组与空白拖拽区）
             let divider_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.3, 0.3, 0.3, 1.0))
                 .unwrap();
@@ -978,7 +1022,8 @@ impl EditorState {
                 let badge_y = tool_top + 2.0;
                 let badge_color = color_f(0.2, 0.85, 0.4, 1.0);
                 let badge_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &badge_color)
                     .unwrap();
@@ -1020,14 +1065,16 @@ impl EditorState {
             );
 
             // 用户头像按钮：人形轮廓
-            let user_btn_hover = self.ui.user_menu.is_open || self.win.titlebar_hover_button == Some(3);
+            let user_btn_hover =
+                self.ui.user_menu.is_open || self.win.titlebar_hover_button == Some(3);
             let user_bg = if user_btn_hover {
                 &hover_min_bg
             } else {
                 &default_bg
             };
             let user_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, user_bg)
                 .unwrap();
@@ -1149,20 +1196,23 @@ impl EditorState {
                 color_f(0.137, 0.137, 0.137, 1.0)
             };
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let active_color = color_f(1.0, 1.0, 1.0, 1.0);
             let active_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &active_color)
                 .unwrap();
             // 非激活图标提亮至 0.70：深底上保证小尺寸图标辨识度，仍与激活态拉开层次
             let inactive_color = color_f(0.70, 0.70, 0.70, 1.0);
             let inactive_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &inactive_color)
                 .unwrap();
@@ -1172,7 +1222,8 @@ impl EditorState {
                 color_f(0.25, 0.25, 0.25, 1.0)
             };
             let hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
@@ -1183,13 +1234,15 @@ impl EditorState {
                 color_f(0.33, 0.33, 0.33, 1.0)
             };
             let selected_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &selected_color)
                 .unwrap();
             let active_indicator_color = color_f(1.0, 1.0, 1.0, 1.0);
             let active_indicator_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &active_indicator_color)
                 .unwrap();
@@ -1205,7 +1258,8 @@ impl EditorState {
             // 玻璃模式下右侧柔和边框
             if self.win.theme.glass_enabled {
                 let border_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &self.win.theme.panel_border)
                     .unwrap();
@@ -1253,10 +1307,12 @@ impl EditorState {
                 }
 
                 // 自定义模式：拖拽中项的半透明高亮覆盖
-                if self.ui.activity_bar.customize_mode && self.ui.activity_bar.drag_index == Some(i) {
+                if self.ui.activity_bar.customize_mode && self.ui.activity_bar.drag_index == Some(i)
+                {
                     let drag_color = color_f(0.4, 0.6, 1.0, 0.45);
                     let drag_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &drag_color)
                         .unwrap();
@@ -1306,7 +1362,8 @@ impl EditorState {
                     let indicator_y = y + drop_idx as f32 * icon_size;
                     let line_color = color_f(1.0, 0.85, 0.2, 0.95);
                     let line_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &line_color)
                         .unwrap();

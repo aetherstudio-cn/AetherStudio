@@ -42,7 +42,11 @@ unsafe fn okd_ctrl_terminal_clear(hwnd: HWND, vk: VIRTUAL_KEY) {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
                 // 发送 Ctrl+L (0x0C Form Feed)，shell 会执行清屏并重新绘制提示符
-                state.borrow_mut().terminal.terminal_panel.send_bytes(b"\x0c");
+                state
+                    .borrow_mut()
+                    .terminal
+                    .terminal_panel
+                    .send_bytes(b"\x0c");
                 invalidate_window(hwnd);
             }
         });
@@ -255,13 +259,15 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
-                    st.ui.activity_bar
+                    st.ui
+                        .activity_bar
                         .switch_to_view(crate::layout::ActivityBarView::Explorer);
                     st.ui.activity_view = crate::layout::ActivityBarView::Explorer;
                     if !st.ui.layout.sidebar_visible {
                         st.ui.layout.toggle_sidebar();
                     }
-                    st.ui.sidebar_content = crate::layout::SidebarContent::from_view(st.ui.activity_view);
+                    st.ui.sidebar_content =
+                        crate::layout::SidebarContent::from_view(st.ui.activity_view);
                     st.ui.status_message = "已切换到资源管理器".to_string();
                     invalidate_window(hwnd);
                 }
@@ -287,7 +293,9 @@ unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
     let is_image = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().editor.content.language == aether_core::lexer::Language::Image)
+            .map(|state| {
+                state.borrow().editor.content.language == aether_core::lexer::Language::Image
+            })
             .unwrap_or(false)
     });
 
@@ -345,7 +353,8 @@ unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
                 EDITOR_STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
                         let mut st = state.borrow_mut();
-                        st.ui.activity_bar
+                        st.ui
+                            .activity_bar
                             .switch_to_view(crate::layout::ActivityBarView::SourceControl);
                         st.ui.activity_view = crate::layout::ActivityBarView::SourceControl;
                         if !st.ui.layout.sidebar_visible {
@@ -414,7 +423,10 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                     .as_ref()
                     .map(|state| {
                         let st = state.borrow();
-                        (st.ai.ai_panel.input_focused, st.terminal.terminal_panel.focused)
+                        (
+                            st.ai.ai_panel.input_focused,
+                            st.terminal.terminal_panel.focused,
+                        )
                     })
                     .unwrap_or((false, false))
             });
@@ -434,7 +446,8 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                         if let Some(state) = s.borrow().as_ref() {
                             state
                                 .borrow_mut()
-                                .terminal.terminal_panel
+                                .terminal
+                                .terminal_panel
                                 .send_bytes(text.as_bytes());
                             invalidate_window(hwnd);
                         }
@@ -456,7 +469,8 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                     if let Some(state) = s.borrow().as_ref() {
                         let st = &mut *state.borrow_mut();
                         st.ui.layout.right_panel_visible = !st.ui.layout.right_panel_visible;
-                        if st.ui.layout.right_panel_visible && st.ui.layout.right_panel_width < 1.0 {
+                        if st.ui.layout.right_panel_visible && st.ui.layout.right_panel_width < 1.0
+                        {
                             st.ui.layout.right_panel_width = 320.0;
                         }
                         st.ui.status_message = if st.ui.layout.right_panel_visible {
@@ -526,7 +540,8 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                         // 优先级：如果最近 2 秒内刚删除了文件，优先撤销删除；
                         // 否则尝试文本编辑撤销；文本也无可撤则回退到删除撤销。
                         let recent_delete = st
-                            .fs.delete_undo_stack
+                            .fs
+                            .delete_undo_stack
                             .last()
                             .map(|r| r.timestamp.elapsed().as_secs() < 2)
                             .unwrap_or(false);

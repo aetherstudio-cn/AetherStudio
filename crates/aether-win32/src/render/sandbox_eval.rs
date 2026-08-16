@@ -61,7 +61,8 @@ impl EditorState {
     ) {
         // 背景
         let bg = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.10, 0.10, 0.11, 1.0));
         if let Ok(bg) = bg {
@@ -253,7 +254,8 @@ impl EditorState {
             let selected = !custom_set && self.ui.sandbox_eval.agent_count == n;
             let cw = 56.0;
             self.sb_chip(target, chip_x, iy, cw, 26.0, &label, selected);
-            self.ui.sandbox_eval
+            self.ui
+                .sandbox_eval
                 .regions
                 .agent_chips
                 .push((n, (chip_x, iy, cw, 26.0)));
@@ -297,7 +299,8 @@ impl EditorState {
             let selected = self.ui.sandbox_eval.mode == *mode;
             let cw = 96.0;
             self.sb_chip(target, mx, iy, cw, 26.0, mode.label(), selected);
-            self.ui.sandbox_eval
+            self.ui
+                .sandbox_eval
                 .regions
                 .mode_chips
                 .push((i, (mx, iy, cw, 26.0)));
@@ -323,7 +326,8 @@ impl EditorState {
                 let selected = self.ui.sandbox_eval.duration_min == mins;
                 let cw = 72.0;
                 self.sb_chip(target, dx, iy, cw, 26.0, &label, selected);
-                self.ui.sandbox_eval
+                self.ui
+                    .sandbox_eval
                     .regions
                     .duration_chips
                     .push((mins, (dx, iy, cw, 26.0)));
@@ -462,13 +466,15 @@ impl EditorState {
         let mut iy = cy + SB_PAD;
         let total = self.ui.sandbox_eval.tasks.len();
         let done = self
-    .ui.sandbox_eval
+            .ui
+            .sandbox_eval
             .tasks
             .iter()
             .filter(|t| t.is_finished())
             .count();
         let running_count = self
-    .ui.sandbox_eval
+            .ui
+            .sandbox_eval
             .tasks
             .iter()
             .filter(|t| {
@@ -556,7 +562,8 @@ impl EditorState {
             };
             // 查找正在执行此任务的 worker 以展示其实时输出
             let (live, thinking) = self
-    .ui.sandbox_eval
+                .ui
+                .sandbox_eval
                 .workers
                 .iter()
                 .find(|w| w.task == Some(i))
@@ -693,14 +700,16 @@ impl EditorState {
         iy += 30.0;
         let total = self.ui.sandbox_eval.tasks.len();
         let done = self
-    .ui.sandbox_eval
+            .ui
+            .sandbox_eval
             .tasks
             .iter()
             .filter(|t| t.status == SandboxTaskStatus::Done)
             .count();
         let secs = self.ui.sandbox_eval.total_elapsed_ms / 1000;
         let scored = self
-    .ui.sandbox_eval
+            .ui
+            .sandbox_eval
             .tasks
             .iter()
             .filter(|t| t.score.is_some())
@@ -869,7 +878,8 @@ impl EditorState {
                     let selected = score == Some(s);
                     let cw = 30.0;
                     self.sb_score_chip(target, sx, ty, cw, 26.0, s, selected);
-                    self.ui.sandbox_eval
+                    self.ui
+                        .sandbox_eval
                         .regions
                         .score_chips
                         .push((i, s, (sx, ty, cw, 26.0)));
@@ -911,7 +921,8 @@ impl EditorState {
         }
         // 只显示最近 14 条
         let entries: Vec<(String, SandboxLogKind, String)> = self
-    .ui.sandbox_eval
+            .ui
+            .sandbox_eval
             .log
             .iter()
             .rev()
@@ -985,11 +996,17 @@ impl EditorState {
             radiusX: 6.0,
             radiusY: 6.0,
         };
-        if let Ok(bg) = self.win.render_ctx.brush_cache.get_brush(target, &c_card_bg()) {
+        if let Ok(bg) = self
+            .win
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &c_card_bg())
+        {
             target.FillRoundedRectangle(&rounded, &bg);
         }
         if let Ok(border) = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &c_card_border())
         {
@@ -1097,11 +1114,21 @@ impl EditorState {
             radiusX: 5.0,
             radiusY: 5.0,
         };
-        if let Ok(bg) = self.win.render_ctx.brush_cache.get_brush(target, &c_field_bg()) {
+        if let Ok(bg) = self
+            .win
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &c_field_bg())
+        {
             target.FillRoundedRectangle(&rounded, &bg);
         }
         let border_color = if active { c_accent() } else { c_card_border() };
-        if let Ok(border) = self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
+        if let Ok(border) = self
+            .win
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &border_color)
+        {
             target.DrawRoundedRectangle(&rounded, &border, 1.0, None);
         }
         // 文本内容（超长显示尾部）
@@ -1290,7 +1317,8 @@ impl EditorState {
         }
         if !primary {
             if let Ok(b) = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &c_card_border())
             {
@@ -1383,7 +1411,8 @@ impl EditorState {
             radiusY: 5.0,
         };
         if let Ok(b) = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.08, 0.08, 0.09, 1.0))
         {

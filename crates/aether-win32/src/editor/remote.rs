@@ -346,7 +346,11 @@ pub fn disconnect_ssh(state: &mut EditorState) {
     state.ui.status_message = "SSH 已断开".to_string();
 }
 
-pub(super) fn handle_remote_tree_click(state: &mut EditorState, _mouse_x: f32, mouse_y: f32) -> bool {
+pub(super) fn handle_remote_tree_click(
+    state: &mut EditorState,
+    _mouse_x: f32,
+    mouse_y: f32,
+) -> bool {
     // P0-1: 递归遍历可见节点，按 y 坐标命中目标节点。
     // 在独立作用域内完成对树的只读借用，收集所需信息后释放借用，
     // 避免与后续 &mut state 调用（start_remote_list_dir 等）冲突。
@@ -357,8 +361,7 @@ pub(super) fn handle_remote_tree_click(state: &mut EditorState, _mouse_x: f32, m
         };
         let node_height = 16.0_f32;
         let mut current_y = 10.0 - state.remote.scroll_y;
-        let target =
-            find_remote_node_at_y(&tree.nodes, mouse_y, node_height, &mut current_y);
+        let target = find_remote_node_at_y(&tree.nodes, mouse_y, node_height, &mut current_y);
         let (path, is_dir) = match target {
             Some(t) => t,
             None => return false,
@@ -398,13 +401,12 @@ pub(super) fn handle_remote_tree_click(state: &mut EditorState, _mouse_x: f32, m
             match session.read_remote_file(&remote_path) {
                 Ok(content) => {
                     let text = String::from_utf8_lossy(&content).to_string();
-                    let tab =
-                        crate::tabs::Tab::File(crate::tabs::TabContent::with_loaded_buffer(
-                            Some(PathBuf::from(format!("remote:{}", remote_path))),
-                            PieceTable::from_string(text),
-                            Language::PlainText,
-                            false,
-                        ));
+                    let tab = crate::tabs::Tab::File(crate::tabs::TabContent::with_loaded_buffer(
+                        Some(PathBuf::from(format!("remote:{}", remote_path))),
+                        PieceTable::from_string(text),
+                        Language::PlainText,
+                        false,
+                    ));
                     state.open_in_new_tab(tab);
                     state.ui.status_message = format!("已打开远程文件: {}", remote_path);
                 }
@@ -454,9 +456,8 @@ pub(super) fn update_remote_tree_hover(state: &mut EditorState, mouse_y: f32) ->
     // P0-1: 递归遍历可见节点确定悬停目标（按路径标识）
     let node_height = 16.0_f32;
     let mut current_y = 10.0 - state.remote.scroll_y;
-    let new_hover =
-        find_remote_node_at_y(&tree.nodes, mouse_y, node_height, &mut current_y)
-            .map(|(path, _)| path);
+    let new_hover = find_remote_node_at_y(&tree.nodes, mouse_y, node_height, &mut current_y)
+        .map(|(path, _)| path);
     let changed = state.remote.hover_node != new_hover;
     state.remote.hover_node = new_hover;
     changed
@@ -592,7 +593,8 @@ pub fn paste_into_ssh_dialog(state: &mut EditorState) {
 pub fn paste_into_clone_dialog(state: &mut EditorState) {
     if let Some(text) = EditorState::get_clipboard_text() {
         // 移除换行/回车
-        state.remote
+        state
+            .remote
             .clone_dialog
             .url
             .extend(text.chars().filter(|c| *c != '\n' && *c != '\r'));

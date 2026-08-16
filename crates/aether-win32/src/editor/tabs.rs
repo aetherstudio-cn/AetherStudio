@@ -32,7 +32,8 @@ impl EditorState {
     }
     /// 当前活动标签页是否是文件 tab
     pub fn active_tab_is_file(&self) -> bool {
-        self.editor.tab_bar
+        self.editor
+            .tab_bar
             .tabs
             .get(self.editor.tab_bar.active_tab)
             .map(|t| t.is_file())
@@ -40,7 +41,8 @@ impl EditorState {
     }
     /// 当前活动标签页是否是设置 tab
     pub fn active_tab_is_settings(&self) -> bool {
-        self.editor.tab_bar
+        self.editor
+            .tab_bar
             .tabs
             .get(self.editor.tab_bar.active_tab)
             .map(|t| t.is_settings())
@@ -48,7 +50,8 @@ impl EditorState {
     }
     /// 当前活动标签页是否是欢迎 tab
     pub fn active_tab_is_welcome(&self) -> bool {
-        self.editor.tab_bar
+        self.editor
+            .tab_bar
             .tabs
             .get(self.editor.tab_bar.active_tab)
             .map(|t| t.is_welcome())
@@ -56,7 +59,8 @@ impl EditorState {
     }
     /// 当前活动标签页是否是沙盒评测 tab
     pub fn active_tab_is_sandbox_eval(&self) -> bool {
-        self.editor.tab_bar
+        self.editor
+            .tab_bar
             .tabs
             .get(self.editor.tab_bar.active_tab)
             .map(|t| t.is_sandbox_eval())
@@ -64,7 +68,8 @@ impl EditorState {
     }
     /// 当前活动文件标签页的文件路径
     pub fn active_file_path(&self) -> Option<&std::path::PathBuf> {
-        self.editor.tab_bar
+        self.editor
+            .tab_bar
             .tabs
             .get(self.editor.tab_bar.active_tab)
             .and_then(|t| t.file_path())
@@ -83,7 +88,11 @@ impl EditorState {
     }
     /// 查找设置 tab 的索引
     pub fn find_settings_tab(&self) -> Option<usize> {
-        self.editor.tab_bar.tabs.iter().position(|t| t.is_settings())
+        self.editor
+            .tab_bar
+            .tabs
+            .iter()
+            .position(|t| t.is_settings())
     }
     /// 查找欢迎 tab 的索引
     pub fn find_welcome_tab(&self) -> Option<usize> {
@@ -91,7 +100,11 @@ impl EditorState {
     }
     /// 查找沙盒评测 tab 的索引
     pub fn find_sandbox_eval_tab(&self) -> Option<usize> {
-        self.editor.tab_bar.tabs.iter().position(|t| t.is_sandbox_eval())
+        self.editor
+            .tab_bar
+            .tabs
+            .iter()
+            .position(|t| t.is_sandbox_eval())
     }
     /// 打开沙盒评测标签页（作为通用 tab 插入到标签栏）
     pub fn open_sandbox_eval_tab(&mut self) {
@@ -140,7 +153,8 @@ impl EditorState {
                 );
                 // 确保 cached_tokens 长度与当前文件匹配
                 if self.editor.content.cached_tokens.len() != total_lines {
-                    self.editor.content
+                    self.editor
+                        .content
                         .cached_tokens
                         .resize_with(total_lines, Vec::new);
                 }
@@ -149,7 +163,9 @@ impl EditorState {
                     || self.editor.content.cached_lines.len() != window_len
                 {
                     // 使用 slide_cache_window 保留重叠部分
-                    self.editor.content.slide_cache_window(cache_start, window_len);
+                    self.editor
+                        .content
+                        .slide_cache_window(cache_start, window_len);
                 }
             }
 
@@ -217,8 +233,10 @@ impl EditorState {
             // 最后一个标签页：保存内容并清空 tabs（渲染层根据 tabs.is_empty() 显示欢迎页/空占位页）
             // 文件 tab 才需要保存 last_closed_tab；设置/欢迎等不保存
             if self.active_tab_is_file() {
-                self.editor.tab_bar.last_closed_tab =
-                    Some(std::mem::replace(&mut self.editor.content, TabContent::new()));
+                self.editor.tab_bar.last_closed_tab = Some(std::mem::replace(
+                    &mut self.editor.content,
+                    TabContent::new(),
+                ));
             }
             self.editor.tab_bar.tabs.clear();
             self.editor.tab_bar.active_tab = 0;
@@ -228,11 +246,17 @@ impl EditorState {
         }
         // 保存 self.editor.content 中的最新内容到 last_closed_tab（文件 tab 才需要）
         if self.active_tab_is_file() {
-            self.editor.tab_bar.last_closed_tab =
-                Some(std::mem::replace(&mut self.editor.content, TabContent::new()));
+            self.editor.tab_bar.last_closed_tab = Some(std::mem::replace(
+                &mut self.editor.content,
+                TabContent::new(),
+            ));
         }
         // 从 tabs 中移除活动标签页
-        let _removed = self.editor.tab_bar.tabs.remove(self.editor.tab_bar.active_tab);
+        let _removed = self
+            .editor
+            .tab_bar
+            .tabs
+            .remove(self.editor.tab_bar.active_tab);
         if self.editor.tab_bar.active_tab >= self.editor.tab_bar.tabs.len() {
             self.editor.tab_bar.active_tab = self.editor.tab_bar.tabs.len() - 1;
         }
@@ -240,7 +264,8 @@ impl EditorState {
         // swap 后文件 tabs[active_tab].content 持有空 TabContent（安全，不会被误匹配路径）
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         self.editor.is_selecting = false;
-        self.ui.status_message = format!("已关闭，剩余 {} 个标签页", self.editor.tab_bar.tabs.len());
+        self.ui.status_message =
+            format!("已关闭，剩余 {} 个标签页", self.editor.tab_bar.tabs.len());
         !self.editor.tab_bar.tabs.is_empty()
     }
     /// P2-8: 带保存确认的关闭标签页。
@@ -250,7 +275,8 @@ impl EditorState {
         // （编辑操作直接作用于 self，仅在切换标签页时通过 swap 交换）
         if self.active_tab_is_file() && self.editor.content.is_dirty {
             let file_name = self
-    .editor.content
+                .editor
+                .content
                 .file_path
                 .as_ref()
                 .and_then(|p| p.file_name())
@@ -282,14 +308,16 @@ impl EditorState {
         }
         // 非活动标签页：检查 is_dirty（与 handle_tab_bar_click 中关闭按钮逻辑一致）
         let tab_dirty = self
-    .editor.tab_bar
+            .editor
+            .tab_bar
             .tabs
             .get(index)
             .map(|t| t.is_dirty())
             .unwrap_or(false);
         if tab_dirty {
             let tab_name = self
-    .editor.tab_bar
+                .editor
+                .tab_bar
                 .tabs
                 .get(index)
                 .and_then(|t| t.file_path())
@@ -311,7 +339,8 @@ impl EditorState {
         if index < self.editor.tab_bar.active_tab {
             self.editor.tab_bar.active_tab -= 1;
         }
-        self.ui.status_message = format!("已关闭，剩余 {} 个标签页", self.editor.tab_bar.tabs.len());
+        self.ui.status_message =
+            format!("已关闭，剩余 {} 个标签页", self.editor.tab_bar.tabs.len());
         true
     }
     /// SubTask 9.4: 关闭除指定索引外的所有标签页。
@@ -361,8 +390,10 @@ impl EditorState {
         if active_in_closed {
             // 活动标签页在被关闭的右侧：保存 self.editor.content 中的最新内容（文件 tab 才需要）
             if self.active_tab_is_file() {
-                self.editor.tab_bar.last_closed_tab =
-                    Some(std::mem::replace(&mut self.editor.content, TabContent::new()));
+                self.editor.tab_bar.last_closed_tab = Some(std::mem::replace(
+                    &mut self.editor.content,
+                    TabContent::new(),
+                ));
             }
         } else {
             // 活动标签页不在右侧：保存最后一个被关闭标签的内容
@@ -388,8 +419,10 @@ impl EditorState {
     pub fn close_all_tabs(&mut self) {
         // 保存 self.editor.content 中的最新内容（文件 tab 才需要）以支持 Ctrl+Shift+T 恢复
         if self.active_tab_is_file() {
-            self.editor.tab_bar.last_closed_tab =
-                Some(std::mem::replace(&mut self.editor.content, TabContent::new()));
+            self.editor.tab_bar.last_closed_tab = Some(std::mem::replace(
+                &mut self.editor.content,
+                TabContent::new(),
+            ));
         }
         self.editor.tab_bar.tabs.clear();
         self.editor.tab_bar.tabs.push(Tab::new());
@@ -409,7 +442,10 @@ impl EditorState {
         };
         // 将当前 self.editor.content swap 回当前活动标签，再 push 新文件标签并切换
         self.swap_tab_content(self.editor.tab_bar.active_tab);
-        self.editor.tab_bar.tabs.push(crate::tabs::Tab::File(content));
+        self.editor
+            .tab_bar
+            .tabs
+            .push(crate::tabs::Tab::File(content));
         self.editor.tab_bar.active_tab = self.editor.tab_bar.tabs.len() - 1;
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         self.editor.is_selecting = false;
@@ -437,8 +473,8 @@ impl EditorState {
     /// 切换到上一个标签页
     pub fn prev_tab(&mut self) {
         if self.editor.tab_bar.tabs.len() > 1 {
-            let prev =
-                (self.editor.tab_bar.active_tab + self.editor.tab_bar.tabs.len() - 1) % self.editor.tab_bar.tabs.len();
+            let prev = (self.editor.tab_bar.active_tab + self.editor.tab_bar.tabs.len() - 1)
+                % self.editor.tab_bar.tabs.len();
             self.switch_tab(prev);
         }
     }
@@ -598,7 +634,8 @@ impl EditorState {
         // "+" 按钮区域（8px gap + 28px 按钮）也需预留可见空间
         let plus_area = 8.0 + 28.0;
         let total_tabs_width = self
-    .editor.tab_bar
+            .editor
+            .tab_bar
             .tab_layouts
             .last()
             .map(|l| l.x + l.width + gap)

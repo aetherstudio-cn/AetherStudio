@@ -16,7 +16,8 @@ impl EditorState {
                 color_f(0.13, 0.13, 0.14, 1.0)
             };
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
@@ -26,38 +27,44 @@ impl EditorState {
                 color_f(0.2, 0.2, 0.2, 1.0)
             };
             let _border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             let text_color = color_f(0.8, 0.8, 0.8, 1.0);
             let _text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let active_color = color_f(1.0, 1.0, 1.0, 1.0);
             let active_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &active_color)
                 .unwrap();
             let dim_color = color_f(0.5, 0.5, 0.5, 1.0);
             let dim_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let output_color = color_f(0.8, 0.8, 0.8, 1.0);
             let output_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &output_color)
                 .unwrap();
             let _prompt_color = color_f(0.0, 0.8, 0.0, 1.0);
 
             let ui_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -67,7 +74,8 @@ impl EditorState {
                 )
                 .unwrap();
             let mono_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -93,7 +101,8 @@ impl EditorState {
                 border_color
             };
             let top_border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &top_border_color)
                 .unwrap();
@@ -117,7 +126,8 @@ impl EditorState {
                 };
                 let input_bg = color_f(0.18, 0.18, 0.2, 1.0);
                 let input_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &input_bg)
                     .unwrap();
@@ -132,7 +142,8 @@ impl EditorState {
                     border_dim
                 };
                 let input_border_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &input_border_color)
                     .unwrap();
@@ -308,7 +319,8 @@ impl EditorState {
                         };
                         let sel_bg = color_f(0.2, 0.3, 0.5, 1.0);
                         let sel_bg_brush = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(target, &sel_bg)
                             .unwrap();
@@ -317,7 +329,8 @@ impl EditorState {
 
                     // 文件路径（相对路径）+ 行号
                     let rel_path = self
-    .fs.current_folder
+                        .fs
+                        .current_folder
                         .as_ref()
                         .and_then(|root| r.path.strip_prefix(root).ok())
                         .map(|p| p.to_string_lossy().to_string())
@@ -396,7 +409,8 @@ impl EditorState {
                 if is_active {
                     let active_bg = color_f(0.18, 0.18, 0.2, 1.0);
                     let active_bg_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &active_bg)
                         .unwrap();
@@ -437,12 +451,14 @@ impl EditorState {
             if self.terminal.bottom_panel_tab == BottomPanelTab::Problems {
                 let hint_color = color_f(150.0 / 255.0, 150.0 / 255.0, 150.0 / 255.0, 1.0);
                 let hint_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &hint_color)
                     .unwrap();
                 let hint_format = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .get_format(
                         14.0,
@@ -477,12 +493,14 @@ impl EditorState {
                     // 从未启动：居中提示
                     let hint_color = color_f(150.0 / 255.0, 150.0 / 255.0, 150.0 / 255.0, 1.0);
                     let hint_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &hint_color)
                         .unwrap();
                     let hint_format = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .text_format_cache
                         .get_format(
                             14.0,
@@ -539,7 +557,8 @@ impl EditorState {
                     // 底部重启提示
                     let restart_color = color_f(0.3, 0.55, 0.85, 1.0);
                     let restart_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &restart_color)
                         .unwrap();
@@ -566,7 +585,8 @@ impl EditorState {
                 // 计算可见行数并同步 ConPTY 尺寸
                 // 使用 DirectWrite 实测 11pt Consolas 等宽字符宽度，避免硬编码 7px 与渲染偏差
                 let cell_w = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .measure_text_width("M", 11.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
                     .unwrap_or(7.0);
@@ -635,48 +655,52 @@ impl EditorState {
                     let display_row = cursor_row - start_line;
                     // 光标 x 使用 DirectWrite HitTestTextPosition 获取光标行前缀尾端的精确像素坐标
                     // cursor_col 是字符索引（非显示列宽），因此按字符个数取前缀
-                    let cursor_x =
-                        if let Some(line) = self.terminal.terminal_panel.output_lines.get(cursor_row) {
-                            let char_count = line.chars().count();
-                            let take = cursor_col.min(char_count);
-                            let mut prefix_len = 0usize;
-                            let mut prefix_utf16_len = 0usize;
-                            for (idx, ch) in line.char_indices().take(take) {
-                                prefix_len = idx + ch.len_utf8();
-                                prefix_utf16_len += ch.encode_utf16(&mut [0; 2]).len();
-                            }
-                            let prefix = &line[..prefix_len];
-                            let prefix_x = self
-    .win.render_ctx
-                                .text_format_cache
-                                .text_position_x(
-                                    prefix,
-                                    prefix_utf16_len,
-                                    11.0,
-                                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-                                )
-                                .unwrap_or(cursor_col as f32 * cell_w);
-                            let extra = (cursor_col.saturating_sub(char_count)) as f32 * cell_w;
-                            x + 10.0 + prefix_x + extra
-                        } else {
-                            x + 10.0 + cursor_col as f32 * cell_w
-                        };
+                    let cursor_x = if let Some(line) =
+                        self.terminal.terminal_panel.output_lines.get(cursor_row)
+                    {
+                        let char_count = line.chars().count();
+                        let take = cursor_col.min(char_count);
+                        let mut prefix_len = 0usize;
+                        let mut prefix_utf16_len = 0usize;
+                        for (idx, ch) in line.char_indices().take(take) {
+                            prefix_len = idx + ch.len_utf8();
+                            prefix_utf16_len += ch.encode_utf16(&mut [0; 2]).len();
+                        }
+                        let prefix = &line[..prefix_len];
+                        let prefix_x = self
+                            .win
+                            .render_ctx
+                            .text_format_cache
+                            .text_position_x(
+                                prefix,
+                                prefix_utf16_len,
+                                11.0,
+                                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                            )
+                            .unwrap_or(cursor_col as f32 * cell_w);
+                        let extra = (cursor_col.saturating_sub(char_count)) as f32 * cell_w;
+                        x + 10.0 + prefix_x + extra
+                    } else {
+                        x + 10.0 + cursor_col as f32 * cell_w
+                    };
                     let cursor_y = content_y + display_row as f32 * line_h;
-                    let cursor_w =
-                        if let Some(line) = self.terminal.terminal_panel.output_lines.get(cursor_row) {
-                            line.chars()
-                                .nth(cursor_col)
-                                .map(|ch| (unicode_char_width(ch) as f32).max(1.0) * cell_w)
-                                .unwrap_or(cell_w)
-                        } else {
-                            cell_w
-                        };
+                    let cursor_w = if let Some(line) =
+                        self.terminal.terminal_panel.output_lines.get(cursor_row)
+                    {
+                        line.chars()
+                            .nth(cursor_col)
+                            .map(|ch| (unicode_char_width(ch) as f32).max(1.0) * cell_w)
+                            .unwrap_or(cell_w)
+                    } else {
+                        cell_w
+                    };
                     let cursor_h = line_h;
                     // 只在光标可见区域内绘制
                     if cursor_y + cursor_h <= content_bottom {
                         let cursor_color = color_f(0.8, 0.8, 0.8, 0.6);
                         let cursor_brush = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(target, &cursor_color)
                             .unwrap();

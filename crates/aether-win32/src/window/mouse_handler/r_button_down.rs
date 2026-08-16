@@ -51,7 +51,8 @@ pub(crate) unsafe fn on_r_button_down(
         if let Some(tab_idx) = st.tab_body_hit_test(mouse_x, mouse_y, tab_region.x, tab_region.y) {
             // 获取该标签的 file_path（用于判断 has_path 和复制路径）
             let has_path = st
-                .editor.tab_bar
+                .editor
+                .tab_bar
                 .tabs
                 .get(tab_idx)
                 .and_then(|t| t.file_path())
@@ -131,12 +132,14 @@ pub(crate) unsafe fn on_r_button_down(
 
     // 命中标题栏的新建按钮 → 不弹出空白菜单（交由左键处理）
     let on_new_file_btn = st
-        .fs.file_tree_new_file_btn
+        .fs
+        .file_tree_new_file_btn
         .as_ref()
         .map(|r| r.contains(mouse_x, mouse_y))
         .unwrap_or(false);
     let on_new_folder_btn = st
-        .fs.file_tree_new_folder_btn
+        .fs
+        .file_tree_new_folder_btn
         .as_ref()
         .map(|r| r.contains(mouse_x, mouse_y))
         .unwrap_or(false);
@@ -183,7 +186,8 @@ pub(crate) unsafe fn on_r_button_down(
         st.fs.selected_file_node = Some(node_idx);
         st.emit_event(crate::events::EditorEvent::SidebarChanged);
         // 弹出文件节点上下文菜单
-        st.ui.context_menus
+        st.ui
+            .context_menus
             .file_node
             .open(mouse_x, mouse_y, window_w, window_h, node_idx, is_dir);
         st.win.dirty_tracker.mark_full_window();
@@ -192,7 +196,8 @@ pub(crate) unsafe fn on_r_button_down(
     }
 
     // 空白区域：弹出上下文菜单（菜单内部会做窗口边界校正）
-    st.ui.context_menus
+    st.ui
+        .context_menus
         .explorer
         .open(mouse_x, mouse_y, window_w, window_h);
     // 关闭可能打开的其他菜单，避免重叠

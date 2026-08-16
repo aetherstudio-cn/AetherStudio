@@ -13,7 +13,6 @@ use std::thread;
 
 use crate::conpty::{ConPtySession, PipeReader};
 
-
 /// 终端启动结果（由后台线程产生，传回主线程）
 type TerminalStartupResult = Result<(ConPtySession, mpsc::Receiver<Vec<u8>>), String>;
 

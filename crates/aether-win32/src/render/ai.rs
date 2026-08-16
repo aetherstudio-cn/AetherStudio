@@ -54,7 +54,8 @@ impl EditorState {
 
             // 安全获取画刷，失败时返回
             let _title_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.9, 0.9, 0.9, 1.0))
             {
@@ -62,7 +63,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let dim_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.52, 0.56, 0.62, 1.0))
             {
@@ -70,7 +72,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let user_bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.13, 0.19, 0.28, 1.0))
             {
@@ -78,7 +81,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let assistant_bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.16, 0.17, 0.20, 1.0))
             {
@@ -86,7 +90,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let tool_bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.13, 0.14, 0.16, 1.0))
             {
@@ -94,7 +99,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let input_bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.11, 0.12, 0.14, 1.0))
             {
@@ -102,7 +108,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let sep_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.22, 0.24, 0.28, 1.0))
             {
@@ -110,7 +117,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let _accent_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
             {
@@ -118,7 +126,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let _green_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.30, 0.78, 0.42, 1.0))
             {
@@ -126,7 +135,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let yellow_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.9, 0.7, 0.2, 1.0))
             {
@@ -134,7 +144,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let code_bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.08, 0.08, 0.09, 1.0))
             {
@@ -142,7 +153,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let code_text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.85, 0.85, 0.85, 1.0))
             {
@@ -150,7 +162,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let white_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
             {
@@ -193,7 +206,9 @@ impl EditorState {
                     };
                     let bg = if is_active {
                         color_f(0.18, 0.30, 0.48, 1.0)
-                    } else if !self.ai.ai_panel.history_open && self.ai.ai_panel.hover_tab == Some(i) {
+                    } else if !self.ai.ai_panel.history_open
+                        && self.ai.ai_panel.hover_tab == Some(i)
+                    {
                         color_f(0.22, 0.24, 0.29, 1.0)
                     } else {
                         color_f(0.16, 0.17, 0.20, 1.0)
@@ -204,7 +219,8 @@ impl EditorState {
                     // 激活会话标签：底部 2px 强调条，明确当前会话归属
                     if is_active {
                         if let Ok(ab) = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(target, &color_f(0.30, 0.62, 1.0, 1.0))
                         {
@@ -222,7 +238,8 @@ impl EditorState {
                     let mut title_left = tx + 8.0;
                     if generating {
                         if let Ok(gb) = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(target, &color_f(0.95, 0.75, 0.2, 1.0))
                         {
@@ -269,10 +286,12 @@ impl EditorState {
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
-                    self.ai.ai_panel
+                    self.ai
+                        .ai_panel
                         .tab_regions
                         .push((i, tx, tab_y, tab_w - close_w, tab_h));
-                    self.ai.ai_panel
+                    self.ai
+                        .ai_panel
                         .tab_close_regions
                         .push((i, close_x, tab_y, close_w, tab_h));
                     tx += tab_w + gap;
@@ -343,11 +362,13 @@ impl EditorState {
             // ===== 策略库已迁移到设置面板，此处不再渲染 =====
 
             // ===== 欢迎页/空工作区提示 =====
-            let has_workspace = self.fs.current_folder.is_some() || self.editor.content.file_path.is_some();
+            let has_workspace =
+                self.fs.current_folder.is_some() || self.editor.content.file_path.is_some();
             if !has_workspace {
                 let hint_bg_color = color_f(0.15, 0.15, 0.17, 1.0);
                 let hint_bg_brush = match self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &hint_bg_color)
                 {
@@ -393,7 +414,8 @@ impl EditorState {
                     bottom: open_btn_y + open_btn_h,
                 };
                 let open_btn_brush = match self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
                 {
@@ -472,7 +494,8 @@ impl EditorState {
                 }
                 let is_user = msg.role == crate::ai_panel::AiRole::User;
                 let is_tool = msg.role == crate::ai_panel::AiRole::Tool;
-                let is_pending_confirmation = msg.role == crate::ai_panel::AiRole::PendingConfirmation;
+                let is_pending_confirmation =
+                    msg.role == crate::ai_panel::AiRole::PendingConfirmation;
 
                 // 角色标签已移除：AI 消息直接显示文本，用户消息用气泡框区分
                 if !is_tool && !is_pending_confirmation {
@@ -508,7 +531,8 @@ impl EditorState {
                             };
                             let hw: Vec<u16> = hdr_text.encode_utf16().chain(Some(0)).collect();
                             if let Ok(hb) = self
-    .win.render_ctx
+                                .win
+                                .render_ctx
                                 .brush_cache
                                 .get_brush(target, &color_f(0.62, 0.55, 0.85, 1.0))
                             {
@@ -551,7 +575,8 @@ impl EditorState {
                                 let box_h = text_h + seg_pad * 2.0;
                                 if msg_y + box_h >= chat_top && msg_y <= chat_bottom {
                                     if let Ok(bg) = self
-    .win.render_ctx
+                                        .win
+                                        .render_ctx
                                         .brush_cache
                                         .get_brush(target, &color_f(0.14, 0.13, 0.18, 1.0))
                                     {
@@ -568,7 +593,8 @@ impl EditorState {
                                         );
                                     }
                                     if let Ok(ab) = self
-    .win.render_ctx
+                                        .win
+                                        .render_ctx
                                         .brush_cache
                                         .get_brush(target, &color_f(0.55, 0.48, 0.80, 1.0))
                                     {
@@ -583,7 +609,8 @@ impl EditorState {
                                         );
                                     }
                                     if let Ok(fg) = self
-    .win.render_ctx
+                                        .win
+                                        .render_ctx
                                         .brush_cache
                                         .get_brush(target, &color_f(0.66, 0.68, 0.74, 1.0))
                                     {
@@ -700,7 +727,8 @@ impl EditorState {
                                     None
                                 } else {
                                     let expanded = self
-    .ai.ai_panel
+                                        .ai
+                                        .ai_panel
                                         .expanded_file_cards
                                         .contains(&(msg_index, seq));
                                     let preview_h = if expanded {
@@ -719,7 +747,8 @@ impl EditorState {
                             if msg_y + total_h >= chat_top && msg_y <= chat_bottom {
                                 let (glyph, label, detail, op_color) = agent_op_display(item);
                                 if let Ok(cb) = self
-    .win.render_ctx
+                                    .win
+                                    .render_ctx
                                     .brush_cache
                                     .get_brush(target, &color_f(0.16, 0.17, 0.20, 1.0))
                                 {
@@ -779,7 +808,8 @@ impl EditorState {
                                     );
                                 }
                                 if let Ok(db) = self
-    .win.render_ctx
+                                    .win
+                                    .render_ctx
                                     .brush_cache
                                     .get_brush(target, &color_f(0.78, 0.80, 0.84, 1.0))
                                 {
@@ -803,7 +833,8 @@ impl EditorState {
                                 if let Some((seq, expanded, ph)) = expand_info {
                                     // 展开指示符（遵循 '>' / 'v' 图标规范）
                                     if let Ok(ib) = self
-    .win.render_ctx
+                                        .win
+                                        .render_ctx
                                         .brush_cache
                                         .get_brush(target, &color_f(0.60, 0.62, 0.66, 1.0))
                                     {
@@ -829,7 +860,8 @@ impl EditorState {
                                         if let AiRenderItem::File { content, .. } = item {
                                             let prev_top = msg_y + card_h;
                                             if let Ok(pb) = self
-    .win.render_ctx
+                                                .win
+                                                .render_ctx
                                                 .brush_cache
                                                 .get_brush(target, &color_f(0.12, 0.12, 0.14, 1.0))
                                             {
@@ -858,7 +890,8 @@ impl EditorState {
                                                 content.clone()
                                             };
                                             if let Ok(tb2) = self
-    .win.render_ctx
+                                                .win
+                                                .render_ctx
                                                 .brush_cache
                                                 .get_brush(target, &color_f(0.72, 0.76, 0.70, 1.0))
                                             {
@@ -962,7 +995,8 @@ impl EditorState {
                     };
                     // AI 普通文本段不画气泡背景（直接显示文字），
                     // 用户/代码/工具/待确认消息保留气泡背景
-                    let is_ai_plain_text = !is_user && !is_tool && !is_pending_confirmation && !*is_code;
+                    let is_ai_plain_text =
+                        !is_user && !is_tool && !is_pending_confirmation && !*is_code;
                     if !is_ai_plain_text {
                         let seg_bg: &ID2D1SolidColorBrush = if *is_code {
                             &code_bg_brush
@@ -983,7 +1017,7 @@ impl EditorState {
                             bottom: msg_y + seg_h,
                         };
                         fill_round_rect(target, &seg_rect, 6.0, seg_bg);
-                        
+
                         // 待确认消息添加左侧黄色竖线标识
                         if is_pending_confirmation {
                             let accent_rect = D2D_RECT_F {
@@ -1076,7 +1110,8 @@ impl EditorState {
                     bottom: thumb_y + thumb_h,
                 };
                 if let Ok(sb) = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.45, 0.47, 0.53, 0.80))
                 {
@@ -1113,15 +1148,23 @@ impl EditorState {
             // ===== "继续生成" 和 "重试" 按钮 =====
             self.ai.ai_panel.continue_button_region = None;
             self.ai.ai_panel.retry_button_region = None;
-            
+
             // 检查是否需要显示重试按钮（有错误消息且不在生成中）
-            let should_show_retry = !self.ai.ai_panel.is_generating && 
-                self.ai.ai_panel.messages.last()
-                    .map(|m| m.role == crate::ai_panel::AiRole::Assistant && 
-                         (m.content.contains("[错误]") || m.content.contains("[超时]") || 
-                          m.content.contains("[本地调用失败]") || m.content.contains("[API 返回错误]")))
+            let should_show_retry = !self.ai.ai_panel.is_generating
+                && self
+                    .ai
+                    .ai_panel
+                    .messages
+                    .last()
+                    .map(|m| {
+                        m.role == crate::ai_panel::AiRole::Assistant
+                            && (m.content.contains("[错误]")
+                                || m.content.contains("[超时]")
+                                || m.content.contains("[本地调用失败]")
+                                || m.content.contains("[API 返回错误]"))
+                    })
                     .unwrap_or(false);
-            
+
             if self.ai.ai_panel.last_truncated && !self.ai.ai_panel.is_generating {
                 let continue_btn_y = y + height - 78.0;
                 let continue_btn_w = 90.0f32;
@@ -1140,7 +1183,8 @@ impl EditorState {
                     continue_btn_h,
                 ));
                 let continue_bg_brush = match self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.95, 0.60, 0.0, 1.0))
                 {
@@ -1175,14 +1219,11 @@ impl EditorState {
                     right: retry_btn_x + retry_btn_w,
                     bottom: retry_btn_y + retry_btn_h,
                 };
-                self.ai.ai_panel.retry_button_region = Some((
-                    retry_btn_x,
-                    retry_btn_y,
-                    retry_btn_w,
-                    retry_btn_h,
-                ));
+                self.ai.ai_panel.retry_button_region =
+                    Some((retry_btn_x, retry_btn_y, retry_btn_w, retry_btn_h));
                 let retry_bg_brush = match self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.20, 0.60, 0.86, 1.0))
                 {
@@ -1226,7 +1267,8 @@ impl EditorState {
                     color_f(0.0, 0.47, 0.83, 1.0)
                 };
                 let apply_bg_brush = match self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &apply_bg_color)
                 {
@@ -1264,7 +1306,8 @@ impl EditorState {
                     bottom: act_y + act_h,
                 };
                 if let Ok(b) = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.62, 0.24, 0.24, 1.0))
                 {
@@ -1296,7 +1339,7 @@ impl EditorState {
             let text_input_width = width - margin * 2.0 - input_margin * 2.0 - 8.0; // 减去内边距
             let min_input_h = 36.0f32; // 最小输入框高度（两行）
             let max_input_h = 120.0f32; // 最大输入框高度（约6-7行）
-            
+
             // 使用 DirectWrite 测量文本高度
             let text_input_h = if input_text.is_empty() {
                 min_input_h
@@ -1305,7 +1348,8 @@ impl EditorState {
                 let wide: Vec<u16> = input_text.encode_utf16().collect();
                 let dwrite = self.win.text_renderer.dwrite_factory();
                 let msg_format = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .get_format(
                         11.0,
@@ -1314,10 +1358,11 @@ impl EditorState {
                         DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
                     )
                     .unwrap();
-                
+
                 match dwrite.CreateTextLayout(&wide, &msg_format, text_input_width, 10000.0) {
                     Ok(layout) => {
-                        let mut metrics = windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
+                        let mut metrics =
+                            windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
                         if layout.GetMetrics(&mut metrics).is_ok() {
                             // 文本高度 + 上下内边距
                             (metrics.height + 16.0).clamp(min_input_h, max_input_h)
@@ -1328,10 +1373,10 @@ impl EditorState {
                     Err(_) => min_input_h,
                 }
             };
-            
+
             // 更新 AI 面板的输入框高度缓存
             self.ai.ai_panel.input_computed_height = text_input_h;
-            
+
             // 输入区域总高度 = 文本输入高度 + 工具栏高度(34) + 间距
             let input_area_h = text_input_h + 44.0f32; // 44 = 6(上间距) + 34(工具栏) + 4(下间距)
             let input_y = y + height - input_area_h;
@@ -1352,7 +1397,8 @@ impl EditorState {
                 color_f(0.24, 0.26, 0.30, 1.0)
             };
             let card_border_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &card_border_color)
             {
@@ -1377,7 +1423,8 @@ impl EditorState {
 
             // 占位提示仅在"无输入且无 IME 组合串"时显示，避免拼音输入阶段与提示叠字
             let composing = self
-    .ai.ai_panel
+                .ai
+                .ai_panel
                 .composition
                 .as_ref()
                 .is_some_and(|c| !c.is_empty());
@@ -1392,8 +1439,11 @@ impl EditorState {
                         // 渐隐阶段：显示原文，透明度从 1.0 渐变为 0.0
                         let alpha = 1.0 - self.ai.ai_panel.expand_anim_progress;
                         let fade_color = color_f(0.9, 0.9, 0.9, alpha);
-                        if let Ok(fade_brush) =
-                            self.win.render_ctx.brush_cache.get_brush(target, &fade_color)
+                        if let Ok(fade_brush) = self
+                            .win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &fade_color)
                         {
                             let orig_text = &self.ai.ai_panel.expand_original_text;
                             let orig_wide: Vec<u16> =
@@ -1420,8 +1470,11 @@ impl EditorState {
                         if !new_text.is_empty() {
                             // 新文本使用带轻微透明度的白色，营造"写入中"感
                             let stream_color = color_f(0.9, 0.9, 0.9, 0.92);
-                            if let Ok(stream_brush) =
-                                self.win.render_ctx.brush_cache.get_brush(target, &stream_color)
+                            if let Ok(stream_brush) = self
+                                .win
+                                .render_ctx
+                                .brush_cache
+                                .get_brush(target, &stream_color)
                             {
                                 let new_wide: Vec<u16> =
                                     new_text.encode_utf16().chain(Some(0)).collect();
@@ -1442,7 +1495,8 @@ impl EditorState {
                             }
                             // 流式写入中显示一个闪烁的写入指示器（竖线光标）
                             let tw = self
-    .win.render_ctx
+                                .win
+                                .render_ctx
                                 .text_format_cache
                                 .measure_text_width(
                                     new_text,
@@ -1456,7 +1510,8 @@ impl EditorState {
                             if blink {
                                 let indicator_color = color_f(0.0, 0.47, 0.83, 0.8);
                                 if let Ok(ind_brush) = self
-    .win.render_ctx
+                                    .win
+                                    .render_ctx
                                     .brush_cache
                                     .get_brush(target, &indicator_color)
                                 {
@@ -1508,13 +1563,15 @@ impl EditorState {
                 if !comp.is_empty() {
                     let comp_text: Vec<u16> = comp.encode_utf16().collect();
                     // 合成串定位到光标处（光标前文本宽度），而非整段输入末尾
-                    let caret_prefix = if self.ai.ai_panel.caret_pos <= self.ai.ai_panel.input.len() {
+                    let caret_prefix = if self.ai.ai_panel.caret_pos <= self.ai.ai_panel.input.len()
+                    {
                         &self.ai.ai_panel.input[..self.ai.ai_panel.caret_pos]
                     } else {
                         self.ai.ai_panel.input.as_str()
                     };
                     let input_width = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .text_format_cache
                         .measure_text_width(caret_prefix, 11.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
                         .unwrap_or(0.0);
@@ -1526,7 +1583,8 @@ impl EditorState {
                         bottom: text_input_y + text_input_h - 4.0,
                     };
                     let comp_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &color_f(1.0, 0.9, 0.4, 1.0))
                         .unwrap();
@@ -1539,7 +1597,8 @@ impl EditorState {
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
                     let comp_width = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .text_format_cache
                         .measure_text_width(comp, 11.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
                         .unwrap_or(0.0);
@@ -1556,15 +1615,17 @@ impl EditorState {
             // 输入框光标（聚焦且 caret_visible 时闪烁）
             if self.ai.ai_panel.input_focused && self.ai.ai_panel.caret_visible {
                 // 根据 caret_pos 计算光标前正文宽度
-                let text_before_caret = if self.ai.ai_panel.caret_pos <= self.ai.ai_panel.input.len() {
-                    &self.ai.ai_panel.input[..self.ai.ai_panel.caret_pos]
-                } else {
-                    &self.ai.ai_panel.input
-                };
+                let text_before_caret =
+                    if self.ai.ai_panel.caret_pos <= self.ai.ai_panel.input.len() {
+                        &self.ai.ai_panel.input[..self.ai.ai_panel.caret_pos]
+                    } else {
+                        &self.ai.ai_panel.input
+                    };
                 let tw = if text_before_caret.is_empty() {
                     0.0
                 } else {
-                    self.win.render_ctx
+                    self.win
+                        .render_ctx
                         .text_format_cache
                         .measure_text_width(
                             text_before_caret,
@@ -1575,12 +1636,14 @@ impl EditorState {
                 };
                 // IME 组合中：光标应位于预输入拼音之后，而非其前
                 let comp_w = self
-    .ai.ai_panel
+                    .ai
+                    .ai_panel
                     .composition
                     .as_ref()
                     .filter(|c| !c.is_empty())
                     .map(|c| {
-                        self.win.render_ctx
+                        self.win
+                            .render_ctx
                             .text_format_cache
                             .measure_text_width(c, 11.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
                             .unwrap_or(0.0)
@@ -1615,11 +1678,15 @@ impl EditorState {
                 Err(_) => return,
             };
             let btn_hover_bg = color_f(0.25, 0.25, 0.28, 1.0);
-            let _btn_hover_brush =
-                match self.win.render_ctx.brush_cache.get_brush(target, &btn_hover_bg) {
-                    Ok(b) => b,
-                    Err(_) => return,
-                };
+            let _btn_hover_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &btn_hover_bg)
+            {
+                Ok(b) => b,
+                Err(_) => return,
+            };
 
             // 中间：模型选择下拉按钮
             let model_btn_w = 140.0f32;
@@ -1655,7 +1722,8 @@ impl EditorState {
             // 当前模型下拉弹层（点击模型按钮展开，向上弹出，列出所有已启用模型）
             if self.ai.ai_panel.model_menu_open {
                 let models: Vec<(String, String, bool)> = self
-    .ui.app_settings
+                    .ui
+                    .app_settings
                     .ai_models
                     .iter()
                     .filter(|m| m.enabled)
@@ -1697,8 +1765,11 @@ impl EditorState {
                         );
                     }
                     let menu_border = color_f(0.32, 0.32, 0.36, 1.0);
-                    if let Ok(menu_border_brush) =
-                        self.win.render_ctx.brush_cache.get_brush(target, &menu_border)
+                    if let Ok(menu_border_brush) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &menu_border)
                     {
                         target.DrawRectangle(
                             &D2D_RECT_F {
@@ -1713,7 +1784,12 @@ impl EditorState {
                         );
                     }
                     let sel_bg = color_f(0.16, 0.30, 0.46, 1.0);
-                    let sel_bg_brush = self.win.render_ctx.brush_cache.get_brush(target, &sel_bg).ok();
+                    let sel_bg_brush = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &sel_bg)
+                        .ok();
                     for (i, (_id, label, is_active)) in models.iter().enumerate() {
                         let iy = menu_top + 4.0 + i as f32 * item_h;
                         if *is_active {
@@ -1767,17 +1843,20 @@ impl EditorState {
                 right: send_btn_x + send_btn_size,
                 bottom: send_btn_y + send_btn_size,
             };
-            
+
             // 根据是否正在生成切换按钮样式
             let is_generating = self.ai.ai_panel.is_generating;
             let (btn_bg, icon_kind) = if is_generating {
                 // 中断按钮：红色背景 + 停止图标
-                (color_f(0.83, 0.18, 0.18, 1.0), crate::icons::IconKind::Close)
+                (
+                    color_f(0.83, 0.18, 0.18, 1.0),
+                    crate::icons::IconKind::Close,
+                )
             } else {
                 // 发送按钮：蓝色背景 + 发送图标
                 (color_f(0.0, 0.47, 0.83, 1.0), crate::icons::IconKind::Send)
             };
-            
+
             let send_bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &btn_bg) {
                 Ok(b) => b,
                 Err(_) => return,

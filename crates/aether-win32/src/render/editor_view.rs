@@ -66,50 +66,59 @@ impl EditorState {
 
         unsafe {
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.editor_bg)
                 .unwrap();
             let ln_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.line_number_bg)
                 .unwrap();
             let sep_color = color_f(0.3, 0.3, 0.3, 1.0);
             let sep_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
             let sel_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.selection_bg)
                 .unwrap();
             let hl_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.line_highlight_bg)
                 .unwrap();
             let ln_fg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.line_number_fg)
                 .unwrap();
             let cursor_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.cursor_color)
                 .unwrap();
 
             let font_size = self.win.text_renderer.font_size();
             let ln_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_line_number_format(font_size)
                 .unwrap();
             let code_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_code_format(font_size)
                 .unwrap();
@@ -165,9 +174,10 @@ impl EditorState {
                 let cached_line = self.editor.content.cached_line(line_idx);
 
                 // Selection highlight — Glass 模式下使用柔和光晕
-                if let (Some((sel_start_line, sel_start_col)), Some((sel_end_line, sel_end_col))) =
-                    (self.editor.content.selection_start, self.editor.content.selection_end)
-                {
+                if let (Some((sel_start_line, sel_start_col)), Some((sel_end_line, sel_end_col))) = (
+                    self.editor.content.selection_start,
+                    self.editor.content.selection_end,
+                ) {
                     let (first_line, first_col) = if sel_start_line <= sel_end_line {
                         (sel_start_line, sel_start_col)
                     } else {
@@ -205,7 +215,8 @@ impl EditorState {
                             0
                         };
                         // P0-3: 选区高亮 x 减去水平滚动偏移
-                        let sel_start_x = x + line_number_width + 5.0 - self.editor.content.scroll_x
+                        let sel_start_x = x + line_number_width + 5.0
+                            - self.editor.content.scroll_x
                             + sel_start_char as f32 * char_width;
                         let sel_end_x = x + line_number_width + 5.0 - self.editor.content.scroll_x
                             + sel_end_char as f32 * char_width;
@@ -265,7 +276,8 @@ impl EditorState {
                 // 优化：合并相邻同色 token 段，减少 DrawText 调用次数
                 if let Some(line_text) = cached_line {
                     let tokens: &[aether_core::lexer::LexemeSpan] = self
-    .editor.content
+                        .editor
+                        .content
                         .cached_tokens
                         .get(line_idx)
                         .map(|v| v.as_slice())
@@ -396,7 +408,8 @@ impl EditorState {
                                 _ => color_f(0.55, 0.55, 0.55, 1.0),
                             };
                             let wave_brush = self
-    .win.render_ctx
+                                .win
+                                .render_ctx
                                 .brush_cache
                                 .get_brush(target, &wave_color)
                                 .unwrap();
@@ -413,9 +426,11 @@ impl EditorState {
                             };
                             // 至少给 1 个字符宽度，避免空诊断不可见
                             let end_char = end_char.max(start_char + 1);
-                            let wave_left = x + line_number_width + 5.0 - self.editor.content.scroll_x
+                            let wave_left = x + line_number_width + 5.0
+                                - self.editor.content.scroll_x
                                 + start_char as f32 * char_width;
-                            let wave_right = x + line_number_width + 5.0 - self.editor.content.scroll_x
+                            let wave_right = x + line_number_width + 5.0
+                                - self.editor.content.scroll_x
                                 + end_char as f32 * char_width;
                             // 波浪线位于行底部，3px 高度区域
                             let wave_top = line_y + line_height - 3.0;
@@ -466,10 +481,13 @@ impl EditorState {
             // 光标：将字节列转换为字符列计算x坐标
             // UI-H04: 使用字符宽度累加而非简单 char count * char_width，
             // 支持 CJK 等双宽度字符的正确光标定位
-            let cursor_char_col = if let Some(text) =
-                self.editor.content.cached_line(self.editor.content.cursor_line)
+            let cursor_char_col = if let Some(text) = self
+                .editor
+                .content
+                .cached_line(self.editor.content.cursor_line)
             {
-                let byte_pos = text.floor_char_boundary(self.editor.content.cursor_col.min(text.len()));
+                let byte_pos =
+                    text.floor_char_boundary(self.editor.content.cursor_col.min(text.len()));
                 text[..byte_pos]
                     .chars()
                     .map(unicode_char_width)
@@ -491,7 +509,8 @@ impl EditorState {
                 let (t_row, t_col) = self.terminal.terminal_panel.cursor_position();
                 // 光标位置使用 DirectWrite HitTestTextPosition 获取精确前缀坐标（逻辑像素，最后再乘 DPI）
                 let cell_w_logical = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .measure_text_width("M", 11.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
                     .unwrap_or(7.0);
@@ -507,7 +526,8 @@ impl EditorState {
                         }
                         let prefix = &line[..prefix_len];
                         let prefix_x = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .text_format_cache
                             .text_position_x(
                                 prefix,
@@ -538,7 +558,8 @@ impl EditorState {
                     let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * s;
                     // 估算 value 宽度（近似，IME 候选窗口只需大致位置）
                     let value_chars = self
-    .fs.file_tree_input
+                        .fs
+                        .file_tree_input
                         .as_ref()
                         .map(|i| i.value.chars().count())
                         .unwrap_or(0);
@@ -559,7 +580,8 @@ impl EditorState {
                 let text_input_h = 36.0f32;
                 let ai_value_x = rp.x + margin + 8.0 + 4.0; // margin + input_margin + padding
                 let ai_input_width = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .measure_text_width(
                         &self.ai.ai_panel.input,
@@ -669,15 +691,22 @@ impl EditorState {
 
         unsafe {
             let ghost_color = color_f(0.5, 0.5, 0.5, 0.6);
-            let Ok(ghost_brush) = self.win.render_ctx.brush_cache.get_brush(target, &ghost_color)
+            let Ok(ghost_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &ghost_color)
             else {
                 return;
             };
 
-            let cursor_char_col = if let Some(text) =
-                self.editor.content.cached_line(self.editor.content.cursor_line)
+            let cursor_char_col = if let Some(text) = self
+                .editor
+                .content
+                .cached_line(self.editor.content.cursor_line)
             {
-                let byte_pos = text.floor_char_boundary(self.editor.content.cursor_col.min(text.len()));
+                let byte_pos =
+                    text.floor_char_boundary(self.editor.content.cursor_col.min(text.len()));
                 text[..byte_pos]
                     .chars()
                     .map(unicode_char_width)
@@ -807,13 +836,22 @@ impl EditorState {
             };
             // 边框：浅色
             let border_color = color_f(0.4, 0.4, 0.45, 1.0);
-            let Ok(border_brush) = self.win.render_ctx.brush_cache.get_brush(target, &border_color)
+            let Ok(border_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &border_color)
             else {
                 return;
             };
             // 文本：浅色
             let text_color = color_f(0.9, 0.9, 0.9, 1.0);
-            let Ok(text_brush) = self.win.render_ctx.brush_cache.get_brush(target, &text_color) else {
+            let Ok(text_brush) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &text_color)
+            else {
                 return;
             };
 
@@ -829,7 +867,8 @@ impl EditorState {
             // 绘制文本（逐行，小字号）
             // DWRITE_TEXT_ALIGNMENT_LEADING=0, DWRITE_PARAGRAPH_ALIGNMENT_NEAR=0
             let tf = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(font_size, 400, 0, 0)
             {

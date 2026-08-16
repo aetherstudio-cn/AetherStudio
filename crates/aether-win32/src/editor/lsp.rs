@@ -129,7 +129,12 @@ pub(crate) fn request_completion(lsp_state: &mut LspState, content: &TabContent)
 /// 异步调用 LSP request_hover，结果通过 LspEvent::Hover 回传。
 /// 注意：触发逻辑（WM_MOUSEMOVE + 定时器去抖）尚未接线，此方法预留就绪。
 #[allow(dead_code)]
-pub(crate) fn request_hover(lsp_state: &mut LspState, content: &TabContent, line: usize, col: usize) {
+pub(crate) fn request_hover(
+    lsp_state: &mut LspState,
+    content: &TabContent,
+    line: usize,
+    col: usize,
+) {
     let language_id = match language_to_lsp_id_opt(content.language) {
         Some(id) => id.to_string(),
         None => return,
@@ -196,9 +201,7 @@ pub(crate) fn handle_event(
             let _ = count; // 避免 unused 警告
             status
         }
-        LspEvent::ServerReady { language_id } => {
-            Some(format!("LSP 服务器就绪: {}", language_id))
-        }
+        LspEvent::ServerReady { language_id } => Some(format!("LSP 服务器就绪: {}", language_id)),
         LspEvent::ServerExited { language_id } => {
             // 服务进程死亡：状态栏可见提示 + 从客户端移除死服务器，
             // 使 is_server_ready 返回 false，下次打开文件时可按需重启
@@ -267,7 +270,8 @@ pub(crate) fn completion_next(lsp_state: &mut LspState) {
     if !lsp_state.completion_visible || lsp_state.completion_items.is_empty() {
         return;
     }
-    lsp_state.completion_selected = (lsp_state.completion_selected + 1) % lsp_state.completion_items.len();
+    lsp_state.completion_selected =
+        (lsp_state.completion_selected + 1) % lsp_state.completion_items.len();
 }
 
 /// 补全列表上一项（↑ 键）
@@ -431,9 +435,10 @@ pub fn poll_events(
                 // 请求发往已死的进程（legacy 路径，工作区级 rust-analyzer）
                 tracing::warn!("LSP 服务器已退出: {}", language_id);
                 *status_message = format!("LSP 服务器已退出: {}", language_id);
-                if let (Some(client), Some(runtime)) =
-                    (lsp_state.legacy_lsp_client.clone(), lsp_state.legacy_runtime.as_ref())
-                {
+                if let (Some(client), Some(runtime)) = (
+                    lsp_state.legacy_lsp_client.clone(),
+                    lsp_state.legacy_runtime.as_ref(),
+                ) {
                     runtime.spawn(async move {
                         client.remove_server(&language_id).await;
                     });
@@ -615,7 +620,8 @@ pub(crate) fn completion_accept(state: &mut EditorState) {
     }
     // 删除触发位置到当前光标之间的文本（用户输入的过滤字符）
     let delete_count = state
-        .editor.content
+        .editor
+        .content
         .cursor_col
         .saturating_sub(state.lsp.lsp.completion_trigger_col);
     for _ in 0..delete_count {

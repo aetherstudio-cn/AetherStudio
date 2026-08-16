@@ -17,7 +17,8 @@ impl EditorState {
         suggested_filename: Option<&str>,
     ) -> std::result::Result<PathBuf, String> {
         let root = self
-    .fs.current_folder
+            .fs
+            .current_folder
             .clone()
             .ok_or_else(|| "请先打开一个工作区文件夹".to_string())?;
 
@@ -117,7 +118,8 @@ impl EditorState {
                 Ok(paths) => {
                     for p in &paths {
                         let name = self
-    .fs.current_folder
+                            .fs
+                            .current_folder
                             .as_ref()
                             .and_then(|root| p.strip_prefix(root).ok())
                             .unwrap_or(p.as_path());
@@ -133,7 +135,7 @@ impl EditorState {
                 self.refresh_file_tree_light();
             }
         }
-        
+
         // 1.5 精准编辑（增量修改）
         let precise_edits = crate::ai_panel::parse_precise_edits(&text);
         if !precise_edits.is_empty() {
@@ -141,7 +143,8 @@ impl EditorState {
                 Ok(paths) => {
                     for p in &paths {
                         let name = self
-    .fs.current_folder
+                            .fs
+                            .current_folder
                             .as_ref()
                             .and_then(|root| p.strip_prefix(root).ok())
                             .unwrap_or(p.as_path());
@@ -211,18 +214,18 @@ impl EditorState {
             let file_count = file_summary.len();
             let cmd_count = cmd_summary.len();
             let tool_count = tool_display.len();
-            
+
             let mut lines = Vec::new();
             lines.extend(file_summary);
             lines.extend(cmd_summary);
             lines.extend(tool_display);
-            
+
             // 添加操作总结
             let mut summary_lines = Vec::new();
             summary_lines.push("".to_string());
             summary_lines.push("[总结] **操作总结**".to_string());
             summary_lines.push("".to_string());
-            
+
             if file_count > 0 {
                 summary_lines.push(format!("[文件] 文件操作：{} 个", file_count));
             }
@@ -232,10 +235,11 @@ impl EditorState {
             if tool_count > 0 {
                 summary_lines.push(format!("[工具] 工具调用：{} 个", tool_count));
             }
-            
+
             lines.extend(summary_lines);
-            
-            self.ai.ai_panel
+
+            self.ai
+                .ai_panel
                 .add_assistant_message_to(conv_idx, lines.join("\n"));
             self.win.dirty_tracker.mark_full_window();
         }
@@ -246,10 +250,12 @@ impl EditorState {
             let settings = self.ui.app_settings.ai.clone();
             let mode = self.ai.ai_panel.mode;
             if let Err(e) =
-                self.ai.ai_panel
+                self.ai
+                    .ai_panel
                     .continue_agent_with_tool_result(&settings, tool_feedback, mode)
             {
-                self.ai.ai_panel
+                self.ai
+                    .ai_panel
                     .add_assistant_message_to(conv_idx, format!("（{}，如需继续请手动发消息）", e));
             }
         }
@@ -264,7 +270,8 @@ impl EditorState {
     pub fn salvage_ai_partial_edits(&mut self, conv_idx: usize) {
         // 跳过末尾的错误提示消息，定位携带文件块的内容消息
         let Some(text) = self
-    .ai.ai_panel
+            .ai
+            .ai_panel
             .last_assistant_text_matching_of(conv_idx, |t| {
                 t.contains(crate::ai_panel::FILE_HEADER_PREFIX)
             })
@@ -274,7 +281,8 @@ impl EditorState {
         if self.fs.current_folder.is_none() {
             self.ai.ai_panel.add_assistant_message_to(
                 conv_idx,
-                "[警告] 生成中断：检测到未保存的文件块，但尚未打开工作区文件夹，无法写入。".to_string(),
+                "[警告] 生成中断：检测到未保存的文件块，但尚未打开工作区文件夹，无法写入。"
+                    .to_string(),
             );
             self.win.dirty_tracker.mark_full_window();
             return;
@@ -298,7 +306,8 @@ impl EditorState {
             Ok(paths) => {
                 for p in &paths {
                     let name = self
-    .fs.current_folder
+                        .fs
+                        .current_folder
                         .as_ref()
                         .and_then(|root| p.strip_prefix(root).ok())
                         .unwrap_or(p.as_path());
@@ -319,7 +328,8 @@ impl EditorState {
         if self.fs.current_folder.is_some() {
             self.refresh_file_tree_light();
         }
-        self.ai.ai_panel
+        self.ai
+            .ai_panel
             .add_assistant_message_to(conv_idx, lines.join("\n"));
         self.win.dirty_tracker.mark_full_window();
     }
@@ -363,10 +373,12 @@ impl EditorState {
                 let settings = self.ui.app_settings.ai.clone();
                 let mode = self.ai.ai_panel.mode;
                 if let Err(e) = self
-    .ai.ai_panel
+                    .ai
+                    .ai_panel
                     .continue_agent_with_tool_result(&settings, feedback, mode)
                 {
-                    self.ai.ai_panel
+                    self.ai
+                        .ai_panel
                         .add_assistant_message(format!("（{}，如需继续请手动发消息）", e));
                 }
             }
@@ -425,7 +437,8 @@ impl EditorState {
     pub fn save_ai_settings(&mut self) {
         // 写回激活模型 + 同步模型列表到持久化设置
         self.ui.settings_panel.store_fields_to_active_model();
-        self.ui.settings_panel
+        self.ui
+            .settings_panel
             .sync_to_app_settings(&mut self.ui.app_settings);
         // 兼容：同时更新旧的单一 ai 字段（作为无模型时的回退）
         self.ui.app_settings.ai = self.ui.settings_panel.to_ai_settings();
@@ -442,7 +455,8 @@ impl EditorState {
     }
     /// 持久化模型列表变更（删除/启用切换/设为激活/新建后调用）
     pub fn persist_models(&mut self) {
-        self.ui.settings_panel
+        self.ui
+            .settings_panel
             .sync_to_app_settings(&mut self.ui.app_settings);
         if let Err(e) = self.ui.app_settings.save() {
             self.ui.settings_panel.test_status = format!("✗ 保存失败：{}", e);
@@ -468,7 +482,8 @@ impl EditorState {
     pub fn gather_context(&self, attachments: &[AiContextAttachment]) -> String {
         let mut parts = Vec::new();
         let current_path = self
-    .editor.content
+            .editor
+            .content
             .file_path
             .as_deref()
             .map(|p| p.to_string_lossy().to_string())
@@ -479,7 +494,8 @@ impl EditorState {
             match attachment {
                 AiContextAttachment::CurrentFile => {
                     let text = self
-    .editor.content
+                        .editor
+                        .content
                         .buffer
                         .get_text(0, self.editor.content.buffer.len_bytes());
                     parts.push(wrap_code_block(
@@ -502,13 +518,15 @@ impl EditorState {
                     // 活动标签页的内容存于 self.editor.content（swap 后），需提前提取避免借用冲突
                     let active_idx = self.editor.tab_bar.active_tab;
                     let active_path = self
-    .editor.content
+                        .editor
+                        .content
                         .file_path
                         .as_deref()
                         .map(|p| p.to_string_lossy().to_string());
                     let active_lang = language_str(self.editor.content.language);
                     let active_text = self
-    .editor.content
+                        .editor
+                        .content
                         .buffer
                         .get_text(0, self.editor.content.buffer.len_bytes());
                     for (i, tab) in self.editor.tab_bar.tabs.iter().enumerate() {
@@ -542,7 +560,8 @@ impl EditorState {
                 }
                 AiContextAttachment::Diagnostics => {
                     let current_key = self
-    .editor.content
+                        .editor
+                        .content
                         .file_path
                         .as_deref()
                         .map(|p| p.to_string_lossy().to_string())
@@ -552,7 +571,8 @@ impl EditorState {
                     // 优先显示当前文件，再按 severity 排序（1=Error, 2=Warning）
                     all.sort_by_key(|d| {
                         let is_current = self
-    .editor.content
+                            .editor
+                            .content
                             .file_path
                             .as_deref()
                             .map(|p| p.to_string_lossy().to_string() == current_key)
@@ -601,8 +621,11 @@ impl EditorState {
         }
         // 如果有选区，替换选区内容；否则在当前光标位置插入
         // C-02/H-21: 使用 zip 一次性解构，避免独立 unwrap 在中间状态变更后 panic
-        if let Some(((start_line, start_col), (end_line, end_col))) =
-            self.editor.content.selection_start.zip(self.editor.content.selection_end)
+        if let Some(((start_line, start_col), (end_line, end_col))) = self
+            .editor
+            .content
+            .selection_start
+            .zip(self.editor.content.selection_end)
         {
             let (first_line, first_col) = if (start_line, start_col) <= (end_line, end_col) {
                 (start_line, start_col)
@@ -618,8 +641,10 @@ impl EditorState {
             let end_byte = self.line_byte_start(last_line) + last_col;
 
             let old_text = self.editor.content.buffer.get_text(start_byte, end_byte);
-            let cursor_before =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+            let cursor_before = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
 
             self.editor.content.buffer.delete(start_byte, end_byte);
             self.editor.content.buffer.insert(start_byte, code);
@@ -634,8 +659,10 @@ impl EditorState {
             };
             self.editor.content.cursor_line = new_line;
             self.editor.content.cursor_col = new_col;
-            let cursor_after =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+            let cursor_after = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
             self.editor.content.history.record_replace(
                 start_byte,
                 old_text,
@@ -651,7 +678,10 @@ impl EditorState {
             return true;
         }
         let pos = self.cursor_byte_pos();
-        let cursor_before = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_before = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
 
         self.editor.content.buffer.insert(pos, code);
 
@@ -667,8 +697,12 @@ impl EditorState {
                 .map(|(_, last)| last.len())
                 .unwrap_or(0);
         }
-        let cursor_after = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
-        self.editor.content
+        let cursor_after = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
+        self.editor
+            .content
             .history
             .record_insert(pos, code, cursor_before, cursor_after);
 
@@ -692,7 +726,8 @@ impl EditorState {
             if edit.is_delete() {
                 // 关闭对应 tab（如果有）；用户取消则跳过此文件
                 if let Some(idx) = self
-    .editor.tab_bar
+                    .editor
+                    .tab_bar
                     .tabs
                     .iter()
                     .position(|t| t.file_path() == Some(&full_path))
@@ -713,7 +748,8 @@ impl EditorState {
 
             // 找到或创建对应标签页
             let tab_idx = self
-    .editor.tab_bar
+                .editor
+                .tab_bar
                 .tabs
                 .iter()
                 .position(|t| t.file_path() == Some(&full_path));
@@ -727,7 +763,8 @@ impl EditorState {
 
             // 应用单个编辑
             let old_text = self
-    .editor.content
+                .editor
+                .content
                 .buffer
                 .get_text(0, self.editor.content.buffer.len_bytes());
             let new_text = if edit.search.trim().is_empty() {
@@ -749,8 +786,10 @@ impl EditorState {
             };
 
             // 记录 undo history，使 AI 工作区编辑可通过 Ctrl+Z 逐文件撤销
-            let cursor_before =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+            let cursor_before = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
             let len = self.editor.content.buffer.len_bytes();
             self.editor.content.buffer.delete(0, len);
             self.editor.content.buffer.insert(0, &new_text);
@@ -794,7 +833,8 @@ impl EditorState {
         if path.is_absolute() {
             return path.to_path_buf();
         }
-        self.fs.current_folder
+        self.fs
+            .current_folder
             .as_ref()
             .map(|root| root.join(path))
             .unwrap_or_else(|| path.to_path_buf())
@@ -810,7 +850,7 @@ impl EditorState {
 
         for edit in edits {
             let full_path = self.resolve_edit_path(&edit.path);
-            
+
             // 读取文件内容
             let content = if full_path.exists() {
                 match std::fs::read_to_string(&full_path) {
@@ -824,14 +864,10 @@ impl EditorState {
 
             // 根据定位方式查找目标位置
             let (start_pos, end_pos) = self.locate_target_position(&content, &edit.location)?;
-            
+
             // 根据编辑操作应用修改
-            let new_content = self.apply_edit_operation(
-                &content,
-                start_pos,
-                end_pos,
-                &edit.operation,
-            )?;
+            let new_content =
+                self.apply_edit_operation(&content, start_pos, end_pos, &edit.operation)?;
 
             // 写入文件
             if let Some(parent) = full_path.parent() {
@@ -861,15 +897,18 @@ impl EditorState {
         location: &crate::ai_panel::PreciseLocation,
     ) -> std::result::Result<(usize, usize), String> {
         match location {
-            crate::ai_panel::PreciseLocation::Keyword { keyword, context_lines } => {
-                self.locate_by_keyword(content, keyword, *context_lines)
-            }
-            crate::ai_panel::PreciseLocation::LineRange { start_line, end_line } => {
-                self.locate_by_line_range(content, *start_line, *end_line)
-            }
-            crate::ai_panel::PreciseLocation::CodeSnippet { snippet, similarity_threshold } => {
-                self.locate_by_code_snippet(content, snippet, *similarity_threshold)
-            }
+            crate::ai_panel::PreciseLocation::Keyword {
+                keyword,
+                context_lines,
+            } => self.locate_by_keyword(content, keyword, *context_lines),
+            crate::ai_panel::PreciseLocation::LineRange {
+                start_line,
+                end_line,
+            } => self.locate_by_line_range(content, *start_line, *end_line),
+            crate::ai_panel::PreciseLocation::CodeSnippet {
+                snippet,
+                similarity_threshold,
+            } => self.locate_by_code_snippet(content, snippet, *similarity_threshold),
         }
     }
 
@@ -881,21 +920,21 @@ impl EditorState {
         context_lines: usize,
     ) -> std::result::Result<(usize, usize), String> {
         let lines: Vec<&str> = content.lines().collect();
-        
+
         for (i, line) in lines.iter().enumerate() {
             if line.contains(keyword) {
                 // 计算上下文范围
                 let start_line = i.saturating_sub(context_lines);
                 let end_line = (i + context_lines + 1).min(lines.len());
-                
+
                 // 转换为字符位置
                 let start_pos = lines[..start_line].iter().map(|l| l.len() + 1).sum();
                 let end_pos = lines[..end_line].iter().map(|l| l.len() + 1).sum();
-                
+
                 return Ok((start_pos, end_pos));
             }
         }
-        
+
         Err(format!("未找到关键词: {}", keyword))
     }
 
@@ -907,15 +946,15 @@ impl EditorState {
         end_line: usize,
     ) -> std::result::Result<(usize, usize), String> {
         let lines: Vec<&str> = content.lines().collect();
-        
+
         if start_line == 0 || end_line == 0 || start_line > lines.len() || end_line > lines.len() {
             return Err(format!("行号范围无效: {}-{}", start_line, end_line));
         }
-        
+
         // 转换为字符位置（行号从1开始）
         let start_pos = lines[..start_line - 1].iter().map(|l| l.len() + 1).sum();
         let end_pos = lines[..end_line].iter().map(|l| l.len() + 1).sum();
-        
+
         Ok((start_pos, end_pos))
     }
 
@@ -951,7 +990,10 @@ impl EditorState {
                 result.push_str(&content[end_pos..]);
                 Ok(result)
             }
-            crate::ai_panel::EditOperation::Insert { content: insert_content, position } => {
+            crate::ai_panel::EditOperation::Insert {
+                content: insert_content,
+                position,
+            } => {
                 let mut result = String::new();
                 match position {
                     crate::ai_panel::InsertPosition::Before => {
@@ -979,7 +1021,8 @@ impl EditorState {
     /// 将工作区相对路径解析为经沙箱校验的绝对路径（仅允许工作区内，禁止逃逸）。
     fn workspace_sandbox_path(&self, rel: &str) -> std::result::Result<PathBuf, String> {
         let root = self
-    .fs.current_folder
+            .fs
+            .current_folder
             .as_ref()
             .ok_or_else(|| "未打开工作区文件夹".to_string())?;
         let root_canon = root
@@ -1217,12 +1260,14 @@ impl EditorState {
     fn advance_agent_pipeline(&mut self, conv_idx: usize) {
         // 用户中途停止 → 中止流水线
         if self
-    .ai.ai_panel
+            .ai
+            .ai_panel
             .should_stop
             .load(std::sync::atomic::Ordering::SeqCst)
         {
             self.ai.ai_panel.agent_pipeline = None;
-            self.ai.ai_panel
+            self.ai
+                .ai_panel
                 .add_assistant_message("已停止，剩余任务未执行。".to_string());
             self.win.dirty_tracker.mark_full_window();
             return;
@@ -1237,17 +1282,20 @@ impl EditorState {
                         wrote_ok = !paths.is_empty();
                         for p in &paths {
                             let name = self
-    .fs.current_folder
+                                .fs
+                                .current_folder
                                 .as_ref()
                                 .and_then(|root| p.strip_prefix(root).ok())
                                 .unwrap_or(p.as_path());
-                            self.ai.ai_panel
+                            self.ai
+                                .ai_panel
                                 .add_assistant_message(format!("✓ 已写入 `{}`", name.display()));
                         }
                         self.refresh_file_tree_light();
                     }
                     Err(e) => {
-                        self.ai.ai_panel
+                        self.ai
+                            .ai_panel
                             .add_assistant_message(format!("✕ 文件写入失败: {}", e));
                     }
                 }
@@ -1271,16 +1319,24 @@ impl EditorState {
     /// 流水线收尾：清理状态并如实汇总成败。
     fn finish_agent_pipeline(&mut self) {
         let (total, failed, created_files, goal) = self
-    .ai.ai_panel
+            .ai
+            .ai_panel
             .agent_pipeline
             .as_ref()
-            .map(|p| (p.tasks.len(), p.failed_files.clone(), p.created_files.clone(), p.goal.clone()))
+            .map(|p| {
+                (
+                    p.tasks.len(),
+                    p.failed_files.clone(),
+                    p.created_files.clone(),
+                    p.goal.clone(),
+                )
+            })
             .unwrap_or((0, Vec::new(), Vec::new(), String::new()));
         self.ai.ai_panel.agent_pipeline = None;
-        
+
         // 生成详细的最终任务总结
         let mut summary_lines = Vec::new();
-        
+
         // 标题：显示任务目标
         if !goal.trim().is_empty() {
             summary_lines.push(format!("[任务完成] **{}**", goal.trim()));
@@ -1288,7 +1344,7 @@ impl EditorState {
             summary_lines.push("[任务完成] **任务执行完成**".to_string());
         }
         summary_lines.push("".to_string());
-        
+
         // 执行结果统计
         let success_count = total - failed.len();
         if failed.is_empty() {
@@ -1302,16 +1358,19 @@ impl EditorState {
             ));
             self.ui.status_message = "部分任务未完成".to_string();
         }
-        
+
         // 详细列出成功创建的文件
         if !created_files.is_empty() {
             summary_lines.push("".to_string());
-            summary_lines.push(format!("**成功创建的文件（{} 个）：**", created_files.len()));
+            summary_lines.push(format!(
+                "**成功创建的文件（{} 个）：**",
+                created_files.len()
+            ));
             for (i, file) in created_files.iter().enumerate() {
                 summary_lines.push(format!("  {}. {}", i + 1, file));
             }
         }
-        
+
         // 详细列出失败的文件
         if !failed.is_empty() {
             summary_lines.push("".to_string());
@@ -1322,13 +1381,15 @@ impl EditorState {
             summary_lines.push("".to_string());
             summary_lines.push("[建议] 可重新发送需求，系统将重试失败的文件".to_string());
         }
-        
+
         // 添加任务执行时间（如果有）
         summary_lines.push("".to_string());
         summary_lines.push("---".to_string());
         summary_lines.push("[信息] 任务执行完毕，如有问题请随时告知".to_string());
-        
-        self.ai.ai_panel.add_assistant_message(summary_lines.join("\n"));
+
+        self.ai
+            .ai_panel
+            .add_assistant_message(summary_lines.join("\n"));
         self.win.dirty_tracker.mark_full_window();
     }
 

@@ -28,12 +28,16 @@ impl EditorState {
     pub fn paste(&mut self) {
         if let Some(text) = Self::get_clipboard_text() {
             // 如果有选区，先删除选中内容
-            if self.editor.content.selection_start.is_some() && self.editor.content.selection_end.is_some() {
+            if self.editor.content.selection_start.is_some()
+                && self.editor.content.selection_end.is_some()
+            {
                 self.delete_selection();
             }
             let pos = self.cursor_byte_pos();
-            let cursor_before =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+            let cursor_before = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
 
             self.editor.content.buffer.insert(pos, &text);
             self.editor.content.is_dirty = true;
@@ -51,9 +55,12 @@ impl EditorState {
                     .unwrap_or(0);
             }
 
-            let cursor_after =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
-            self.editor.content
+            let cursor_after = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
+            self.editor
+                .content
                 .history
                 .record_insert(pos, &text, cursor_before, cursor_after);
             self.clear_selection();
@@ -87,8 +94,10 @@ impl EditorState {
 
         if start_byte < end_byte {
             let deleted_text = self.editor.content.buffer.get_text(start_byte, end_byte);
-            let cursor_before =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+            let cursor_before = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
 
             self.editor.content.buffer.delete(start_byte, end_byte);
             self.editor.content.is_dirty = true;
@@ -97,8 +106,10 @@ impl EditorState {
             self.editor.content.cursor_line = first_line;
             self.editor.content.cursor_col = first_col;
 
-            let cursor_after =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+            let cursor_after = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
             self.editor.content.history.record_delete(
                 start_byte,
                 deleted_text,
@@ -112,7 +123,8 @@ impl EditorState {
     pub fn select_all(&mut self) {
         let last_line = self.editor.content.buffer.len_lines().saturating_sub(1);
         let last_col = self
-    .editor.content
+            .editor
+            .content
             .buffer
             .get_line(last_line)
             .map(|t| t.len())
@@ -222,19 +234,31 @@ impl EditorState {
         }
 
         let pos = self.cursor_byte_pos();
-        let cursor_before = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_before = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
 
         let text = ch.to_string();
         self.editor.content.buffer.insert(pos, &text);
         self.editor.content.cursor_col += ch.len_utf8();
         self.editor.content.is_dirty = true;
-        if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
         self.editor.content.buffer_version += 1;
 
-        let cursor_after = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
-        self.editor.content
+        let cursor_after = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
+        self.editor
+            .content
             .history
             .record_insert(pos, &text, cursor_before, cursor_after);
         self.ui.status_message = "已修改".to_string();
@@ -261,7 +285,12 @@ impl EditorState {
         // 闭括号跳过逻辑：光标后已是相同闭括号，直接右移光标
         let is_skip_close = matches!(ch, ')' | ']' | '}');
         if is_skip_close {
-            if let Some(text) = self.editor.content.buffer.get_line(self.editor.content.cursor_line) {
+            if let Some(text) = self
+                .editor
+                .content
+                .buffer
+                .get_line(self.editor.content.cursor_line)
+            {
                 if self.editor.content.cursor_col < text.len() {
                     if let Some(next_ch) = text[self.editor.content.cursor_col..].chars().next() {
                         if next_ch == ch {
@@ -282,13 +311,17 @@ impl EditorState {
 
         // 检查是否有选区
         let selection = self
-    .editor.content
+            .editor
+            .content
             .selection_start
             .zip(self.editor.content.selection_end)
             .filter(|(s, e)| s != e);
 
         let pos = self.cursor_byte_pos();
-        let cursor_before = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_before = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
 
         // C-05: 使用模式匹配代替 unwrap，避免选择状态不一致时 panic
         if let Some(((sel_start_line, sel_start_col), (sel_end_line, sel_end_col))) = selection {
@@ -326,22 +359,35 @@ impl EditorState {
                 Some((end_line, end_col + open_shift + close_ch.len_utf8()));
 
             self.editor.content.is_dirty = true;
-            if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+            if let Some(tab) = self
+                .editor
+                .tab_bar
+                .tabs
+                .get_mut(self.editor.tab_bar.active_tab)
+            {
                 tab.mark_dirty();
             }
             self.editor.content.buffer_version += 1;
 
-            let cursor_after =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+            let cursor_after = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
             // 两处插入（先闭括号后开括号）作为一个原子撤销组记录，
             // 记录顺序与实际编辑顺序一致，保证 undo/redo 位置正确
             self.editor.content.history.begin_group();
-            self.editor.content
-                .history
-                .record_insert(end_byte, &close_str, cursor_before, cursor_after);
-            self.editor.content
-                .history
-                .record_insert(start_byte, &open_str, cursor_before, cursor_after);
+            self.editor.content.history.record_insert(
+                end_byte,
+                &close_str,
+                cursor_before,
+                cursor_after,
+            );
+            self.editor.content.history.record_insert(
+                start_byte,
+                &open_str,
+                cursor_before,
+                cursor_after,
+            );
             self.editor.content.history.end_group();
             self.ui.status_message = "已修改".to_string();
             self.emit_edit_events();
@@ -355,13 +401,22 @@ impl EditorState {
         self.editor.content.cursor_col += ch.len_utf8();
 
         self.editor.content.is_dirty = true;
-        if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
         self.editor.content.buffer_version += 1;
 
-        let cursor_after = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
-        self.editor.content
+        let cursor_after = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
+        self.editor
+            .content
             .history
             .record_insert(pos, &pair_text, cursor_before, cursor_after);
         self.ui.status_message = "已修改".to_string();
@@ -370,19 +425,31 @@ impl EditorState {
     }
     pub fn insert_tab(&mut self) {
         let pos = self.cursor_byte_pos();
-        let cursor_before = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_before = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
 
         let tab_text = "    ";
         self.editor.content.buffer.insert(pos, tab_text);
         self.editor.content.cursor_col += tab_text.len();
         self.editor.content.is_dirty = true;
-        if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
         self.editor.content.buffer_version += 1;
 
-        let cursor_after = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
-        self.editor.content
+        let cursor_after = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
+        self.editor
+            .content
             .history
             .record_insert(pos, tab_text, cursor_before, cursor_after);
         self.ui.status_message = "已修改".to_string();
@@ -390,10 +457,17 @@ impl EditorState {
     }
     pub fn insert_newline(&mut self) {
         let pos = self.cursor_byte_pos();
-        let cursor_before = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_before = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
 
         // 获取当前行的前导空白（用于自动缩进）
-        let indent = if let Some(line_text) = self.editor.content.buffer.get_line(self.editor.content.cursor_line)
+        let indent = if let Some(line_text) = self
+            .editor
+            .content
+            .buffer
+            .get_line(self.editor.content.cursor_line)
         {
             let leading_ws: String = line_text
                 .chars()
@@ -405,17 +479,21 @@ impl EditorState {
         };
 
         // 检测是否需要额外缩进（行尾有 { 或 :）
-        let extra_indent =
-            if let Some(line_text) = self.editor.content.buffer.get_line(self.editor.content.cursor_line) {
-                let trimmed = line_text.trim_end();
-                if trimmed.ends_with('{') || trimmed.ends_with(':') {
-                    "    "
-                } else {
-                    ""
-                }
+        let extra_indent = if let Some(line_text) = self
+            .editor
+            .content
+            .buffer
+            .get_line(self.editor.content.cursor_line)
+        {
+            let trimmed = line_text.trim_end();
+            if trimmed.ends_with('{') || trimmed.ends_with(':') {
+                "    "
             } else {
                 ""
-            };
+            }
+        } else {
+            ""
+        };
 
         let full_indent = format!("{}{}", indent, extra_indent);
         let insert_text = if full_indent.is_empty() {
@@ -428,13 +506,22 @@ impl EditorState {
         self.editor.content.cursor_line += 1;
         self.editor.content.cursor_col = full_indent.len();
         self.editor.content.is_dirty = true;
-        if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
         self.editor.content.buffer_version += 1;
 
-        let cursor_after = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
-        self.editor.content
+        let cursor_after = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
+        self.editor
+            .content
             .history
             .record_insert(pos, &insert_text, cursor_before, cursor_after);
         self.ui.status_message = "已修改".to_string();
@@ -447,19 +534,28 @@ impl EditorState {
             let prev_pos = self.find_prev_char_boundary(pos);
             if prev_pos < pos {
                 let deleted_text = self.editor.content.buffer.get_text(prev_pos, pos);
-                let cursor_before =
-                    CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+                let cursor_before = CursorPosition::new(
+                    self.editor.content.cursor_line,
+                    self.editor.content.cursor_col,
+                );
 
                 self.editor.content.buffer.delete(prev_pos, pos);
                 self.editor.content.cursor_col -= pos - prev_pos;
                 self.editor.content.is_dirty = true;
-                if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+                if let Some(tab) = self
+                    .editor
+                    .tab_bar
+                    .tabs
+                    .get_mut(self.editor.tab_bar.active_tab)
+                {
                     tab.mark_dirty();
                 }
                 self.editor.content.buffer_version += 1;
 
-                let cursor_after =
-                    CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+                let cursor_after = CursorPosition::new(
+                    self.editor.content.cursor_line,
+                    self.editor.content.cursor_col,
+                );
                 self.editor.content.history.record_delete(
                     prev_pos,
                     deleted_text,
@@ -474,26 +570,40 @@ impl EditorState {
             let prev_line = self.editor.content.cursor_line - 1;
             if let Some(prev_text) = self.editor.content.buffer.get_line(prev_line) {
                 let prev_len = prev_text.len();
-                if let Some(curr_text) = self.editor.content.buffer.get_line(self.editor.content.cursor_line) {
+                if let Some(curr_text) = self
+                    .editor
+                    .content
+                    .buffer
+                    .get_line(self.editor.content.cursor_line)
+                {
                     let curr_len = curr_text.len();
                     let start = self.line_byte_start(prev_line) + prev_len;
                     let end = start + curr_len + 1;
 
                     let deleted_text = self.editor.content.buffer.get_text(start, end);
-                    let cursor_before =
-                        CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+                    let cursor_before = CursorPosition::new(
+                        self.editor.content.cursor_line,
+                        self.editor.content.cursor_col,
+                    );
 
                     self.editor.content.buffer.delete(start, end);
                     self.editor.content.cursor_line = prev_line;
                     self.editor.content.cursor_col = prev_len;
                     self.editor.content.is_dirty = true;
-                    if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+                    if let Some(tab) = self
+                        .editor
+                        .tab_bar
+                        .tabs
+                        .get_mut(self.editor.tab_bar.active_tab)
+                    {
                         tab.mark_dirty();
                     }
                     self.editor.content.buffer_version += 1;
 
-                    let cursor_after =
-                        CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+                    let cursor_after = CursorPosition::new(
+                        self.editor.content.cursor_line,
+                        self.editor.content.cursor_col,
+                    );
                     self.editor.content.history.record_delete(
                         start,
                         deleted_text,
@@ -512,21 +622,33 @@ impl EditorState {
         let next_pos = self.find_next_char_boundary(pos);
         if next_pos > pos {
             let deleted_text = self.editor.content.buffer.get_text(pos, next_pos);
-            let cursor_before =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+            let cursor_before = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
 
             self.editor.content.buffer.delete(pos, next_pos);
             self.editor.content.is_dirty = true;
-            if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+            if let Some(tab) = self
+                .editor
+                .tab_bar
+                .tabs
+                .get_mut(self.editor.tab_bar.active_tab)
+            {
                 tab.mark_dirty();
             }
             self.editor.content.buffer_version += 1;
 
-            let cursor_after =
-                CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
-            self.editor.content
-                .history
-                .record_delete(pos, deleted_text, cursor_before, cursor_after);
+            let cursor_after = CursorPosition::new(
+                self.editor.content.cursor_line,
+                self.editor.content.cursor_col,
+            );
+            self.editor.content.history.record_delete(
+                pos,
+                deleted_text,
+                cursor_before,
+                cursor_after,
+            );
             self.ui.status_message = "已修改".to_string();
             self.emit_edit_events();
         }
@@ -543,7 +665,10 @@ impl EditorState {
         }
 
         // REQ-P0-03: 记录操作前光标位置
-        let cursor_before = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_before = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
 
         // REQ-P0-03: 开始撤销组
         self.editor.content.history.begin_group();
@@ -557,7 +682,8 @@ impl EditorState {
             self.editor.content.buffer.insert(pos, &text);
 
             // REQ-P0-03: 记录撤销历史
-            self.editor.content
+            self.editor
+                .content
                 .history
                 .record_insert(pos, &text, cursor_before, cursor_before);
         }
@@ -571,11 +697,19 @@ impl EditorState {
         }
 
         self.editor.content.is_dirty = true;
-        if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
         self.editor.content.buffer_version += 1;
-        self.ui.status_message = format!("已在 {} 个位置插入", self.editor.multi_cursor.cursor_count());
+        self.ui.status_message = format!(
+            "已在 {} 个位置插入",
+            self.editor.multi_cursor.cursor_count()
+        );
         self.emit_edit_events();
     }
     /// 多光标删除（退格）广播
@@ -592,7 +726,8 @@ impl EditorState {
         // 使用克隆的 (idx, line, col) 避免对 cursors 的长期借用，便于后续可变修改
         let mut delete_info: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
         let mut indexed_cursors: Vec<(usize, usize, usize)> = self
-    .editor.multi_cursor
+            .editor
+            .multi_cursor
             .cursors
             .iter()
             .enumerate()
@@ -611,7 +746,10 @@ impl EditorState {
         }
 
         // REQ-P0-03: 记录操作前光标位置
-        let cursor_before = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_before = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
 
         // REQ-P0-03: 开始撤销组
         self.editor.content.history.begin_group();
@@ -621,9 +759,12 @@ impl EditorState {
             let deleted_text = self.editor.content.buffer.get_text(*start, *end);
             self.editor.content.buffer.delete(*start, *end);
 
-            self.editor.content
-                .history
-                .record_delete(*start, deleted_text, cursor_before, cursor_before);
+            self.editor.content.history.record_delete(
+                *start,
+                deleted_text,
+                cursor_before,
+                cursor_before,
+            );
         }
 
         // REQ-P0-03: 结束撤销组
@@ -646,7 +787,12 @@ impl EditorState {
         }
 
         self.editor.content.is_dirty = true;
-        if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
         self.editor.content.buffer_version += 1;
@@ -661,7 +807,10 @@ impl EditorState {
         }
 
         // REQ-P0-03: 记录操作前光标位置
-        let cursor_before = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_before = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
 
         // REQ-P0-03: 开始撤销组
         self.editor.content.history.begin_group();
@@ -673,7 +822,8 @@ impl EditorState {
             self.editor.content.buffer.insert(pos, "\n");
 
             // REQ-P0-03: 记录撤销历史
-            self.editor.content
+            self.editor
+                .content
                 .history
                 .record_insert(pos, "\n", cursor_before, cursor_before);
         }
@@ -688,7 +838,12 @@ impl EditorState {
         }
 
         self.editor.content.is_dirty = true;
-        if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
         self.editor.content.buffer_version += 1;
@@ -749,7 +904,10 @@ impl EditorState {
         // 检测是否已有注释前缀
         let stripped = line.strip_prefix(comment_prefix);
         let pos = self.line_byte_start(line_idx);
-        let cursor_before = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_before = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
 
         let removed_comment = stripped.is_some();
         if let Some(_rest) = stripped {
@@ -757,7 +915,8 @@ impl EditorState {
             let remove_len = comment_prefix.len();
             self.editor.content.buffer.delete(pos, pos + remove_len);
             // 光标列前移
-            self.editor.content.cursor_col = self.editor.content.cursor_col.saturating_sub(remove_len);
+            self.editor.content.cursor_col =
+                self.editor.content.cursor_col.saturating_sub(remove_len);
         } else {
             // 无注释：在行首添加前缀
             self.editor.content.buffer.insert(pos, comment_prefix);
@@ -766,12 +925,20 @@ impl EditorState {
         }
 
         self.editor.content.is_dirty = true;
-        if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
         self.editor.content.buffer_version += 1;
 
-        let cursor_after = CursorPosition::new(self.editor.content.cursor_line, self.editor.content.cursor_col);
+        let cursor_after = CursorPosition::new(
+            self.editor.content.cursor_line,
+            self.editor.content.cursor_col,
+        );
         if removed_comment {
             self.editor.content.history.record_delete(
                 pos,
@@ -780,9 +947,12 @@ impl EditorState {
                 cursor_after,
             );
         } else {
-            self.editor.content
-                .history
-                .record_insert(pos, comment_prefix, cursor_before, cursor_after);
+            self.editor.content.history.record_insert(
+                pos,
+                comment_prefix,
+                cursor_before,
+                cursor_after,
+            );
         }
         self.ui.status_message = "已切换注释".to_string();
     }

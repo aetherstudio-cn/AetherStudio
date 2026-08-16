@@ -731,7 +731,7 @@ fn spawn_ai_stream(
         s.start_time = Some(std::time::Instant::now());
         s.received_first_response = false;
     }
-    
+
     std::thread::spawn(move || {
         let client = AiClient::new(&settings);
         match client.chat_completion_stream(&messages) {
@@ -743,14 +743,14 @@ fn spawn_ai_stream(
                         }
                         break;
                     }
-                    
+
                     // 标记已收到首个响应
                     if let Ok(mut s) = stream_state.lock() {
                         if !s.received_first_response {
                             s.received_first_response = true;
                         }
                     }
-                    
+
                     match event {
                         AiStreamEvent::Token(token) => {
                             if let Ok(mut s) = stream_state.lock() {
@@ -777,10 +777,20 @@ fn spawn_ai_stream(
                         AiStreamEvent::Error(err) => {
                             if let Ok(mut s) = stream_state.lock() {
                                 // 区分本地调用失败和 API 返回错误
-                                let error_msg = if err.contains("network") || err.contains("connection") || err.contains("dns") || err.contains("ssl") {
-                                    format!("[本地调用失败] 网络请求无法发出：{}", sanitize_error(&err))
+                                let error_msg = if err.contains("network")
+                                    || err.contains("connection")
+                                    || err.contains("dns")
+                                    || err.contains("ssl")
+                                {
+                                    format!(
+                                        "[本地调用失败] 网络请求无法发出：{}",
+                                        sanitize_error(&err)
+                                    )
                                 } else {
-                                    format!("[API 返回错误] 服务器返回错误：{}", sanitize_error(&err))
+                                    format!(
+                                        "[API 返回错误] 服务器返回错误：{}",
+                                        sanitize_error(&err)
+                                    )
                                 };
                                 s.error = Some(error_msg);
                                 s.done = true;
@@ -800,14 +810,15 @@ fn spawn_ai_stream(
                     } else {
                         ""
                     };
-                    
+
                     // 区分本地调用失败和 API 返回错误
-                    let error_type = if error_msg.contains("网络") || error_msg.contains("连接") {
+                    let error_type = if error_msg.contains("网络") || error_msg.contains("连接")
+                    {
                         "[本地调用失败]"
                     } else {
                         "[API 返回错误]"
                     };
-                    
+
                     s.error = Some(format!("{} 请求失败: {}{}", error_type, error_msg, hint));
                     s.done = true;
                 }
@@ -1346,14 +1357,14 @@ impl AiPanel {
             }
         }
     }
-    
+
     /// 检测当前会话是否超时（30秒无响应）
     /// 返回 true 表示已超时且尚未收到任何响应
     pub fn check_timeout(&self) -> bool {
         if !self.is_generating {
             return false;
         }
-        
+
         if let Ok(s) = self.stream_state.lock() {
             if let Some(start_time) = s.start_time {
                 // 超过30秒且未收到任何响应
@@ -1362,19 +1373,19 @@ impl AiPanel {
                 }
             }
         }
-        
+
         false
     }
-    
+
     /// 处理超时情况：添加超时提示消息
     pub fn handle_timeout(&mut self) {
         if !self.check_timeout() {
             return;
         }
-        
+
         // 停止当前生成
         self.stop_generation();
-        
+
         // 添加超时提示消息
         let timeout_msg = "[超时] AI 响应超时\n\n\
             可能的原因：\n\
@@ -1386,7 +1397,7 @@ impl AiPanel {
             • 稍后重试\n\
             • 简化请求内容\n\
             • 联系 API 服务提供商确认服务状态";
-        
+
         self.add_assistant_message(timeout_msg.to_string());
     }
 
@@ -1501,19 +1512,23 @@ impl AiPanel {
         self.stick_to_bottom = true;
         self.sync_hot_data();
     }
-    
+
     /// 添加待确认消息：当 AI 对用户请求存在歧义时主动发起反问
-    /// 
+    ///
     /// # 参数
     /// * `questions` - 需要用户澄清的具体问题点列表
     /// * `options` - 可选的快捷选项按钮列表（如适用）
-    pub fn add_pending_confirmation_message(&mut self, questions: Vec<String>, options: Option<Vec<String>>) {
+    pub fn add_pending_confirmation_message(
+        &mut self,
+        questions: Vec<String>,
+        options: Option<Vec<String>>,
+    ) {
         let mut content = String::from("[待确认] 需要您澄清以下问题：\n\n");
-            
+
         for (i, question) in questions.iter().enumerate() {
             content.push_str(&format!("{}. {}\n", i + 1, question));
         }
-            
+
         if let Some(opts) = options {
             if !opts.is_empty() {
                 content.push_str("\n快捷选项：\n");
@@ -1522,26 +1537,27 @@ impl AiPanel {
                 }
             }
         }
-            
-        self.messages.push(AiMessage::new(AiRole::PendingConfirmation, content));
+
+        self.messages
+            .push(AiMessage::new(AiRole::PendingConfirmation, content));
         self.stick_to_bottom = true;
         self.sync_hot_data();
     }
 
     /// 发送消息（AI-H01: 非阻塞 — HTTP 调用在后台线程执行，结果通过 stream_state 流式返回）
-    /// 
+    ///
     /// 智能判断模式：根据用户输入内容自动判断是简单问答还是执行任务
     pub fn send_message(&mut self, settings: &AiSettings) -> Result<String, String> {
         self.agent_iter_count = 0;
         self.agent_pipeline = None;
-        
+
         // 智能判断模式：根据用户输入内容自动判断是简单问答还是执行任务
         let mode = self.detect_mode_from_input(&self.input);
         self.send_message_internal(settings, self.input.clone(), mode, None)
     }
-    
+
     /// 根据用户输入内容智能判断模式
-    /// 
+    ///
     /// 判断逻辑：
     /// 1. 如果输入包含文件操作关键词（如"创建文件"、"修改代码"、"删除文件"等），则使用 Agent 模式
     /// 2. 如果输入包含命令执行关键词（如"运行命令"、"执行脚本"等），则使用 Agent 模式
@@ -1549,53 +1565,94 @@ impl AiPanel {
     /// 4. 否则使用 Ask 模式（简单问答）
     fn detect_mode_from_input(&self, input: &str) -> AiMode {
         let input_lower = input.to_lowercase();
-        
+
         // 文件操作关键词
         let file_keywords = [
-            "创建文件", "新建文件", "修改文件", "删除文件", "重写文件",
-            "创建代码", "修改代码", "删除代码", "重构代码",
-            "生成文件", "保存文件", "写入文件",
-            "create file", "modify file", "delete file", "write file",
-            "generate code", "refactor code", "update file"
+            "创建文件",
+            "新建文件",
+            "修改文件",
+            "删除文件",
+            "重写文件",
+            "创建代码",
+            "修改代码",
+            "删除代码",
+            "重构代码",
+            "生成文件",
+            "保存文件",
+            "写入文件",
+            "create file",
+            "modify file",
+            "delete file",
+            "write file",
+            "generate code",
+            "refactor code",
+            "update file",
         ];
-        
+
         // 命令执行关键词
         let command_keywords = [
-            "运行命令", "执行命令", "运行脚本", "执行脚本",
-            "运行程序", "执行程序", "启动服务", "停止服务",
-            "run command", "execute command", "run script", "execute script",
-            "start service", "stop service", "run program"
+            "运行命令",
+            "执行命令",
+            "运行脚本",
+            "执行脚本",
+            "运行程序",
+            "执行程序",
+            "启动服务",
+            "停止服务",
+            "run command",
+            "execute command",
+            "run script",
+            "execute script",
+            "start service",
+            "stop service",
+            "run program",
         ];
-        
+
         // 多步骤任务关键词
         let task_keywords = [
-            "步骤", "计划", "任务", "流程", "阶段",
-            "第一步", "第二步", "第三步", "首先", "然后", "最后",
-            "step", "plan", "task", "process", "stage",
-            "first", "then", "next", "finally"
+            "步骤",
+            "计划",
+            "任务",
+            "流程",
+            "阶段",
+            "第一步",
+            "第二步",
+            "第三步",
+            "首先",
+            "然后",
+            "最后",
+            "step",
+            "plan",
+            "task",
+            "process",
+            "stage",
+            "first",
+            "then",
+            "next",
+            "finally",
         ];
-        
+
         // 检查是否包含文件操作关键词
         for keyword in &file_keywords {
             if input_lower.contains(keyword) {
                 return AiMode::Agent;
             }
         }
-        
+
         // 检查是否包含命令执行关键词
         for keyword in &command_keywords {
             if input_lower.contains(keyword) {
                 return AiMode::Agent;
             }
         }
-        
+
         // 检查是否包含多步骤任务关键词
         for keyword in &task_keywords {
             if input_lower.contains(keyword) {
                 return AiMode::Agent;
             }
         }
-        
+
         // 默认为简单问答模式
         AiMode::Ask
     }
@@ -1975,13 +2032,13 @@ impl AiPanel {
         self.input.insert_str(self.caret_pos, text);
         self.caret_pos += text.len();
     }
-    
+
     /// 重试上一次请求：使用最后一条用户消息重新发送
     pub fn retry_last_request(&mut self, settings: &AiSettings) -> Result<String, String> {
         if self.is_generating {
             return Err("正在等待上一次回复，请稍后再试".to_string());
         }
-        
+
         // 查找最后一条用户消息
         let last_user_msg = self
             .messages
@@ -1989,13 +2046,13 @@ impl AiPanel {
             .rev()
             .find(|m| m.role == AiRole::User)
             .map(|m| m.content.clone());
-        
+
         if let Some(input) = last_user_msg {
             // 移除最后一条助手消息（错误消息）
             if matches!(self.messages.last(), Some(m) if m.role == AiRole::Assistant) {
                 self.messages.pop();
             }
-            
+
             // 重新发送
             self.input = input;
             self.send_message(settings)

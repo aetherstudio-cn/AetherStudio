@@ -13,7 +13,8 @@ impl EditorState {
         rect: &D2D_RECT_F,
     ) {
         let bg_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.155, 0.155, 0.17, 1.0))
             .unwrap();
@@ -24,7 +25,8 @@ impl EditorState {
         };
         target.FillRoundedRectangle(&rounded, &bg_brush);
         let border_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.26, 0.26, 0.28, 1.0))
             .unwrap();
@@ -41,7 +43,8 @@ impl EditorState {
         badge: Option<bool>,
     ) {
         let label_format = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .text_format_cache
             .get_format(
                 12.0,
@@ -51,7 +54,8 @@ impl EditorState {
             )
             .unwrap();
         let label_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.62, 0.62, 0.65, 1.0))
             .unwrap();
@@ -95,7 +99,8 @@ impl EditorState {
                     bottom: badge_cy + badge_h / 2.0,
                 };
                 let badge_bg_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &badge_bg)
                     .unwrap();
@@ -106,12 +111,14 @@ impl EditorState {
                 };
                 target.FillRoundedRectangle(&badge_rounded, &badge_bg_brush);
                 let badge_text_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &badge_color)
                     .unwrap();
                 let badge_format = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .get_format(
                         11.0,
@@ -132,7 +139,8 @@ impl EditorState {
             }
             None => {
                 let value_format = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .get_format(
                         12.0,
@@ -142,7 +150,8 @@ impl EditorState {
                     )
                     .unwrap();
                 let value_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.92, 0.92, 0.92, 1.0))
                     .unwrap();
@@ -168,15 +177,16 @@ impl EditorState {
         y: f32,
     ) -> f32 {
         let billing_history = &self.ui.app_settings.billing_history;
-        
+
         // 计算总费用和总 token 数量
         let total_cost = billing_history.total_cost();
         let total_tokens = billing_history.total_tokens();
         let cache_hit_rate = billing_history.cache_hit_rate();
-        
+
         // 绘制标题
         let title_format = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .text_format_cache
             .get_format(
                 14.0,
@@ -186,7 +196,8 @@ impl EditorState {
             )
             .unwrap();
         let title_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.92, 0.92, 0.92, 1.0))
             .unwrap();
@@ -205,9 +216,9 @@ impl EditorState {
             D2D1_DRAW_TEXT_OPTIONS_NONE,
             DWRITE_MEASURING_MODE_NATURAL,
         );
-        
+
         let mut current_y = y + 30.0;
-        
+
         // 绘制总费用卡片
         let cost_card_rect = D2D_RECT_F {
             left: x,
@@ -216,10 +227,11 @@ impl EditorState {
             bottom: current_y + 80.0,
         };
         self.draw_settings_card(target, &cost_card_rect);
-        
+
         // 绘制总费用
         let cost_format = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .text_format_cache
             .get_format(
                 24.0,
@@ -229,7 +241,8 @@ impl EditorState {
             )
             .unwrap();
         let cost_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.30, 0.80, 0.48, 1.0))
             .unwrap();
@@ -249,10 +262,11 @@ impl EditorState {
             D2D1_DRAW_TEXT_OPTIONS_NONE,
             DWRITE_MEASURING_MODE_NATURAL,
         );
-        
+
         // 绘制总费用标签
         let cost_label_format = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .text_format_cache
             .get_format(
                 12.0,
@@ -262,7 +276,8 @@ impl EditorState {
             )
             .unwrap();
         let cost_label_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.62, 0.62, 0.65, 1.0))
             .unwrap();
@@ -281,24 +296,21 @@ impl EditorState {
             D2D1_DRAW_TEXT_OPTIONS_NONE,
             DWRITE_MEASURING_MODE_NATURAL,
         );
-        
+
         current_y += 90.0;
-        
+
         // 绘制统计数据行
         let stats_rows = vec![
             ("总 Token 数量", format!("{}", total_tokens), None),
-            ("缓存命中率", format!("{:.1}%", cache_hit_rate * 100.0), None),
+            (
+                "缓存命中率",
+                format!("{:.1}%", cache_hit_rate * 100.0),
+                None,
+            ),
         ];
-        
-        current_y = self.draw_settings_group(
-            target,
-            "统计数据",
-            x,
-            w,
-            current_y,
-            &stats_rows,
-        );
-        
+
+        current_y = self.draw_settings_group(target, "统计数据", x, w, current_y, &stats_rows);
+
         current_y
     }
 
@@ -314,7 +326,8 @@ impl EditorState {
     ) -> f32 {
         // 分组标题（位于卡片上方）
         let group_title_format = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .text_format_cache
             .get_format(
                 12.0,
@@ -324,7 +337,8 @@ impl EditorState {
             )
             .unwrap();
         let group_title_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.55, 0.55, 0.58, 1.0))
             .unwrap();
@@ -357,7 +371,8 @@ impl EditorState {
 
         // 设置行 + 行间分隔线
         let row_sep_brush = self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.22, 0.22, 0.24, 1.0))
             .unwrap();
@@ -404,7 +419,8 @@ impl EditorState {
             // 矢量时钟图标：圆环 + 两根指针
             let icon_color = color_f(0.35, 0.35, 0.38, 1.0);
             let icon_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &icon_color)
                 .unwrap();
@@ -438,7 +454,8 @@ impl EditorState {
 
             // 标题
             let title_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     14.0,
@@ -448,7 +465,8 @@ impl EditorState {
                 )
                 .unwrap();
             let title_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.75, 0.75, 0.78, 1.0))
                 .unwrap();
@@ -470,7 +488,8 @@ impl EditorState {
 
             // 说明
             let desc_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -480,7 +499,8 @@ impl EditorState {
                 )
                 .unwrap();
             let desc_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.52, 0.52, 0.55, 1.0))
                 .unwrap();
@@ -515,7 +535,8 @@ impl EditorState {
         unsafe {
             // 公共文本格式
             let nav_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -525,7 +546,8 @@ impl EditorState {
                 )
                 .unwrap();
             let label_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -535,7 +557,8 @@ impl EditorState {
                 )
                 .unwrap();
             let input_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -545,7 +568,8 @@ impl EditorState {
                 )
                 .unwrap();
             let title_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     16.0,
@@ -555,7 +579,8 @@ impl EditorState {
                 )
                 .unwrap();
             let button_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -568,7 +593,8 @@ impl EditorState {
             // 整体背景（右侧内容区）
             let content_bg = color_f(0.12, 0.12, 0.12, 1.0);
             let content_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &content_bg)
                 .unwrap();
@@ -589,7 +615,8 @@ impl EditorState {
             // 导航栏背景（稍亮，与右侧区分）
             let nav_bg = color_f(0.10, 0.10, 0.10, 1.0);
             let nav_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &nav_bg)
                 .unwrap();
@@ -604,7 +631,8 @@ impl EditorState {
             // 右侧分隔线
             let sep_color = color_f(0.2, 0.2, 0.2, 1.0);
             let sep_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
@@ -620,7 +648,8 @@ impl EditorState {
             if self.ui.settings_panel.hover_nav_resize || self.ui.settings_panel.nav_resizing {
                 let handle_color = color_f(0.0, 0.47, 0.83, 1.0);
                 let handle_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &handle_color)
                     .unwrap();
@@ -636,7 +665,8 @@ impl EditorState {
             // 导航标题
             let nav_title: Vec<u16> = "设置".encode_utf16().chain(Some(0)).collect();
             let nav_title_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     16.0,
@@ -678,7 +708,8 @@ impl EditorState {
                         color_f(0.20, 0.20, 0.22, 1.0)
                     };
                     let item_bg_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &item_bg)
                         .unwrap();
@@ -700,7 +731,8 @@ impl EditorState {
                 if is_active {
                     let accent = color_f(0.0, 0.47, 0.83, 1.0);
                     let accent_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &accent)
                         .unwrap();
@@ -724,7 +756,8 @@ impl EditorState {
                     color_f(0.75, 0.75, 0.75, 1.0)
                 };
                 let item_text_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &item_text_color)
                     .unwrap();
@@ -744,7 +777,8 @@ impl EditorState {
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
 
-                self.ui.settings_panel
+                self.ui
+                    .settings_panel
                     .add_tab_region(*tab, nav_x, item_y, nav_w, nav_item_h);
             }
 
@@ -789,7 +823,8 @@ impl EditorState {
             // 页面描述
             let page_desc_wide: Vec<u16> = page_desc.encode_utf16().chain(Some(0)).collect();
             let page_desc_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.52, 0.52, 0.55, 1.0))
                 .unwrap();
@@ -919,7 +954,8 @@ impl EditorState {
         unsafe {
             let mut cy = start_y;
             let small_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -929,22 +965,26 @@ impl EditorState {
                 )
                 .unwrap();
             let white_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.9, 0.9, 0.9, 1.0))
                 .unwrap();
             let dim_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.55, 0.56, 0.60, 1.0))
                 .unwrap();
 
             // 标题
-            let header: Vec<u16> =
-                format!("已沉淀策略（共 {} 条）", self.ai.ai_panel.playbook_items.len())
-                    .encode_utf16()
-                    .chain(Some(0))
-                    .collect();
+            let header: Vec<u16> = format!(
+                "已沉淀策略（共 {} 条）",
+                self.ai.ai_panel.playbook_items.len()
+            )
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
             let header_rect = D2D_RECT_F {
                 left: x,
                 top: cy,
@@ -1072,7 +1112,8 @@ impl EditorState {
 
             // 提示
             let hint_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -1086,7 +1127,8 @@ impl EditorState {
                 .chain(Some(0))
                 .collect();
             let hint_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.50, 0.50, 0.53, 1.0))
                 .unwrap();
@@ -1123,7 +1165,8 @@ impl EditorState {
             // 分组标题「窗口」
             let group_title: Vec<u16> = "窗口".encode_utf16().chain(Some(0)).collect();
             let group_title_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -1164,7 +1207,8 @@ impl EditorState {
 
             // 描述文字
             let desc_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -1174,7 +1218,8 @@ impl EditorState {
                 )
                 .unwrap();
             let desc_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.50, 0.50, 0.53, 1.0))
                 .unwrap();

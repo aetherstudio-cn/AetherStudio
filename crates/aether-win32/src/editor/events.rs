@@ -25,7 +25,10 @@ impl EditorState {
         self.win.text_renderer.set_font_size(new_size);
         // 重建文本格式缓存（与 set_font_size 同步，避免渲染时使用旧格式）
         let fs = self.win.text_renderer.font_size();
-        self.win.render_ctx.text_format_cache.init_common_formats(fs);
+        self.win
+            .render_ctx
+            .text_format_cache
+            .init_common_formats(fs);
         self.ui.status_message = format!("字体大小: {:.1} px", fs);
     }
     /// 发射一个编辑器事件到事件队列
@@ -36,7 +39,8 @@ impl EditorState {
     pub fn request_inline_completion(&mut self) {
         // 收集光标前后文本作为上下文
         let prefix = self
-    .editor.content
+            .editor
+            .content
             .buffer
             .get_line(self.editor.content.cursor_line)
             .map(|s| {
@@ -45,7 +49,8 @@ impl EditorState {
             })
             .unwrap_or_default();
         let suffix = self
-    .editor.content
+            .editor
+            .content
             .buffer
             .get_line(self.editor.content.cursor_line)
             .map(|s| {
@@ -54,13 +59,18 @@ impl EditorState {
             })
             .unwrap_or_default();
 
-        if let Some(suggestion) = self.editor.inline_completion_service.request(&prefix, &suffix) {
-            self.editor.content.inline_completion = Some(crate::inline_completion::InlineCompletion {
-                text: suggestion.text,
-                trigger_line: self.editor.content.cursor_line,
-                trigger_col: self.editor.content.cursor_col,
-                version: suggestion.version,
-            });
+        if let Some(suggestion) = self
+            .editor
+            .inline_completion_service
+            .request(&prefix, &suffix)
+        {
+            self.editor.content.inline_completion =
+                Some(crate::inline_completion::InlineCompletion {
+                    text: suggestion.text,
+                    trigger_line: self.editor.content.cursor_line,
+                    trigger_col: self.editor.content.cursor_col,
+                    version: suggestion.version,
+                });
             self.emit_event(crate::events::EditorEvent::CursorMoved);
         }
     }
@@ -87,7 +97,12 @@ impl EditorState {
         self.editor.content.buffer.insert(pos, &comp.text);
         self.editor.content.cursor_col += comp.text.len();
         self.editor.content.is_dirty = true;
-        if let Some(tab) = self.editor.tab_bar.tabs.get_mut(self.editor.tab_bar.active_tab) {
+        if let Some(tab) = self
+            .editor
+            .tab_bar
+            .tabs
+            .get_mut(self.editor.tab_bar.active_tab)
+        {
             tab.mark_dirty();
         }
         self.editor.content.buffer_version += 1;
@@ -116,7 +131,8 @@ impl EditorState {
         // REQ-P1-03: 用字符列（而非字节偏移）计算脏矩形光标 x 坐标，
         // 避免非 ASCII 文本时光标残影/撕裂
         let char_col = self
-    .editor.content
+            .editor
+            .content
             .buffer
             .get_line(self.editor.content.cursor_line)
             .map(|line| {
@@ -127,10 +143,11 @@ impl EditorState {
         let cursor_x =
             editor_region.x + 60.0 + 5.0 + char_col as f32 * self.win.text_renderer.char_width()
                 - self.editor.content.scroll_x;
-        let cursor_y =
-            editor_region.y + self.editor.content.cursor_line as f32 * line_height - self.editor.content.scroll_y;
+        let cursor_y = editor_region.y + self.editor.content.cursor_line as f32 * line_height
+            - self.editor.content.scroll_y;
 
-        self.input.event_queue
+        self.input
+            .event_queue
             .drain_to_dirty_tracker(&mut self.win.dirty_tracker, |event| {
                 use crate::events::EditorEvent;
                 match event {
@@ -326,7 +343,9 @@ impl EditorState {
             crate::menu_bar::CommandId::SearchGlobal => {
                 self.ui.search_panel.toggle();
                 if self.ui.search_panel.visible {
-                    self.ui.search_panel.search(self.fs.current_folder.as_deref());
+                    self.ui
+                        .search_panel
+                        .search(self.fs.current_folder.as_deref());
                 }
             }
             crate::menu_bar::CommandId::AiFixDiagnostics => {
@@ -343,15 +362,20 @@ impl EditorState {
                     // 启动周期刷新定时器以显示异步 shell 输出
                     unsafe {
                         let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
-                            self.win.hwnd, 0xA002, 50, None,
+                            self.win.hwnd,
+                            0xA002,
+                            50,
+                            None,
                         );
                     }
                 } else {
                     self.terminal.terminal_panel.focused = false;
                     self.set_terminal_ime_bypass(false);
                     unsafe {
-                        let _ =
-                            windows::Win32::UI::WindowsAndMessaging::KillTimer(self.win.hwnd, 0xA002);
+                        let _ = windows::Win32::UI::WindowsAndMessaging::KillTimer(
+                            self.win.hwnd,
+                            0xA002,
+                        );
                     }
                 }
                 self.ui.status_message = if self.ui.layout.bottom_panel_visible {
@@ -396,7 +420,8 @@ impl EditorState {
             );
             // 检查可见区域是否已有高亮缓存
             let has_highlight = (visible_start..visible_end.min(total_lines)).all(|i| {
-                i < self.editor.content.cached_tokens.len() && !self.editor.content.cached_tokens[i].is_empty()
+                i < self.editor.content.cached_tokens.len()
+                    && !self.editor.content.cached_tokens[i].is_empty()
             });
             if has_highlight {
                 return; // 缓存完整，0延迟渲染
@@ -437,11 +462,14 @@ impl EditorState {
         self.rebuild_line_y_offsets();
 
         // P0-A: 平移行文本缓存窗口
-        self.editor.content.slide_cache_window(cache_start, window_len);
+        self.editor
+            .content
+            .slide_cache_window(cache_start, window_len);
 
         // tokens 仍为全文件索引，行数变化时调整
         if self.editor.content.cached_tokens.len() != total_lines {
-            self.editor.content
+            self.editor
+                .content
                 .cached_tokens
                 .resize_with(total_lines, Vec::new);
         }
@@ -455,10 +483,12 @@ impl EditorState {
         if let Some(ref mut gpu_lexer) = self.win.gpu_highlighter {
             if self.win.gpu_highlight_config.enabled
                 && !self.editor.content.is_large_file
-                && self.editor.content.buffer.len_bytes() >= self.win.gpu_highlight_config.min_file_size
+                && self.editor.content.buffer.len_bytes()
+                    >= self.win.gpu_highlight_config.min_file_size
             {
                 let vp_cache = self
-    .editor.content
+                    .editor
+                    .content
                     .viewport_highlight_cache
                     .get_or_insert_with(aether_render::gpu::viewport::ViewportHighlightCache::new);
 
@@ -466,11 +496,16 @@ impl EditorState {
                 // 1. 视口范围变化 2. buffer_version 变化（内容编辑）
                 let vp_changed =
                     vp_cache.window_start() != cache_start || vp_cache.window_len() != window_len;
-                let content_changed = vp_cache.buffer_version() != self.editor.content.buffer_version;
+                let content_changed =
+                    vp_cache.buffer_version() != self.editor.content.buffer_version;
                 let need_gpu_rebuild = vp_changed || content_changed || vp_cache.is_empty();
 
                 if need_gpu_rebuild {
-                    vp_cache.resize_window(cache_start, window_len, self.editor.content.buffer_version);
+                    vp_cache.resize_window(
+                        cache_start,
+                        window_len,
+                        self.editor.content.buffer_version,
+                    );
 
                     let current_lines: Vec<String> = (cache_start..cache_end)
                         .map(|i| self.editor.content.buffer.get_line(i).unwrap_or_default())
@@ -495,13 +530,15 @@ impl EditorState {
 
                                 for line_idx in cache_start..cache_end {
                                     let line_start = self
-    .editor.content
+                                        .editor
+                                        .content
                                         .buffer
                                         .line_byte_range(line_idx)
                                         .map(|(s, _)| s as u32)
                                         .unwrap_or(0);
                                     let line_end = self
-    .editor.content
+                                        .editor
+                                        .content
                                         .buffer
                                         .line_byte_range(line_idx)
                                         .map(|(_, e)| e as u32)
@@ -562,7 +599,9 @@ impl EditorState {
         for i in viewport_start..viewport_end {
             if i >= cache_start && i < cache_end {
                 let slot = i - cache_start;
-                if self.editor.content.line_cache_versions[slot] != self.editor.content.buffer_version {
+                if self.editor.content.line_cache_versions[slot]
+                    != self.editor.content.buffer_version
+                {
                     self.highlight_line(i, slot, gpu_highlighted, &mut lexer);
                 }
             }
@@ -572,7 +611,9 @@ impl EditorState {
         for i in extended_start..extended_end {
             if i < viewport_start || i >= viewport_end {
                 let slot = i - cache_start;
-                if self.editor.content.line_cache_versions[slot] != self.editor.content.buffer_version {
+                if self.editor.content.line_cache_versions[slot]
+                    != self.editor.content.buffer_version
+                {
                     self.highlight_line(i, slot, gpu_highlighted, &mut lexer);
                 }
             }
@@ -587,7 +628,12 @@ impl EditorState {
         gpu_highlighted: bool,
         lexer: &mut Option<Box<dyn aether_core::lexer::Lexer>>,
     ) {
-        let line = self.editor.content.buffer.get_line(line_idx).unwrap_or_default();
+        let line = self
+            .editor
+            .content
+            .buffer
+            .get_line(line_idx)
+            .unwrap_or_default();
 
         if self.editor.content.is_large_file {
             self.editor.content.cached_lines[slot] = line;

@@ -185,7 +185,14 @@ pub(crate) unsafe fn on_mouse_move(
     }
     // 文件树拖拽：按下候选节点后处理阈值判定与放置目标/浮标更新。
     // 进入拖拽后独占本次消息（跳过 hover/tooltip 更新，避免高亮叠加）。
-    if is_dragging && state.borrow().input.mouse_press.file_tree_drag_node.is_some() {
+    if is_dragging
+        && state
+            .borrow()
+            .input
+            .mouse_press
+            .file_tree_drag_node
+            .is_some()
+    {
         let mut st = state.borrow_mut();
         let changed = st.file_drag_update(mouse_x, mouse_y);
         let dragging_now = st.input.mouse_press.file_tree_dragging;
@@ -361,15 +368,17 @@ unsafe fn omm_early_returns(
         }
         // 子菜单项 hover 追踪
         let cur_active = st.ui.menu_bar.active_index.unwrap_or(0);
-        st.ui.menu_bar.submenu_hover = st
-            .ui.menu_bar
-            .item_x_positions
-            .get(cur_active)
-            .and_then(|&sx| {
-                let sy = titlebar_region.y + titlebar_region.height;
-                st.ui.menu_bar
-                    .hit_test_submenu(cur_active, mouse_x, mouse_y, sx, sy)
-            });
+        st.ui.menu_bar.submenu_hover =
+            st.ui
+                .menu_bar
+                .item_x_positions
+                .get(cur_active)
+                .and_then(|&sx| {
+                    let sy = titlebar_region.y + titlebar_region.height;
+                    st.ui
+                        .menu_bar
+                        .hit_test_submenu(cur_active, mouse_x, mouse_y, sx, sy)
+                });
         let changed = old_menu_hover != st.ui.menu_bar.hover_index
             || old_submenu_hover != st.ui.menu_bar.submenu_hover;
         if changed {
@@ -390,9 +399,12 @@ unsafe fn omm_early_returns(
                     } else {
                         200.0
                     };
-                    let sh = item.items.iter().map(|mi| {
-                        if mi.label == "-" { 8.0 } else { 26.0 }
-                    }).sum::<f32>() + 16.0; // 8px top + 8px bottom padding
+                    let sh = item
+                        .items
+                        .iter()
+                        .map(|mi| if mi.label == "-" { 8.0 } else { 26.0 })
+                        .sum::<f32>()
+                        + 16.0; // 8px top + 8px bottom padding
                     st.win.dirty_tracker.mark_region(
                         sx,
                         sy,
@@ -492,7 +504,11 @@ unsafe fn omm_early_returns(
     }
     // 活动栏右键上下文菜单：更新 hover 状态
     if st.ui.context_menus.activity_bar.visible {
-        let changed = st.ui.context_menus.activity_bar.update_hover(mouse_x, mouse_y);
+        let changed = st
+            .ui
+            .context_menus
+            .activity_bar
+            .update_hover(mouse_x, mouse_y);
         if changed {
             let mx = st.ui.context_menus.activity_bar.x;
             let my = st.ui.context_menus.activity_bar.y;
@@ -537,7 +553,8 @@ unsafe fn omm_early_returns(
         }
     }
     // 自定义模式下：跟随鼠标更新放置目标
-    let activity_dragging = st.ui.activity_bar.customize_mode && st.ui.activity_bar.drag_index.is_some();
+    let activity_dragging =
+        st.ui.activity_bar.customize_mode && st.ui.activity_bar.drag_index.is_some();
     let menu_dragging = st.ui.menu_bar.customize_mode && st.ui.menu_bar.drag_index.is_some();
     if is_dragging && activity_dragging {
         let bar_y = layout.activity_bar_region().y;
@@ -648,9 +665,11 @@ unsafe fn omm_titlebar_menu_hover(
         let btn_width = 40.0;
         let minimize_x = titlebar_region.x + titlebar_region.width - btn_width * 3.0;
         if mouse_x < minimize_x {
-            st.ui.menu_bar.hover_index =
-                st.ui.menu_bar
-                    .hit_test(mouse_x, mouse_y - titlebar_region.y, titlebar_region.height);
+            st.ui.menu_bar.hover_index = st.ui.menu_bar.hit_test(
+                mouse_x,
+                mouse_y - titlebar_region.y,
+                titlebar_region.height,
+            );
         } else {
             st.ui.menu_bar.hover_index = None;
         }
@@ -669,15 +688,17 @@ unsafe fn omm_titlebar_menu_hover(
             }
         }
         let cur_active = st.ui.menu_bar.active_index.unwrap_or(active_idx);
-        st.ui.menu_bar.submenu_hover = st
-            .ui.menu_bar
-            .item_x_positions
-            .get(cur_active)
-            .and_then(|&sx| {
-                let sy = titlebar_region.y + titlebar_region.height;
-                st.ui.menu_bar
-                    .hit_test_submenu(cur_active, mouse_x, mouse_y, sx, sy)
-            });
+        st.ui.menu_bar.submenu_hover =
+            st.ui
+                .menu_bar
+                .item_x_positions
+                .get(cur_active)
+                .and_then(|&sx| {
+                    let sy = titlebar_region.y + titlebar_region.height;
+                    st.ui
+                        .menu_bar
+                        .hit_test_submenu(cur_active, mouse_x, mouse_y, sx, sy)
+                });
     } else {
         st.ui.menu_bar.submenu_hover = None;
     }
@@ -697,9 +718,10 @@ unsafe fn omm_activity_tab_hover(
     // 活动栏悬停
     let activity_region = layout.activity_bar_region();
     let old_activity_hover = st.ui.activity_bar.hover_index;
-    st.ui.activity_bar.hover_index = st
-        .ui.activity_bar
-        .hit_test(mouse_x, mouse_y, activity_region.y);
+    st.ui.activity_bar.hover_index =
+        st.ui
+            .activity_bar
+            .hit_test(mouse_x, mouse_y, activity_region.y);
     let activity_changed = old_activity_hover != st.ui.activity_bar.hover_index;
     // 标签栏悬停
     let editor_content = layout.editor_content_region(st.show_tab_bar());
@@ -839,7 +861,10 @@ unsafe fn omm_settings_hover(
             || (st.ui.settings_panel.active_tab == crate::settings::SettingsTab::Models
                 && st.ui.settings_panel.model_editing)
         {
-            let new_eye_hover = st.ui.settings_panel.hit_test_api_key_toggle(mouse_x, mouse_y);
+            let new_eye_hover = st
+                .ui
+                .settings_panel
+                .hit_test_api_key_toggle(mouse_x, mouse_y);
             if st.ui.settings_panel.hover_api_key_toggle != new_eye_hover {
                 st.ui.settings_panel.hover_api_key_toggle = new_eye_hover;
                 changed = true;
@@ -892,7 +917,10 @@ unsafe fn omm_settings_hover(
             changed = true;
         }
         // 响应格式分段悬停态
-        let new_fmt_hover = st.ui.settings_panel.hit_test_response_format(mouse_x, mouse_y);
+        let new_fmt_hover = st
+            .ui
+            .settings_panel
+            .hit_test_response_format(mouse_x, mouse_y);
         if st.ui.settings_panel.hover_response_format != new_fmt_hover {
             st.ui.settings_panel.hover_response_format = new_fmt_hover;
             changed = true;
@@ -913,7 +941,8 @@ unsafe fn omm_ai_hover(
     // 不受右面板区域限制），直接用浮窗条目命中区更新 hover_tab。
     if st.ai.ai_panel.history_open {
         let in_win = st
-            .ai.ai_panel
+            .ai
+            .ai_panel
             .history_win_region
             .map(|(px, py, pw, ph)| {
                 mouse_x >= px && mouse_x < px + pw && mouse_y >= py && mouse_y < py + ph
@@ -921,7 +950,8 @@ unsafe fn omm_ai_hover(
             .unwrap_or(false);
         let old_tab_hover = st.ai.ai_panel.hover_tab;
         st.ai.ai_panel.hover_tab = if in_win {
-            st.ai.ai_panel
+            st.ai
+                .ai_panel
                 .history_item_regions
                 .iter()
                 .find(|(_, rx, ry, rw, rh)| {
@@ -955,7 +985,8 @@ unsafe fn omm_ai_hover(
         // 历史条目 / 会话标签悬停（命中区为绝对坐标）
         let old_tab_hover = st.ai.ai_panel.hover_tab;
         st.ai.ai_panel.hover_tab = if st.ai.ai_panel.history_open {
-            st.ai.ai_panel
+            st.ai
+                .ai_panel
                 .history_item_regions
                 .iter()
                 .find(|(_, rx, ry, rw, rh)| {
@@ -963,7 +994,8 @@ unsafe fn omm_ai_hover(
                 })
                 .map(|(i, ..)| *i)
         } else {
-            st.ai.ai_panel
+            st.ai
+                .ai_panel
                 .tab_regions
                 .iter()
                 .find(|(_, rx, ry, rw, rh)| {
@@ -971,7 +1003,8 @@ unsafe fn omm_ai_hover(
                 })
                 .map(|(i, ..)| *i)
         };
-        old_apply_hover != st.ai.ai_panel.hover_apply_button || old_tab_hover != st.ai.ai_panel.hover_tab
+        old_apply_hover != st.ai.ai_panel.hover_apply_button
+            || old_tab_hover != st.ai.ai_panel.hover_tab
     } else {
         let old = st.ai.ai_panel.hover_apply_button;
         let old_tab = st.ai.ai_panel.hover_tab;
@@ -1037,7 +1070,8 @@ unsafe fn omm_status_bar_hover(
         match st.ui.status_bar.hit_test(rel_x, rel_y, status_region.width) {
             Some(idx) => {
                 if st
-                    .ui.status_bar
+                    .ui
+                    .status_bar
                     .sections
                     .get(idx)
                     .is_some_and(|sec| sec.clickable)
@@ -1135,7 +1169,8 @@ unsafe fn omm_resize_drag(
             } else {
                 0.0
             };
-            st.ui.layout
+            st.ui
+                .layout
                 .set_sidebar_width_or_collapse(mouse_x - sidebar_left);
             let delta_y = mouse_y - bottom_region.y;
             st.ui.layout.resize_bottom_panel(-delta_y);
@@ -1175,7 +1210,8 @@ unsafe fn omm_resize_drag(
             } else {
                 0.0
             };
-            st.ui.layout
+            st.ui
+                .layout
                 .set_sidebar_width_or_collapse(mouse_x - sidebar_left);
             drop(st);
             invalidate_window(hwnd);
@@ -1216,7 +1252,9 @@ unsafe fn omm_hover_tooltip(
     let dx = mouse_x - st.input.hover.last_mouse_x;
     let dy = mouse_y - st.input.hover.last_mouse_y;
     let moved_beyond_tolerance = dx.abs() > HOVER_MOVE_TOLERANCE || dy.abs() > HOVER_MOVE_TOLERANCE;
-    if (moved_beyond_tolerance || !in_sidebar || !has_hover_node) && st.input.hover.tooltip.is_some() {
+    if (moved_beyond_tolerance || !in_sidebar || !has_hover_node)
+        && st.input.hover.tooltip.is_some()
+    {
         st.input.hover.tooltip = None;
     }
     if in_sidebar && has_hover_node {
@@ -1567,7 +1605,8 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
             // 设置页：仅文本输入字段 → IBeam（Provider 为下拉选择，保持 Arrow）
             if st.active_tab_is_settings() {
                 if st
-                    .ui.settings_panel
+                    .ui
+                    .settings_panel
                     .hit_test_field(mouse_x, mouse_y)
                     .is_some_and(|f| f != crate::settings::SettingsField::Provider)
                 {
@@ -1615,7 +1654,8 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
             let rel_y = mouse_y - status_region.y;
             if let Some(idx) = st.ui.status_bar.hit_test(rel_x, rel_y, status_region.width) {
                 if st
-                    .ui.status_bar
+                    .ui
+                    .status_bar
                     .sections
                     .get(idx)
                     .is_some_and(|sec| sec.clickable)

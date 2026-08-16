@@ -8,7 +8,8 @@ pub fn scroll(state: &mut EditorState, delta_y: f32) {
     let editor_region = state.ui.layout.editor_region();
     let editor_height = editor_region.height.max(1.0);
     let max_scroll = (total_height - editor_height).max(0.0);
-    state.editor.content.scroll_y = (state.editor.content.scroll_y + delta_y).clamp(0.0, max_scroll);
+    state.editor.content.scroll_y =
+        (state.editor.content.scroll_y + delta_y).clamp(0.0, max_scroll);
     state.emit_event(crate::events::EditorEvent::Scrolled);
 }
 
@@ -81,7 +82,8 @@ pub fn scroll_horizontal(state: &mut EditorState, delta_x: f32) {
     let max_content_width = max_line_chars as f32 * char_width;
     let max_scroll_x = (max_content_width - text_visible_width).max(0.0);
 
-    state.editor.content.scroll_x = (state.editor.content.scroll_x + delta_x).clamp(0.0, max_scroll_x);
+    state.editor.content.scroll_x =
+        (state.editor.content.scroll_x + delta_x).clamp(0.0, max_scroll_x);
     state.emit_event(crate::events::EditorEvent::Scrolled);
 }
 
@@ -101,15 +103,24 @@ pub fn ensure_cursor_visible_horizontal(state: &mut EditorState) {
     // P0-A: 光标行可能在缓存窗口外（如跳转后未重建），回退 buffer.get_line
     let cursor_char_col = {
         let line_owned;
-        let text_opt = match state.editor.content.cached_line(state.editor.content.cursor_line) {
+        let text_opt = match state
+            .editor
+            .content
+            .cached_line(state.editor.content.cursor_line)
+        {
             Some(t) => Some(t),
             None => {
-                line_owned = state.editor.content.buffer.get_line(state.editor.content.cursor_line);
+                line_owned = state
+                    .editor
+                    .content
+                    .buffer
+                    .get_line(state.editor.content.cursor_line);
                 line_owned.as_deref()
             }
         };
         if let Some(text) = text_opt {
-            let byte_pos = text.floor_char_boundary(state.editor.content.cursor_col.min(text.len()));
+            let byte_pos =
+                text.floor_char_boundary(state.editor.content.cursor_col.min(text.len()));
             text[..byte_pos]
                 .chars()
                 .map(unicode_char_width)
@@ -160,7 +171,8 @@ pub fn goto_position(state: &mut EditorState, line: usize, column: usize) {
     let target_line = line.saturating_sub(1).min(max_line);
 
     let line_text = state
-        .editor.content
+        .editor
+        .content
         .buffer
         .get_line(target_line)
         .unwrap_or_default();
@@ -173,8 +185,11 @@ pub fn goto_position(state: &mut EditorState, line: usize, column: usize) {
     state.editor.content.selection_end = None;
 
     // 同步到当前标签页
-    if let Some(crate::tabs::Tab::File(content)) =
-        state.editor.tab_bar.tabs.get_mut(state.editor.tab_bar.active_tab)
+    if let Some(crate::tabs::Tab::File(content)) = state
+        .editor
+        .tab_bar
+        .tabs
+        .get_mut(state.editor.tab_bar.active_tab)
     {
         content.cursor_line = target_line;
         content.cursor_col = target_col;
@@ -223,7 +238,8 @@ pub fn scroll_sidebar(state: &mut EditorState, delta_y: f32) {
             let sidebar_region = state.ui.layout.sidebar_region();
             let visible_height = sidebar_region.height;
             let max_scroll = (total_height - visible_height).max(0.0);
-            state.fs.sidebar_scroll_y = (state.fs.sidebar_scroll_y + delta_y).clamp(0.0, max_scroll);
+            state.fs.sidebar_scroll_y =
+                (state.fs.sidebar_scroll_y + delta_y).clamp(0.0, max_scroll);
         }
         crate::layout::SidebarContent::RemoteFileTree => {
             let node_height = 16.0;
@@ -266,7 +282,12 @@ pub fn scroll_sidebar(state: &mut EditorState, delta_y: f32) {
 
 pub fn move_cursor_left(state: &mut EditorState) {
     if state.editor.content.cursor_col > 0 {
-        if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+        if let Some(text) = state
+            .editor
+            .content
+            .buffer
+            .get_line(state.editor.content.cursor_line)
+        {
             let col = text.floor_char_boundary(state.editor.content.cursor_col.min(text.len()));
             if let Some(ch) = text[..col].chars().next_back() {
                 state.editor.content.cursor_col = col - ch.len_utf8();
@@ -276,7 +297,12 @@ pub fn move_cursor_left(state: &mut EditorState) {
         }
     } else if state.editor.content.cursor_line > 0 {
         state.editor.content.cursor_line -= 1;
-        if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+        if let Some(text) = state
+            .editor
+            .content
+            .buffer
+            .get_line(state.editor.content.cursor_line)
+        {
             state.editor.content.cursor_col = text.len();
         }
     }
@@ -284,7 +310,12 @@ pub fn move_cursor_left(state: &mut EditorState) {
 }
 
 pub fn move_cursor_right(state: &mut EditorState) {
-    if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+    if let Some(text) = state
+        .editor
+        .content
+        .buffer
+        .get_line(state.editor.content.cursor_line)
+    {
         if state.editor.content.cursor_col < text.len() {
             if let Some(ch) = text[state.editor.content.cursor_col..].chars().next() {
                 state.editor.content.cursor_col += ch.len_utf8();
@@ -300,7 +331,12 @@ pub fn move_cursor_right(state: &mut EditorState) {
 pub fn move_cursor_up(state: &mut EditorState) {
     if state.editor.content.cursor_line > 0 {
         state.editor.content.cursor_line -= 1;
-        if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+        if let Some(text) = state
+            .editor
+            .content
+            .buffer
+            .get_line(state.editor.content.cursor_line)
+        {
             state.editor.content.cursor_col = state.editor.content.cursor_col.min(text.len());
         }
     }
@@ -312,7 +348,12 @@ pub fn move_cursor_up(state: &mut EditorState) {
 pub fn move_cursor_down(state: &mut EditorState) {
     if state.editor.content.cursor_line + 1 < state.editor.content.buffer.len_lines() {
         state.editor.content.cursor_line += 1;
-        if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+        if let Some(text) = state
+            .editor
+            .content
+            .buffer
+            .get_line(state.editor.content.cursor_line)
+        {
             state.editor.content.cursor_col = state.editor.content.cursor_col.min(text.len());
         }
     }
@@ -327,7 +368,12 @@ pub fn move_cursor_home(state: &mut EditorState) {
 }
 
 pub fn move_cursor_end(state: &mut EditorState) {
-    if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+    if let Some(text) = state
+        .editor
+        .content
+        .buffer
+        .get_line(state.editor.content.cursor_line)
+    {
         state.editor.content.cursor_col = text.len();
     }
     state.emit_event(crate::events::EditorEvent::CursorMoved);
@@ -342,7 +388,12 @@ pub fn move_cursor_smart_home(state: &mut EditorState, already_at_smart_home: bo
         state.emit_event(crate::events::EditorEvent::CursorMoved);
         return;
     }
-    if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+    if let Some(text) = state
+        .editor
+        .content
+        .buffer
+        .get_line(state.editor.content.cursor_line)
+    {
         let first_non_ws = text
             .char_indices()
             .skip_while(|(_, c)| c.is_whitespace())
@@ -365,7 +416,12 @@ pub fn move_cursor_file_start(state: &mut EditorState) {
 pub fn move_cursor_file_end(state: &mut EditorState) {
     let last_line = state.editor.content.buffer.len_lines().saturating_sub(1);
     state.editor.content.cursor_line = last_line;
-    if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+    if let Some(text) = state
+        .editor
+        .content
+        .buffer
+        .get_line(state.editor.content.cursor_line)
+    {
         state.editor.content.cursor_col = text.len();
     }
     state.emit_event(crate::events::EditorEvent::CursorMoved);
@@ -377,9 +433,15 @@ pub fn move_cursor_file_end(state: &mut EditorState) {
 /// 必须先转为字符索引再用于 chars Vec 的索引。
 /// REQ-P2-02: 避免每次调用分配 Vec<char>，直接基于字节偏移遍历。
 pub fn move_cursor_word_left(state: &mut EditorState) {
-    if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+    if let Some(text) = state
+        .editor
+        .content
+        .buffer
+        .get_line(state.editor.content.cursor_line)
+    {
         let text_len = text.len();
-        let mut byte_offset = text.floor_char_boundary(state.editor.content.cursor_col.min(text_len));
+        let mut byte_offset =
+            text.floor_char_boundary(state.editor.content.cursor_col.min(text_len));
 
         // 辅助：取 byte_offset 之前一个字符的字节位置与该字符
         let prev_char = |pos: usize| -> Option<(usize, char)> {
@@ -427,9 +489,15 @@ pub fn move_cursor_word_left(state: &mut EditorState) {
 /// P1-6: 向右移动一个单词。
 /// REQ-P2-02: 避免每次调用分配 Vec<char>，直接基于字节偏移遍历。
 pub fn move_cursor_word_right(state: &mut EditorState) {
-    if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+    if let Some(text) = state
+        .editor
+        .content
+        .buffer
+        .get_line(state.editor.content.cursor_line)
+    {
         let text_len = text.len();
-        let mut byte_offset = text.floor_char_boundary(state.editor.content.cursor_col.min(text_len));
+        let mut byte_offset =
+            text.floor_char_boundary(state.editor.content.cursor_col.min(text_len));
 
         // 辅助：取 byte_offset 处字符的字节范围
         let curr_char = |pos: usize| -> Option<(usize, usize, char)> {
@@ -482,17 +550,22 @@ pub fn add_cursor_line_below(state: &mut EditorState) {
         let new_line = line + 1;
         // 钳制 col 到新行长度
         let max_col = state
-            .editor.content
+            .editor
+            .content
             .buffer
             .get_line(new_line)
             .map(|s| s.len())
             .unwrap_or(col);
-        state.editor.multi_cursor
+        state
+            .editor
+            .multi_cursor
             .add_cursor(Cursor::new(new_line, col.min(max_col)));
         state.editor.content.cursor_line = new_line;
         state.editor.content.cursor_col = col.min(max_col);
-        state.ui.status_message =
-            format!("已添加光标（共 {} 处）", state.editor.multi_cursor.cursor_count());
+        state.ui.status_message = format!(
+            "已添加光标（共 {} 处）",
+            state.editor.multi_cursor.cursor_count()
+        );
     }
 }
 
@@ -503,17 +576,22 @@ pub fn add_cursor_line_above(state: &mut EditorState) {
     if line > 0 {
         let new_line = line - 1;
         let max_col = state
-            .editor.content
+            .editor
+            .content
             .buffer
             .get_line(new_line)
             .map(|s| s.len())
             .unwrap_or(col);
-        state.editor.multi_cursor
+        state
+            .editor
+            .multi_cursor
             .add_cursor(Cursor::new(new_line, col.min(max_col)));
         state.editor.content.cursor_line = new_line;
         state.editor.content.cursor_col = col.min(max_col);
-        state.ui.status_message =
-            format!("已添加光标（共 {} 处）", state.editor.multi_cursor.cursor_count());
+        state.ui.status_message = format!(
+            "已添加光标（共 {} 处）",
+            state.editor.multi_cursor.cursor_count()
+        );
     }
 }
 
@@ -521,9 +599,10 @@ pub fn add_cursor_line_above(state: &mut EditorState) {
 /// 找到当前选中文本或光标所在单词的下一个出现位置，添加光标。
 pub fn add_cursor_at_next_occurrence(state: &mut EditorState) {
     // 获取当前要查找的文本（来自选区或光标所在单词）
-    let search_text = if let (Some((sline, scol)), Some((eline, ecol))) =
-        (state.editor.content.selection_start, state.editor.content.selection_end)
-    {
+    let search_text = if let (Some((sline, scol)), Some((eline, ecol))) = (
+        state.editor.content.selection_start,
+        state.editor.content.selection_end,
+    ) {
         if sline == eline {
             let s = state.line_col_to_byte(sline, scol);
             let e = state.line_col_to_byte(eline, ecol);
@@ -537,9 +616,15 @@ pub fn add_cursor_at_next_occurrence(state: &mut EditorState) {
         }
     } else {
         // 取光标所在单词
-        if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+        if let Some(text) = state
+            .editor
+            .content
+            .buffer
+            .get_line(state.editor.content.cursor_line)
+        {
             let chars: Vec<char> = text.chars().collect();
-            let byte_pos = text.floor_char_boundary(state.editor.content.cursor_col.min(text.len()));
+            let byte_pos =
+                text.floor_char_boundary(state.editor.content.cursor_col.min(text.len()));
             let char_idx = text[..byte_pos].chars().count();
             let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
             if char_idx < chars.len() && is_word_char(chars[char_idx]) {
@@ -578,7 +663,11 @@ pub fn add_cursor_at_next_occurrence(state: &mut EditorState) {
     // 从当前光标位置开始向后查找
     let start_byte = state.cursor_byte_pos() + search_text.len();
     let total_bytes = state.editor.content.buffer.len_bytes();
-    let text_after = state.editor.content.buffer.get_text(start_byte, total_bytes);
+    let text_after = state
+        .editor
+        .content
+        .buffer
+        .get_text(start_byte, total_bytes);
 
     if let Some(rel_pos) = text_after.find(&search_text) {
         let abs_byte = start_byte + rel_pos;
@@ -589,8 +678,10 @@ pub fn add_cursor_at_next_occurrence(state: &mut EditorState) {
         state.editor.content.cursor_col = col;
         state.editor.content.selection_start = Some((line, col));
         state.editor.content.selection_end = Some((line, col + search_text.len()));
-        state.ui.status_message =
-            format!("已添加光标（共 {} 处）", state.editor.multi_cursor.cursor_count());
+        state.ui.status_message = format!(
+            "已添加光标（共 {} 处）",
+            state.editor.multi_cursor.cursor_count()
+        );
     }
 }
 
@@ -614,7 +705,12 @@ pub fn set_cursor_from_mouse(
     let total_lines = state.editor.content.buffer.len_lines();
     state.editor.content.cursor_line = line.min(total_lines.saturating_sub(1));
 
-    if let Some(text) = state.editor.content.buffer.get_line(state.editor.content.cursor_line) {
+    if let Some(text) = state
+        .editor
+        .content
+        .buffer
+        .get_line(state.editor.content.cursor_line)
+    {
         // 与渲染一致：按可视列折算 x（CJK 等宽字符占 2 格，Tab 占 4 格，
         // 见 render_editor 的 unicode_char_width 累加），否则行内含中文或
         // Tab 时光标落点偏左。
@@ -638,14 +734,23 @@ pub fn set_cursor_from_mouse(
 }
 
 pub fn start_selection(state: &mut EditorState) {
-    state.editor.content.selection_start = Some((state.editor.content.cursor_line, state.editor.content.cursor_col));
-    state.editor.content.selection_end = Some((state.editor.content.cursor_line, state.editor.content.cursor_col));
+    state.editor.content.selection_start = Some((
+        state.editor.content.cursor_line,
+        state.editor.content.cursor_col,
+    ));
+    state.editor.content.selection_end = Some((
+        state.editor.content.cursor_line,
+        state.editor.content.cursor_col,
+    ));
     state.editor.is_selecting = true;
 }
 
 pub fn update_selection(state: &mut EditorState) {
     if state.editor.is_selecting {
-        state.editor.content.selection_end = Some((state.editor.content.cursor_line, state.editor.content.cursor_col));
+        state.editor.content.selection_end = Some((
+            state.editor.content.cursor_line,
+            state.editor.content.cursor_col,
+        ));
     }
 }
 
@@ -776,7 +881,8 @@ pub(super) fn find_prev_char_boundary(state: &EditorState, pos: usize) -> usize 
     // P4-1: 使用 byte_at 替代 get_text(p, p+1).as_bytes()[0]，避免 String 堆分配
     while p > 0
         && state
-            .editor.content
+            .editor
+            .content
             .buffer
             .byte_at(p)
             .is_some_and(|b| (b & 0xC0) == 0x80)
@@ -795,7 +901,8 @@ pub(super) fn find_next_char_boundary(state: &EditorState, pos: usize) -> usize 
     // P4-1: 使用 byte_at 避免逐字节 String 分配
     while p < total
         && state
-            .editor.content
+            .editor
+            .content
             .buffer
             .byte_at(p)
             .is_some_and(|b| (b & 0xC0) == 0x80)

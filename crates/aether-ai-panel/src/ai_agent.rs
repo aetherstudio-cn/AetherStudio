@@ -111,11 +111,17 @@ impl AiEdit {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PreciseLocation {
     /// 关键词搜索定位：通过文本关键词、函数名、变量名等精确查找
-    Keyword { keyword: String, context_lines: usize },
+    Keyword {
+        keyword: String,
+        context_lines: usize,
+    },
     /// 行号范围定位：指定具体的起始行号和结束行号
     LineRange { start_line: usize, end_line: usize },
     /// 代码片段摘要匹配：通过内容特征匹配定位目标代码
-    CodeSnippet { snippet: String, similarity_threshold: f32 },
+    CodeSnippet {
+        snippet: String,
+        similarity_threshold: f32,
+    },
 }
 
 /// 精准编辑操作类型
@@ -124,7 +130,10 @@ pub enum EditOperation {
     /// 替换：替换定位到的代码片段
     Replace { new_content: String },
     /// 插入：在定位到的代码片段前/后插入新内容
-    Insert { content: String, position: InsertPosition },
+    Insert {
+        content: String,
+        position: InsertPosition,
+    },
     /// 删除：删除定位到的代码片段
     Delete,
 }
@@ -227,7 +236,7 @@ pub fn parse_edits(response: &str, default_path: Option<&str>) -> Vec<AiEdit> {
 }
 
 /// 解析精准定位标记
-/// 
+///
 /// 支持格式：
 /// ```text
 /// <<<<<<< AETHER_LOCATE keyword <keyword> [context_lines]
@@ -239,24 +248,25 @@ pub fn parse_precise_location(line: &str) -> Option<PreciseLocation> {
     if !trimmed.starts_with(LOCATE_HEADER) {
         return None;
     }
-    
+
     let rest = trimmed[LOCATE_HEADER.len()..].trim();
     let parts: Vec<&str> = rest.split_whitespace().collect();
-    
+
     if parts.is_empty() {
         return None;
     }
-    
+
     match parts[0] {
         "keyword" => {
             if parts.len() < 2 {
                 return None;
             }
             let keyword = parts[1].to_string();
-            let context_lines = parts.get(2)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(5);
-            Some(PreciseLocation::Keyword { keyword, context_lines })
+            let context_lines = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
+            Some(PreciseLocation::Keyword {
+                keyword,
+                context_lines,
+            })
         }
         "lines" => {
             if parts.len() < 3 {
@@ -264,24 +274,28 @@ pub fn parse_precise_location(line: &str) -> Option<PreciseLocation> {
             }
             let start_line = parts[1].parse().ok()?;
             let end_line = parts[2].parse().ok()?;
-            Some(PreciseLocation::LineRange { start_line, end_line })
+            Some(PreciseLocation::LineRange {
+                start_line,
+                end_line,
+            })
         }
         "snippet" => {
             if parts.len() < 2 {
                 return None;
             }
             let snippet = parts[1].to_string();
-            let similarity_threshold = parts.get(2)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0.8);
-            Some(PreciseLocation::CodeSnippet { snippet, similarity_threshold })
+            let similarity_threshold = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.8);
+            Some(PreciseLocation::CodeSnippet {
+                snippet,
+                similarity_threshold,
+            })
         }
         _ => None,
     }
 }
 
 /// 解析精准编辑操作标记
-/// 
+///
 /// 支持格式：
 /// ```text
 /// <<<<<<< AETHER_EDIT replace
@@ -294,28 +308,30 @@ pub fn parse_edit_operation(line: &str) -> Option<EditOperation> {
     if !trimmed.starts_with(EDIT_HEADER) {
         return None;
     }
-    
+
     let rest = trimmed[EDIT_HEADER.len()..].trim();
     let parts: Vec<&str> = rest.split_whitespace().collect();
-    
+
     if parts.is_empty() {
         return None;
     }
-    
+
     match parts[0] {
-        "replace" => Some(EditOperation::Replace { new_content: String::new() }),
+        "replace" => Some(EditOperation::Replace {
+            new_content: String::new(),
+        }),
         "insert" => {
             if parts.len() < 2 {
                 return None;
             }
             match parts[1] {
-                "before" => Some(EditOperation::Insert { 
-                    content: String::new(), 
-                    position: InsertPosition::Before 
+                "before" => Some(EditOperation::Insert {
+                    content: String::new(),
+                    position: InsertPosition::Before,
                 }),
-                "after" => Some(EditOperation::Insert { 
-                    content: String::new(), 
-                    position: InsertPosition::After 
+                "after" => Some(EditOperation::Insert {
+                    content: String::new(),
+                    position: InsertPosition::After,
                 }),
                 _ => None,
             }
@@ -326,7 +342,7 @@ pub fn parse_edit_operation(line: &str) -> Option<EditOperation> {
 }
 
 /// 解析精准编辑块
-/// 
+///
 /// 支持格式：
 /// ```text
 /// <<<<<<< AETHER_LOCATE keyword <keyword> [context_lines]
@@ -338,30 +354,30 @@ pub fn parse_precise_edits(response: &str) -> Vec<PreciseEdit> {
     let lines: Vec<&str> = response.lines().collect();
     let mut edits = Vec::new();
     let mut i = 0;
-    
+
     while i < lines.len() {
         // 查找定位标记
         let Some(location) = parse_precise_location(lines[i]) else {
             i += 1;
             continue;
         };
-        
+
         i += 1;
         if i >= lines.len() {
             break;
         }
-        
+
         // 查找编辑操作标记
         let Some(mut operation) = parse_edit_operation(lines[i]) else {
             i += 1;
             continue;
         };
-        
+
         i += 1;
         if i >= lines.len() {
             break;
         }
-        
+
         // 收集编辑内容
         let mut content_lines: Vec<&str> = Vec::new();
         let mut found_footer = false;
@@ -374,27 +390,30 @@ pub fn parse_precise_edits(response: &str) -> Vec<PreciseEdit> {
             content_lines.push(lines[i]);
             i += 1;
         }
-        
+
         if !found_footer {
             break;
         }
-        
+
         // 填充编辑内容
         let content = content_lines.join("\n");
         match &mut operation {
             EditOperation::Replace { new_content } => *new_content = content,
-            EditOperation::Insert { content: insert_content, .. } => *insert_content = content,
+            EditOperation::Insert {
+                content: insert_content,
+                ..
+            } => *insert_content = content,
             EditOperation::Delete => {}
         }
-        
+
         // 创建精准编辑（需要从上下文推断路径）
         // 这里简化处理，实际应该从上下文或标记中获取路径
         let path = PathBuf::from("unknown"); // TODO: 从上下文获取路径
         let context_lines = 5; // 默认上下文行数
-        
+
         edits.push(PreciseEdit::new(path, location, operation, context_lines));
     }
-    
+
     edits
 }
 

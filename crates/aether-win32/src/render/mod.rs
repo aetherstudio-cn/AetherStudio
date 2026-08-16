@@ -94,7 +94,8 @@ impl EditorState {
         // LSP: 轮询诊断事件，更新 diagnostics 字段
         // 诊断变化时标记编辑区脏矩形，确保波浪线及时出现/消失（否则残留为重影）
         if self
-    .lsp.lsp
+            .lsp
+            .lsp
             .poll_events(&mut self.lsp.diagnostics, &mut self.ui.status_message)
         {
             let er = self.ui.layout.editor_content_region(self.show_tab_bar());
@@ -182,11 +183,13 @@ impl EditorState {
                     self.win.theme.command_palette_bg,
                     self.win.theme.submenu_bg,
                 ];
-                self.win.render_ctx
+                self.win
+                    .render_ctx
                     .brush_cache
                     .init_common_brushes(&target, &common_colors);
                 let font_size = self.win.text_renderer.font_size();
-                self.win.render_ctx
+                self.win
+                    .render_ctx
                     .text_format_cache
                     .init_common_formats(font_size);
             }
@@ -223,12 +226,16 @@ impl EditorState {
         // 优化：只在 layout_dirty 时重建，避免每帧分配
         if self.ui.menu_bar.layout_dirty {
             self.ui.menu_bar.item_widths.clear();
-            self.ui.menu_bar.item_widths.reserve(self.ui.menu_bar.items.len());
+            self.ui
+                .menu_bar
+                .item_widths
+                .reserve(self.ui.menu_bar.items.len());
             for item in &self.ui.menu_bar.items {
                 // 优先用 DirectWrite 精确测量文本宽度，保证各菜单项间距均匀；
                 // 测量失败时回退到字符宽度估算
                 let text_width = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .text_format_cache
                     .measure_text_width(&item.label, 13.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
                     .filter(|w| *w > 0.0)
@@ -247,7 +254,8 @@ impl EditorState {
         {
             let mut item_x = titlebar_region.x + 8.0;
             self.ui.menu_bar.item_x_positions.clear();
-            self.ui.menu_bar
+            self.ui
+                .menu_bar
                 .item_x_positions
                 .reserve(self.ui.menu_bar.items.len());
             for (i, _item) in self.ui.menu_bar.items.iter().enumerate() {
@@ -301,13 +309,16 @@ impl EditorState {
         let cursor_moved = self.editor.content.cursor_line != self.input.prev.cursor_line
             || self.editor.content.cursor_col != self.input.prev.cursor_col;
         let scroll_changed = (self.editor.content.scroll_y - self.input.prev.scroll_y).abs() > 0.01;
-        let selection_changed = self.editor.content.selection_start != self.input.prev.selection_start
+        let selection_changed = self.editor.content.selection_start
+            != self.input.prev.selection_start
             || self.editor.content.selection_end != self.input.prev.selection_end;
         let sidebar_changed = self.ui.sidebar_content != self.input.prev.sidebar_content;
-        let sidebar_visible_changed = self.ui.layout.sidebar_visible != self.input.prev.sidebar_visible;
+        let sidebar_visible_changed =
+            self.ui.layout.sidebar_visible != self.input.prev.sidebar_visible;
         let activity_bar_visible_changed =
             self.ui.layout.activity_bar_visible != self.input.prev.activity_bar_visible;
-        let right_panel_changed = self.ui.layout.right_panel_visible != self.input.prev.right_panel_visible;
+        let right_panel_changed =
+            self.ui.layout.right_panel_visible != self.input.prev.right_panel_visible;
         let bottom_panel_changed =
             self.ui.layout.bottom_panel_visible != self.input.prev.bottom_panel_visible;
         let status_changed = self.ui.status_message != self.input.prev.status_message;
@@ -322,7 +333,8 @@ impl EditorState {
         //（欢迎页跳过侧边栏等面板渲染，局部裁剪会留下残影）
         if active_tab_changed {
             let is_special = |idx: usize| -> bool {
-                self.editor.tab_bar
+                self.editor
+                    .tab_bar
                     .tabs
                     .get(idx)
                     .map(|t| !t.is_file())
@@ -526,7 +538,8 @@ impl EditorState {
                 || self.ui.context_menus.activity_bar.visible;
             let dialog_only = !self.win.dirty_tracker.is_full_window()
                 && self
-    .win.dirty_tracker
+                    .win
+                    .dirty_tracker
                     .rects()
                     .iter()
                     .all(|r| r.region_type == crate::dirty_rect::DirtyRegionType::Dialog);
@@ -619,7 +632,8 @@ impl EditorState {
         self.win.render_ctx.begin_draw();
 
         // 设置裁剪区域（脏矩形优化）
-        let use_clip = !self.win.dirty_tracker.is_full_window() && self.win.dirty_tracker.has_dirty();
+        let use_clip =
+            !self.win.dirty_tracker.is_full_window() && self.win.dirty_tracker.has_dirty();
         // REQ-P3-03: 使用多矩形并集裁剪，避免合并为单一包围盒导致的重绘面积膨胀
         let mut use_layer = false;
         if use_clip {
@@ -630,7 +644,8 @@ impl EditorState {
                     .map(|r| (r.x, r.y, r.width, r.height))
                     .collect();
                 use_layer = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .push_multi_clip(self.win.d2d_factory.factory(), &rect_tuples);
             }
         }
@@ -640,13 +655,14 @@ impl EditorState {
             // 欢迎页状态下使用深色背景（而非透明），避免面板区域出现黑色空洞
             // 透明色虽能让 DWM Mica/Acrylic 透出，但会导致未覆盖区域显示为黑色
             if self.show_welcome() {
-                self.win.render_ctx
-                    .clear(&windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F {
+                self.win.render_ctx.clear(
+                    &windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F {
                         r: 0.09,
                         g: 0.09,
                         b: 0.09,
                         a: 1.0,
-                    });
+                    },
+                );
             } else {
                 self.win.render_ctx.clear(&self.win.theme.editor_bg);
             }
@@ -772,7 +788,8 @@ impl EditorState {
         } else if self.active_tab_is_settings() {
             // 设置页面：在编辑器内容区域渲染左侧导航+右侧内容
             let text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(&target, &self.win.theme.text_default)
             {
@@ -806,7 +823,8 @@ impl EditorState {
                 editor_content_region.width,
                 editor_content_region.height,
             );
-        } else if self.editor.markdown_preview && self.editor.content.language == Language::Markdown {
+        } else if self.editor.markdown_preview && self.editor.content.language == Language::Markdown
+        {
             self.render_markdown_preview(
                 &target,
                 editor_content_region.x,
@@ -880,7 +898,8 @@ impl EditorState {
         // 预提取子菜单数据，避免借用冲突
         // REQ-P3-02: 测量并缓存子菜单宽度，hit_test 时复用
         let submenu_data = self.ui.menu_bar.active_index.and_then(|active_idx| {
-            self.ui.menu_bar
+            self.ui
+                .menu_bar
                 .items
                 .get(active_idx)
                 .filter(|item| item.expanded)
@@ -1022,11 +1041,13 @@ impl EditorState {
                             self.win.theme.command_palette_bg,
                             self.win.theme.submenu_bg,
                         ];
-                        self.win.render_ctx
+                        self.win
+                            .render_ctx
                             .brush_cache
                             .init_common_brushes(&target, &common_colors);
                         let font_size = self.win.text_renderer.font_size();
-                        self.win.render_ctx
+                        self.win
+                            .render_ctx
                             .text_format_cache
                             .init_common_formats(font_size);
                     }
@@ -1061,7 +1082,10 @@ impl EditorState {
         self.input.prev.activity_bar_visible = self.ui.layout.activity_bar_visible;
         self.input.prev.right_panel_visible = self.ui.layout.right_panel_visible;
         self.input.prev.bottom_panel_visible = self.ui.layout.bottom_panel_visible;
-        self.input.prev.status_message.clone_from(&self.ui.status_message);
+        self.input
+            .prev
+            .status_message
+            .clone_from(&self.ui.status_message);
         self.input.prev.active_tab = self.editor.tab_bar.active_tab;
     }
 

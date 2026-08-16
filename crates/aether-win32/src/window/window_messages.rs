@@ -12,8 +12,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::{
     compute_cursor_for_pos, create_editor_window, get_and_set_state, invalidate_window,
-    AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE,
-    HOVER_TIMER_ID, LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, SANDBOX_TIMER_ID, TERM_TIMER_ID,
+    AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HOVER_TIMER_ID,
+    LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, SANDBOX_TIMER_ID, TERM_TIMER_ID,
     TOOLTIP_TIMER_ID, UI_ANIM_TIMER_ID,
 };
 use crate::auto_save::{AUTOSAVE_DEBOUNCE_TIMER_ID, AUTOSAVE_PERIODIC_TIMER_ID};
@@ -134,7 +134,8 @@ unsafe fn on_timer_hover(hwnd: HWND) -> LRESULT {
                 let tx = st.input.hover.last_mouse_x + 16.0;
                 let ty = st.input.hover.last_mouse_y + 16.0;
                 let max_w = 400.0;
-                st.input.hover.tooltip = Some(crate::editor::HoverTooltip::new(text, tx, ty, max_w));
+                st.input.hover.tooltip =
+                    Some(crate::editor::HoverTooltip::new(text, tx, ty, max_w));
                 invalidate_window(hwnd);
             }
         }
@@ -321,7 +322,8 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
         }
         // 编辑器内容区光标闪烁（文件编辑状态）
         if st
-            .editor.tab_bar
+            .editor
+            .tab_bar
             .tabs
             .get(st.editor.tab_bar.active_tab)
             .map(|t| t.is_file())
@@ -439,7 +441,8 @@ pub(crate) unsafe fn on_wm_app_3(
         if let Some(state) = s.borrow().as_ref() {
             let st = &mut *state.borrow_mut();
             if let Some(msg) = st
-                .lsp.lsp
+                .lsp
+                .lsp
                 .handle_event(event.clone(), st.editor.content.file_path.as_ref())
             {
                 st.ui.status_message = msg;
@@ -758,7 +761,13 @@ pub(crate) unsafe fn on_size(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
                 }
             }
             // 若最大化且用户设置了显示任务栏，调整窗口为工作区大小
-            let need_adjust = is_max && state.borrow().ui.app_settings.ui.show_taskbar_when_maximized;
+            let need_adjust = is_max
+                && state
+                    .borrow()
+                    .ui
+                    .app_settings
+                    .ui
+                    .show_taskbar_when_maximized;
             if need_adjust {
                 use windows::Win32::Graphics::Gdi::{
                     GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,

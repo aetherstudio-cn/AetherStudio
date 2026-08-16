@@ -53,7 +53,8 @@ impl EditorState {
 
             // SVG 图标
             let icon_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.9, 0.9, 0.9, 1.0))
             {
@@ -88,7 +89,8 @@ impl EditorState {
         unsafe {
             // 背景
             let bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.editor_bg)
             {
@@ -107,7 +109,8 @@ impl EditorState {
 
             // 读取当前 buffer 文本
             let text = self
-    .editor.content
+                .editor
+                .content
                 .buffer
                 .get_text(0, self.editor.content.buffer.len_bytes());
             if text.is_empty() {
@@ -173,7 +176,8 @@ impl EditorState {
         height: f32,
     ) {
         let text_brush = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.5, 0.5, 0.55, 1.0))
         {
@@ -278,7 +282,8 @@ impl EditorState {
     ) {
         let font_size = heading_font_size(level);
         let text_brush = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &self.win.theme.text_default)
         {
@@ -312,7 +317,8 @@ impl EditorState {
         // H1/H2 下方绘制分割线
         if level <= 2 {
             let sep_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.3, 0.3, 0.3, 0.5))
             {
@@ -348,7 +354,8 @@ impl EditorState {
         }
 
         let text_brush = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &self.win.theme.text_default)
         {
@@ -446,7 +453,8 @@ impl EditorState {
 
         // 绘制圆点
         let bullet_brush = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &self.win.theme.text_default)
         {
@@ -504,7 +512,8 @@ impl EditorState {
         let num_x = x + indent_px;
 
         let num_brush = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &self.win.theme.text_default)
         {
@@ -558,7 +567,8 @@ impl EditorState {
     ) {
         // 代码块背景
         let code_bg = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.15, 0.15, 0.18, 1.0))
         {
@@ -576,7 +586,8 @@ impl EditorState {
         );
 
         let code_brush = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.85, 0.85, 0.85, 1.0))
         {
@@ -620,7 +631,8 @@ impl EditorState {
     ) {
         // 左侧竖线
         let bar_brush = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.4, 0.6, 0.9, 1.0))
         {
@@ -639,7 +651,8 @@ impl EditorState {
 
         // 引用文本（灰色）
         let quote_brush = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.6, 0.6, 0.65, 1.0))
         {
@@ -682,7 +695,8 @@ impl EditorState {
         line_height: f32,
     ) {
         let sep_brush = match self
-    .win.render_ctx
+            .win
+            .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.4, 0.4, 0.4, 0.6))
         {

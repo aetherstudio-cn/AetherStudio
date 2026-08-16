@@ -246,7 +246,12 @@ unsafe fn oc_new_project(hwnd: HWND, c: char) -> Option<LRESULT> {
     if active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().ui.new_project_dialog.project_name.push(c);
+                state
+                    .borrow_mut()
+                    .ui
+                    .new_project_dialog
+                    .project_name
+                    .push(c);
                 state.borrow_mut().ui.new_project_dialog.error_message = None;
                 invalidate_window(hwnd);
             }
@@ -263,7 +268,8 @@ unsafe fn oc_ssh_manager(hwnd: HWND, c: char) -> Option<LRESULT> {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().ui.sidebar_content == crate::layout::SidebarContent::RemoteManagerPanel
+                state.borrow().ui.sidebar_content
+                    == crate::layout::SidebarContent::RemoteManagerPanel
                     && state.borrow().remote.ssh_manager_panel.editing
             })
             .unwrap_or(false)
@@ -457,7 +463,8 @@ unsafe fn oc_editor_default(hwnd: HWND, c: char) {
         if let Some(state) = s.borrow().as_ref() {
             let mut st = state.borrow_mut();
             // Markdown 预览模式：只读，不响应字符输入
-            if st.editor.content.language == aether_core::lexer::Language::Markdown && st.editor.markdown_preview
+            if st.editor.content.language == aether_core::lexer::Language::Markdown
+                && st.editor.markdown_preview
             {
                 return;
             }

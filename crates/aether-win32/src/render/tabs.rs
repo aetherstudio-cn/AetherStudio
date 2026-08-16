@@ -19,13 +19,18 @@ impl EditorState {
 
         for i in 0..self.editor.tab_bar.tabs.len() {
             let tw = tab_width;
-            self.editor.tab_bar.tab_layouts.push(crate::tabs::TabLayout {
-                index: i,
-                x: tab_x - x - 4.0 + self.editor.tab_bar.tab_scroll_x,
-                width: tw,
-                close_x: tab_x - x - 4.0 + self.editor.tab_bar.tab_scroll_x + tw - close_btn_width + 4.0,
-                close_width: 16.0,
-            });
+            self.editor
+                .tab_bar
+                .tab_layouts
+                .push(crate::tabs::TabLayout {
+                    index: i,
+                    x: tab_x - x - 4.0 + self.editor.tab_bar.tab_scroll_x,
+                    width: tw,
+                    close_x: tab_x - x - 4.0 + self.editor.tab_bar.tab_scroll_x + tw
+                        - close_btn_width
+                        + 4.0,
+                    close_width: 16.0,
+                });
             tab_x += tw + gap;
         }
     }
@@ -57,17 +62,20 @@ impl EditorState {
                 color_f(0.145, 0.145, 0.149, 1.0)
             };
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let _active_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.tab_active_bg)
                 .unwrap();
             let inactive_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.tab_inactive_bg)
                 .unwrap();
@@ -77,18 +85,21 @@ impl EditorState {
                 color_f(0.22, 0.22, 0.24, 1.0)
             };
             let hover_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
             let text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.text_default)
                 .unwrap();
             let active_text_color = color_f(1.0, 1.0, 1.0, 1.0);
             let active_text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &active_text_color)
                 .unwrap();
@@ -98,7 +109,8 @@ impl EditorState {
                 color_f(0.2, 0.2, 0.2, 1.0)
             };
             let border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
@@ -109,7 +121,8 @@ impl EditorState {
                 color_f(0.22, 0.22, 0.24, 1.0)
             };
             let glow_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &glow_color)
                 .unwrap();
@@ -117,20 +130,23 @@ impl EditorState {
             // SubTask 7.3: 关闭按钮矢量图标颜色 — 默认灰，hover 白
             let close_default_color = color_f(180.0 / 255.0, 180.0 / 255.0, 180.0 / 255.0, 1.0);
             let close_default_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &close_default_color)
                 .unwrap();
             let close_hover_icon_color = color_f(1.0, 1.0, 1.0, 1.0);
             let close_hover_icon_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &close_hover_icon_color)
                 .unwrap();
             // 关闭按钮 hover 时的圆角矩形背景
             let close_hover_bg_color = color_f(0.4, 0.4, 0.4, 1.0);
             let close_hover_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &close_hover_bg_color)
                 .unwrap();
@@ -138,7 +154,8 @@ impl EditorState {
             // SubTask 7.4: dirty 圆点画刷（金黄色 RGBA(255,200,0,255)）
             let dirty_color = color_f(1.0, 200.0 / 255.0, 0.0, 1.0);
             let dirty_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &dirty_color)
                 .unwrap();
@@ -156,7 +173,8 @@ impl EditorState {
             target.FillRectangle(&bg_rect, &bg_brush);
 
             let tab_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -221,7 +239,10 @@ impl EditorState {
                 // SubTask 7.4: 不再在文件名中拼接 "●"，改为独立小圆点
                 let (name, is_dirty) = if is_active {
                     if tab.is_file() {
-                        (self.editor.content.file_name(), self.editor.content.is_dirty)
+                        (
+                            self.editor.content.file_name(),
+                            self.editor.content.is_dirty,
+                        )
                     } else {
                         (tab.title(), false)
                     }
@@ -313,13 +334,17 @@ impl EditorState {
             }
 
             // Task 8.5: 拖拽插入指示线（蓝色 2px 垂直线）
-            if let (Some(drag_idx), Some(drop_idx)) =
-                (self.editor.tab_bar.dragging_tab, self.editor.tab_bar.tab_drop_index)
-            {
-                if drag_idx < self.editor.tab_bar.tabs.len() && drop_idx <= self.editor.tab_bar.tabs.len() {
+            if let (Some(drag_idx), Some(drop_idx)) = (
+                self.editor.tab_bar.dragging_tab,
+                self.editor.tab_bar.tab_drop_index,
+            ) {
+                if drag_idx < self.editor.tab_bar.tabs.len()
+                    && drop_idx <= self.editor.tab_bar.tabs.len()
+                {
                     let drop_line_color = color_f(100.0 / 255.0, 150.0 / 255.0, 1.0, 1.0);
                     let drop_line_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &drop_line_color)
                         .unwrap();
@@ -366,7 +391,8 @@ impl EditorState {
                     color_f(0.7, 0.7, 0.7, 1.0)
                 };
                 let plus_icon_brush = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &plus_icon_color)
                     .unwrap();
@@ -380,7 +406,8 @@ impl EditorState {
                     plus_icon_size,
                     &plus_icon_brush,
                 );
-                self.editor.tab_bar.plus_button_rect = Some((plus_x, plus_y, plus_right, plus_bottom));
+                self.editor.tab_bar.plus_button_rect =
+                    Some((plus_x, plus_y, plus_right, plus_bottom));
             } else {
                 self.editor.tab_bar.plus_button_rect = None;
             }

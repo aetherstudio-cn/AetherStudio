@@ -1078,8 +1078,8 @@ impl EditorState {
             }
 
             if let Some(more_y) = layout.more_y {
-                let is_more_hovered =
-                    self.ui.welcome_hover_action.as_ref() == Some(&WelcomeAction::MoreRecentProjects);
+                let is_more_hovered = self.ui.welcome_hover_action.as_ref()
+                    == Some(&WelcomeAction::MoreRecentProjects);
                 let more_format = dwrite
                     .CreateTextFormat(
                         windows::core::w!("Segoe UI"),

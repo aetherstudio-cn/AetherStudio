@@ -80,12 +80,14 @@ impl EditorState {
                 color_f(0.0, 0.47, 0.83, 1.0)
             };
             let btn_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg)
                 .unwrap();
             let white_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
                 .unwrap();
@@ -96,7 +98,8 @@ impl EditorState {
             };
             target.FillRoundedRectangle(&rounded, &btn_bg_brush);
             let btn_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,

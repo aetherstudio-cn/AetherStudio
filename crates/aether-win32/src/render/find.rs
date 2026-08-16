@@ -15,55 +15,64 @@ impl EditorState {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let border_color = color_f(0.0, 0.47, 0.83, 1.0);
             let border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             let text_color = color_f(0.9, 0.9, 0.9, 1.0);
             let text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let dim_color = color_f(0.5, 0.5, 0.5, 1.0);
             let dim_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let input_bg_color = color_f(0.12, 0.12, 0.12, 1.0);
             let input_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
             let match_color = color_f(0.2, 0.8, 0.3, 1.0);
             let match_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &match_color)
                 .unwrap();
             let btn_bg_color = color_f(0.25, 0.25, 0.25, 1.0);
             let _btn_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg_color)
                 .unwrap();
             let btn_hover_color = color_f(0.35, 0.35, 0.35, 1.0);
             let _btn_hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
 
             let label_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -73,7 +82,8 @@ impl EditorState {
                 )
                 .unwrap();
             let input_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -180,7 +190,11 @@ impl EditorState {
 
             // 匹配计数
             let match_text = if !self.editor.find.results.is_empty() {
-                format!("{}/{}", self.editor.find.active_index + 1, self.editor.find.results.len())
+                format!(
+                    "{}/{}",
+                    self.editor.find.active_index + 1,
+                    self.editor.find.results.len()
+                )
             } else if !self.editor.find.query.is_empty() {
                 "0/0".to_string()
             } else {

@@ -22,7 +22,8 @@ impl EditorState {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
             let bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
@@ -36,7 +37,8 @@ impl EditorState {
             // 绘制阴影（右侧和底部）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
             let shadow_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &shadow_color)
                 .unwrap();
@@ -60,7 +62,8 @@ impl EditorState {
             // 菜单边框
             let border_color = color_f(0.3, 0.3, 0.3, 1.0);
             let border_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
@@ -76,18 +79,21 @@ impl EditorState {
 
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
             let text_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let hover_bg = color_f(0.0, 0.47, 0.83, 1.0);
             let hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_bg)
                 .unwrap();
             let text_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -97,7 +103,8 @@ impl EditorState {
                 )
                 .unwrap();
             let shortcut_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -117,7 +124,8 @@ impl EditorState {
             };
             target.FillRectangle(&header_rect, &hover_brush);
             let username_wide: Vec<u16> = self
-    .ui.user_menu
+                .ui
+                .user_menu
                 .username
                 .encode_utf16()
                 .chain(Some(0))
@@ -133,7 +141,8 @@ impl EditorState {
                 &text_format,
                 &username_rect,
                 &self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
                     .unwrap(),
@@ -157,7 +166,8 @@ impl EditorState {
                     };
                     let sep_color = color_f(0.3, 0.3, 0.3, 1.0);
                     let sep_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &sep_color)
                         .unwrap();
@@ -203,7 +213,8 @@ impl EditorState {
                         };
                         let shortcut_color = color_f(0.6, 0.6, 0.6, 1.0);
                         let shortcut_brush = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(target, &shortcut_color)
                             .unwrap();

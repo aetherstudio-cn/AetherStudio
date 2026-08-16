@@ -12,7 +12,8 @@ impl EditorState {
     ) {
         unsafe {
             let ui_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -22,7 +23,8 @@ impl EditorState {
                 )
                 .unwrap();
             let bold_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0,
@@ -32,7 +34,8 @@ impl EditorState {
                 )
                 .unwrap();
             let mono_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     11.0,
@@ -44,61 +47,71 @@ impl EditorState {
 
             let text_color = color_f(0.9, 0.9, 0.9, 1.0);
             let text_br2 = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let dim_color = color_f(0.5, 0.5, 0.5, 1.0);
             let dim_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let sel_color = color_f(0.0, 0.47, 0.83, 1.0);
             let sel_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sel_color)
                 .unwrap();
             let hover_color = color_f(0.2, 0.2, 0.2, 1.0);
             let hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
             let sep_color = color_f(0.2, 0.2, 0.2, 1.0);
             let sep_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
             let green_color = color_f(0.2, 0.8, 0.3, 1.0);
             let green_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &green_color)
                 .unwrap();
             let yellow_color = color_f(0.9, 0.7, 0.2, 1.0);
             let _yellow_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &yellow_color)
                 .unwrap();
             let red_color = color_f(0.9, 0.2, 0.2, 1.0);
             let _red_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &red_color)
                 .unwrap();
             let btn_bg_color = color_f(0.2, 0.2, 0.2, 1.0);
             let btn_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg_color)
                 .unwrap();
             let btn_hover_color = color_f(0.3, 0.3, 0.3, 1.0);
             let btn_hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
@@ -187,7 +200,8 @@ impl EditorState {
             };
             let input_bg_color = color_f(0.18, 0.18, 0.18, 1.0);
             let input_bg_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
@@ -232,7 +246,8 @@ impl EditorState {
                 bottom: btn_y + btn_h,
             };
             let is_commit_hover = self
-    .ui.git
+                .ui
+                .git
                 .hover_button
                 .as_ref()
                 .map(|s| s == "commit")
@@ -269,7 +284,8 @@ impl EditorState {
                 bottom: btn_y + btn_h,
             };
             let is_refresh_hover = self
-    .ui.git
+                .ui
+                .git
                 .hover_button
                 .as_ref()
                 .map(|s| s == "refresh")
@@ -358,7 +374,8 @@ impl EditorState {
                         let icon = crate::git::GitRepository::status_icon(*status);
                         let icon_color = crate::git::GitRepository::status_color(*status);
                         let icon_brush = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(
                                 target,
@@ -464,7 +481,8 @@ impl EditorState {
                         let icon = crate::git::GitRepository::status_icon(*status);
                         let icon_color = crate::git::GitRepository::status_color(*status);
                         let icon_brush = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(
                                 target,

@@ -106,9 +106,10 @@ pub(crate) unsafe fn on_l_button_up(
                 st.ui.status_message = "菜单栏顺序已保存".to_string();
             }
             // Task 8.4: 标签拖拽重排或延迟切换
-            let tab_handled = if let (Some(drag_idx), Some(drop_idx)) =
-                (st.editor.tab_bar.dragging_tab, st.editor.tab_bar.tab_drop_index)
-            {
+            let tab_handled = if let (Some(drag_idx), Some(drop_idx)) = (
+                st.editor.tab_bar.dragging_tab,
+                st.editor.tab_bar.tab_drop_index,
+            ) {
                 if drag_idx < st.editor.tab_bar.tabs.len()
                     && drop_idx <= st.editor.tab_bar.tabs.len()
                     && drag_idx != drop_idx

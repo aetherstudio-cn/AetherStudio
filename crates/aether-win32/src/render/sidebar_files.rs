@@ -20,7 +20,8 @@ impl EditorState {
             // 确保矢量图标几何已创建（FilePython / FileJava / FileText）
             self.ui.icons.ensure_created_from_target(target);
             let ui_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     12.0 * s,
@@ -31,7 +32,8 @@ impl EditorState {
                 .unwrap();
             // 章节标题：8px 加粗，紧凑风格
             let header_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     8.0 * s,
@@ -41,7 +43,8 @@ impl EditorState {
                 )
                 .unwrap();
             let tree_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     8.0 * s,
@@ -52,7 +55,8 @@ impl EditorState {
                 .unwrap();
             // 根目录行（工作区文件夹名）加粗显示（VS Code 风格）
             let tree_bold_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     8.0 * s,
@@ -63,7 +67,8 @@ impl EditorState {
                 .unwrap();
             let dir_color = color_f(0.9, 0.9, 0.9, 1.0);
             let dir_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &dir_color)
                 .unwrap();
@@ -73,7 +78,8 @@ impl EditorState {
                 color_f(0.0, 0.47, 0.83, 1.0)
             };
             let sel_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sel_color)
                 .unwrap();
@@ -83,27 +89,31 @@ impl EditorState {
                 color_f(0.2, 0.2, 0.2, 1.0)
             };
             let hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
             // 缩进参考线：白色 8% 细线（VS Code 风格）
             let guide_color = color_f(1.0, 1.0, 1.0, 0.08);
             let guide_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &guide_color)
                 .unwrap();
             // 章节分隔线颜色
             let sep_color = color_f(0.2, 0.2, 0.2, 1.0);
             let sep_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
             let btn_hover_color = color_f(0.28, 0.28, 0.28, 1.0);
             let btn_hover_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
@@ -157,12 +167,14 @@ impl EditorState {
             ));
 
             let nf_hover = self
-    .fs.file_tree_new_file_btn
+                .fs
+                .file_tree_new_file_btn
                 .as_ref()
                 .map(|r| r.contains(self.input.hover.last_mouse_x, self.input.hover.last_mouse_y))
                 .unwrap_or(false);
             let nfo_hover = self
-    .fs.file_tree_new_folder_btn
+                .fs
+                .file_tree_new_folder_btn
                 .as_ref()
                 .map(|r| r.contains(self.input.hover.last_mouse_x, self.input.hover.last_mouse_y))
                 .unwrap_or(false);
@@ -218,7 +230,8 @@ impl EditorState {
                 let root_top = y + self.file_tree_list_start_y();
                 // 拖拽放置目标为工作区根目录时高亮根目录行（填充 + 边框）
                 let root_drop = self.input.mouse_press.file_tree_dragging
-                    && self.fs.file_drag.drop_target == Some(crate::file_drag_drop::DropTarget::Root);
+                    && self.fs.file_drag.drop_target
+                        == Some(crate::file_drag_drop::DropTarget::Root);
                 if self.fs.hover_file_tree_root || root_drop {
                     let hover_rect = D2D_RECT_F {
                         left: x,
@@ -248,19 +261,20 @@ impl EditorState {
                     &dir_brush,
                 );
                 let root_name = self
-    .fs.current_folder
+                    .fs
+                    .current_folder
                     .as_ref()
                     .and_then(|p| p.file_name())
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "工作区".to_string());
                 let root_text_left = base_x + arrow_w + 1.0 * s;
                 let max_text_w = (x + width - 10.0 * s - root_text_left).max(1.0);
-                if let Ok(layout) = self.win.render_ctx.text_layout_cache.create_ellipsis_layout(
-                    &root_name,
-                    &tree_bold_format,
-                    max_text_w,
-                    node_h,
-                ) {
+                if let Ok(layout) = self
+                    .win
+                    .render_ctx
+                    .text_layout_cache
+                    .create_ellipsis_layout(&root_name, &tree_bold_format, max_text_w, node_h)
+                {
                     let _ = layout.SetParagraphAlignment(
                         windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
                     );
@@ -382,13 +396,15 @@ impl EditorState {
                         };
                         let input_bg = color_f(0.12, 0.12, 0.12, 1.0);
                         let input_bg_brush = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(target, &input_bg)
                             .unwrap();
                         let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
                         let focus_brush = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .brush_cache
                             .get_brush(target, &focus_color)
                             .unwrap();
@@ -398,7 +414,8 @@ impl EditorState {
                         // 文本：与树行同字号，垂直居中
                         let ft_font_size = 8.0f32 * s;
                         let input_format = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .text_format_cache
                             .get_format(
                                 ft_font_size,
@@ -424,7 +441,8 @@ impl EditorState {
                             DWRITE_MEASURING_MODE_NATURAL,
                         );
                         let value_width = self
-    .win.render_ctx
+                            .win
+                            .render_ctx
                             .text_format_cache
                             .measure_text_width(
                                 &value,
@@ -442,7 +460,8 @@ impl EditorState {
                                 ..text_rect
                             };
                             let comp_brush = self
-    .win.render_ctx
+                                .win
+                                .render_ctx
                                 .brush_cache
                                 .get_brush(target, &color_f(1.0, 0.9, 0.4, 1.0))
                                 .unwrap();
@@ -455,7 +474,8 @@ impl EditorState {
                                 DWRITE_MEASURING_MODE_NATURAL,
                             );
                             comp_width = self
-    .win.render_ctx
+                                .win
+                                .render_ctx
                                 .text_format_cache
                                 .measure_text_width(
                                     comp,
@@ -475,7 +495,8 @@ impl EditorState {
                                 bottom: row_top + node_h - 2.0 * s,
                             };
                             let cursor_brush = self
-    .win.render_ctx
+                                .win
+                                .render_ctx
                                 .brush_cache
                                 .get_brush(target, &self.win.theme.cursor_color)
                                 .unwrap();
@@ -487,14 +508,16 @@ impl EditorState {
 
             // 拖拽浮标：跟随鼠标的文件名标签（仅在侧边栏内绘制，
             // 保证脏矩形只涉及侧边栏区域，不在编辑器区域留残影）
-            if self.input.mouse_press.file_tree_dragging && !self.fs.file_drag.drag_label.is_empty() {
+            if self.input.mouse_press.file_tree_dragging && !self.fs.file_drag.drag_label.is_empty()
+            {
                 let gx = self.fs.file_drag.cur_x;
                 let gy = self.fs.file_drag.cur_y;
                 if gx >= x && gx < x + width && gy >= y && gy < y + height {
                     let label = self.fs.file_drag.drag_label.as_str();
                     // 宽度用进入拖拽时的缓存值（避免每帧 DirectWrite 测量）
                     let text_w = self
-    .fs.file_drag
+                        .fs
+                        .file_drag
                         .drag_label_width
                         .max(12.0 * s)
                         .min(width * 0.7);
@@ -512,18 +535,19 @@ impl EditorState {
                     };
                     let ghost_bg = color_f(0.15, 0.15, 0.15, 0.95);
                     let ghost_bg_brush = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &ghost_bg)
                         .unwrap();
                     target.FillRectangle(&ghost_rect, &ghost_bg_brush);
                     target.DrawRectangle(&ghost_rect, &sel_brush, 1.0 * s, None);
-                    if let Ok(layout) = self.win.render_ctx.text_layout_cache.create_ellipsis_layout(
-                        label,
-                        &tree_format,
-                        text_w.max(1.0),
-                        ghost_h,
-                    ) {
+                    if let Ok(layout) = self
+                        .win
+                        .render_ctx
+                        .text_layout_cache
+                        .create_ellipsis_layout(label, &tree_format, text_w.max(1.0), ghost_h)
+                    {
                         let _ = layout.SetParagraphAlignment(
                             windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
                         );
@@ -725,7 +749,8 @@ impl EditorState {
                     // 副作用是侧边栏拖动时省略号即时刷新（无缓存滞后）。
                     let max_text_w = (item_right - text_left).max(1.0);
                     let layout = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .text_layout_cache
                         .create_ellipsis_layout(name, format, max_text_w, node_height)
                         .unwrap();

@@ -106,7 +106,9 @@ pub fn handle_new_project_dialog_click(
 pub fn paste_into_new_project_dialog(state: &mut EditorState) {
     if let Some(text) = EditorState::get_clipboard_text() {
         // 移除路径分隔符和非法字符
-        state.ui.new_project_dialog
+        state
+            .ui
+            .new_project_dialog
             .project_name
             .extend(text.chars().filter(|c| {
                 !matches!(

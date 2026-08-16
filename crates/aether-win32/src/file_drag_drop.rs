@@ -71,7 +71,8 @@ impl EditorState {
     /// 在 `lbd_sidebar` 命中文件/目录节点名称区域时调用。
     pub fn file_drag_begin_press(&mut self, node_idx: u32, mouse_x: f32, mouse_y: f32) {
         let label = self
-    .fs.file_tree
+            .fs
+            .file_tree
             .as_ref()
             .and_then(|t| t.get_node(node_idx).map(|n| t.get_name(n).to_string()))
             .unwrap_or_default();
@@ -107,7 +108,8 @@ impl EditorState {
             // 浮标文本宽度只在进入拖拽时测量一次（每帧测量是无谓的 CPU 开销）
             let label = self.fs.file_drag.drag_label.clone();
             self.fs.file_drag.drag_label_width = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .measure_text_width(
                     &label,
@@ -228,7 +230,8 @@ impl EditorState {
                 Some((idx, _, _)) => {
                     // 命中文件/符号链接 → 目标为其父目录
                     let parent = self
-    .fs.file_tree
+                        .fs
+                        .file_tree
                         .as_ref()
                         .and_then(|t| t.get_node(idx))
                         .map(|n| n.parent_idx)?;
@@ -347,18 +350,21 @@ impl EditorState {
         let target_name = match target {
             DropTarget::Root => "工作区根目录".to_string(),
             DropTarget::Directory(dir_idx) => self
-    .fs.file_tree
+                .fs
+                .file_tree
                 .as_ref()
                 .and_then(|t| t.get_node(dir_idx).map(|n| t.get_name(n).to_string()))
                 .unwrap_or_else(|| "目标文件夹".to_string()),
         };
-        self.ui.status_message = format!("已移动 {} 到 {}", file_name.to_string_lossy(), target_name);
+        self.ui.status_message =
+            format!("已移动 {} 到 {}", file_name.to_string_lossy(), target_name);
         self.refresh_file_tree_light();
     }
 
     /// 拖拽中源节点的绝对路径（供外部 OLE 拖放使用）
     pub fn file_drag_external_source_path(&self) -> Option<PathBuf> {
-        self.input.mouse_press
+        self.input
+            .mouse_press
             .file_tree_drag_node
             .and_then(|idx| self.file_drag_node_abs_path(idx))
     }

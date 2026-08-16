@@ -27,7 +27,8 @@ impl EditorState {
         unsafe {
             // 安全获取画刷，失败时跳过渲染（避免设备丢失时 panic）
             let bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.sidebar_bg)
             {
@@ -39,12 +40,18 @@ impl EditorState {
             } else {
                 color_f(0.2, 0.2, 0.2, 1.0)
             };
-            let border_brush = match self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
+            let border_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &border_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
             let text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.text_default)
             {
@@ -84,7 +91,7 @@ impl EditorState {
             if self.ai.ai_panel.check_timeout() {
                 self.ai.ai_panel.handle_timeout();
             }
-            
+
             // 根据当前活动视图渲染右侧面板内容
             match &self.ui.sidebar_content {
                 crate::layout::SidebarContent::AiAssistantPanel => {
@@ -113,7 +120,8 @@ impl EditorState {
         unsafe {
             // 安全获取画刷，失败时跳过渲染（避免设备丢失时 panic）
             let bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.sidebar_bg)
             {
@@ -125,12 +133,18 @@ impl EditorState {
             } else {
                 color_f(0.2, 0.2, 0.2, 1.0)
             };
-            let border_brush = match self.win.render_ctx.brush_cache.get_brush(target, &border_color) {
+            let border_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &border_color)
+            {
                 Ok(b) => b,
                 Err(_) => return,
             };
             let text_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.text_default)
             {
@@ -158,11 +172,15 @@ impl EditorState {
             // 调整手柄：悬停或拖拽时在右边缘叠加蓝色高亮
             if self.ui.hover_sidebar_resize || self.ui.layout.sidebar_resizing {
                 let handle_color = color_f(0.0, 0.47, 0.83, 1.0);
-                let handle_brush =
-                    match self.win.render_ctx.brush_cache.get_brush(target, &handle_color) {
-                        Ok(b) => b,
-                        Err(_) => return,
-                    };
+                let handle_brush = match self
+                    .win
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &handle_color)
+                {
+                    Ok(b) => b,
+                    Err(_) => return,
+                };
                 let handle_rect = D2D_RECT_F {
                     left: x + width - 1.0,
                     top: y,
@@ -222,7 +240,8 @@ impl EditorState {
     ) {
         unsafe {
             let ui_format = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
@@ -239,13 +258,15 @@ impl EditorState {
 
             let ring_color = color_f(0.3, 0.3, 0.3, 1.0);
             let ring_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &ring_color)
                 .unwrap();
             let dot_color = color_f(0.25, 0.65, 0.95, 1.0);
             let dot_brush = self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &dot_color)
                 .unwrap();

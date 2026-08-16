@@ -89,7 +89,11 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_UP => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal.terminal_panel.send_arrow(ArrowKey::Up);
+                    state
+                        .borrow_mut()
+                        .terminal
+                        .terminal_panel
+                        .send_arrow(ArrowKey::Up);
                 }
             });
             true
@@ -97,7 +101,11 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_DOWN => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal.terminal_panel.send_arrow(ArrowKey::Down);
+                    state
+                        .borrow_mut()
+                        .terminal
+                        .terminal_panel
+                        .send_arrow(ArrowKey::Down);
                 }
             });
             true
@@ -105,7 +113,11 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_LEFT => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal.terminal_panel.send_arrow(ArrowKey::Left);
+                    state
+                        .borrow_mut()
+                        .terminal
+                        .terminal_panel
+                        .send_arrow(ArrowKey::Left);
                 }
             });
             true
@@ -114,8 +126,9 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
                     state
-                                .borrow_mut()
-                                .terminal.terminal_panel
+                        .borrow_mut()
+                        .terminal
+                        .terminal_panel
                         .send_arrow(ArrowKey::Right);
                 }
             });
@@ -216,7 +229,8 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                         .map(|state| {
                             state
                                 .borrow()
-                                .ai.ai_panel
+                                .ai
+                                .ai_panel
                                 .history_page_indices()
                                 .first()
                                 .copied()
@@ -320,7 +334,8 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if editing {
-                        st.ai.ai_panel.history_editing_caret = st.ai.ai_panel.history_editing_text.len();
+                        st.ai.ai_panel.history_editing_caret =
+                            st.ai.ai_panel.history_editing_text.len();
                     } else {
                         st.ai.ai_panel.history_search_caret = st.ai.ai_panel.history_search.len();
                     }
@@ -376,8 +391,9 @@ unsafe fn okd_edit_return(hwnd: HWND) {
                 let attachments = state.borrow().ai.ai_panel.attachments.clone();
                 let context = state.borrow().gather_context(&attachments);
                 let _ = state
-                                .borrow_mut()
-                                .ai.ai_panel
+                    .borrow_mut()
+                    .ai
+                    .ai_panel
                     .send_message_with_prepared_context(&settings, context, mode);
                 // 启动后台刷新定时器，使流式回复逐字平滑显示，完成后自动停止
                 let _ = SetTimer(hwnd, AI_TIMER_ID, AI_REFRESH_MS, None);
@@ -664,7 +680,8 @@ unsafe fn okd_edit_home(hwnd: HWND, shift: bool) {
             let mut st = state.borrow_mut();
             // 计算当前行首个非空白位置，判断是否已在该位置
             let already_at_smart = st
-                .editor.content
+                .editor
+                .content
                 .buffer
                 .get_line(st.editor.content.cursor_line)
                 .map(|text| {

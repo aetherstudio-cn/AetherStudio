@@ -68,7 +68,8 @@ impl EditorState {
 
             // 画刷
             let bg_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.13, 0.13, 0.15, 1.0))
             {
@@ -76,7 +77,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let border_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.30, 0.30, 0.34, 1.0))
             {
@@ -84,7 +86,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let titlebar_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.17, 0.17, 0.20, 1.0))
             {
@@ -92,7 +95,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let white_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.92, 0.92, 0.92, 1.0))
             {
@@ -100,7 +104,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let dim_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.55, 0.58, 0.64, 1.0))
             {
@@ -108,7 +113,8 @@ impl EditorState {
                 Err(_) => return,
             };
             let accent_brush = match self
-    .win.render_ctx
+                .win
+                .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
             {
@@ -239,7 +245,8 @@ impl EditorState {
                     bottom: cy + search_h,
                 };
                 let box_bg = match self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.10, 0.10, 0.12, 1.0))
                 {
@@ -304,7 +311,8 @@ impl EditorState {
                         &white_brush,
                     );
                 }
-                self.ai.ai_panel.history_search_region = Some((content_left, cy, content_w, search_h));
+                self.ai.ai_panel.history_search_region =
+                    Some((content_left, cy, content_w, search_h));
                 crate::hit_test::register_hit_region(
                     "ai:history_search",
                     content_left,
@@ -353,7 +361,8 @@ impl EditorState {
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
-                    self.ai.ai_panel
+                    self.ai
+                        .ai_panel
                         .history_time_filter_regions
                         .push((fi, fx, cy, bw, btn_h));
                     crate::hit_test::register_hit_region(
@@ -425,7 +434,8 @@ impl EditorState {
                 // 悬停高亮
                 if self.ai.ai_panel.hover_tab == Some(hi) {
                     if let Ok(hl) = self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &color_f(0.18, 0.20, 0.26, 1.0))
                     {
@@ -446,7 +456,8 @@ impl EditorState {
                         bottom: iy + item_h - 8.0,
                     };
                     let edit_bg = match self
-    .win.render_ctx
+                        .win
+                        .render_ctx
                         .brush_cache
                         .get_brush(target, &color_f(0.10, 0.10, 0.12, 1.0))
                     {
@@ -479,7 +490,8 @@ impl EditorState {
                     );
                     // 光标
                     if self.ai.ai_panel.caret_visible {
-                        let byte_caret = self.ai.ai_panel.history_editing_caret.min(edit_text.len());
+                        let byte_caret =
+                            self.ai.ai_panel.history_editing_caret.min(edit_text.len());
                         let before = &edit_text[..byte_caret];
                         let cx = edit_rect.left + 4.0 + measure_text_width(&title_format, before);
                         target.FillRectangle(
@@ -536,7 +548,8 @@ impl EditorState {
                     bottom: iy + (item_h - 4.0 - 22.0) / 2.0 + 22.0,
                 };
                 if let Ok(b) = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.45, 0.16, 0.16, 1.0))
                 {
@@ -599,7 +612,8 @@ impl EditorState {
                 let sb_x = px + win_w - sb_w - 3.0;
                 let track_h = list_h.max(8.0);
                 if let Ok(tb) = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.20, 0.20, 0.23, 1.0))
                 {
@@ -616,7 +630,8 @@ impl EditorState {
                 let thumb_h = (track_h * list_h / total_h).max(16.0).min(track_h);
                 let thumb_y = list_top + (track_h - thumb_h) * (scroll / max_scroll);
                 if let Ok(tb) = self
-    .win.render_ctx
+                    .win
+                    .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(0.45, 0.46, 0.52, 1.0))
                 {
