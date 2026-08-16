@@ -697,15 +697,6 @@ impl EditorState {
     pub(super) fn handle_remote_tree_click(&mut self, _mouse_x: f32, mouse_y: f32) -> bool {
         handle_remote_tree_click(self, _mouse_x, mouse_y)
     }
-    /// P0-1: 递归查找 y 坐标命中的可见远程节点，返回 (path, is_dir)
-    pub(super) fn find_remote_node_at_y(
-        nodes: &[crate::ssh::RemoteFileNode],
-        mouse_y: f32,
-        node_height: f32,
-        current_y: &mut f32,
-    ) -> Option<(String, bool)> {
-        find_remote_node_at_y(nodes, mouse_y, node_height, current_y)
-    }
     pub(super) fn update_remote_tree_hover(&mut self, mouse_y: f32) -> bool {
         update_remote_tree_hover(self, mouse_y)
     }
@@ -736,10 +727,6 @@ impl EditorState {
     /// 处理 SSH 对话框键盘输入
     pub fn handle_ssh_dialog_key(&mut self, ch: char) {
         handle_ssh_dialog_key(self, ch)
-    }
-    /// P2-4: 返回 SSH 对话框当前 focus_field 对应的可变字段引用
-    pub(super) fn ssh_dialog_active_field_mut(&mut self) -> Option<&mut String> {
-        ssh_dialog_active_field_mut(self)
     }
     /// P2-4: 向 SSH 对话框当前字段粘贴剪贴板内容（port 字段过滤非数字）
     pub fn paste_into_ssh_dialog(&mut self) {

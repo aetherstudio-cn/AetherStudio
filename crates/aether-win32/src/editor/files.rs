@@ -665,14 +665,6 @@ pub fn check_workspace_trust(hwnd: HWND, path: &std::path::Path) -> bool {
 }
 
 impl EditorState {
-    /// 检查当前标签页是否可以重用（空文件且未修改）
-    pub(super) fn can_reuse_current_tab(&self) -> bool {
-        can_reuse_current_tab(self)
-    }
-    /// 重置当前编辑状态到初始值
-    pub(super) fn reset_editor_state(&mut self) {
-        reset_editor_state(self)
-    }
     /// 在新标签页中打开内容
     pub(super) fn open_in_new_tab(&mut self, tab: Tab) {
         open_in_new_tab(self, tab)
@@ -680,28 +672,10 @@ impl EditorState {
     pub fn load_file(&mut self, path: PathBuf) {
         load_file(self, path)
     }
-    /// 加载图片文件
-    pub(super) fn load_image_file(&mut self, path: PathBuf) {
-        load_image_file(self, path)
-    }
-    /// 显示不支持的文件提示
-    pub(super) fn show_unsupported_file(&mut self, path: &Path) {
-        show_unsupported_file(self, path)
-    }
     /// P4-2: 原子写入文件，避免写入中途崩溃导致文件损坏
     #[allow(dead_code)]
     pub(super) fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
         atomic_write(path, data)
-    }
-    /// 流式原子写入：通过回调函数写入数据，避免在内存中构造完整的 &[u8]。
-    pub(super) fn atomic_write_stream<F>(
-        path: &std::path::Path,
-        writer_fn: F,
-    ) -> std::io::Result<()>
-    where
-        F: FnOnce(&mut std::fs::File) -> std::io::Result<()>,
-    {
-        atomic_write_stream(path, writer_fn)
     }
     /// 保存文件，返回是否成功
     pub fn save_file(&mut self) -> bool {
@@ -718,20 +692,8 @@ impl EditorState {
     pub(crate) fn on_folder_scan_batch_ref(&mut self, batch: &ScannedBatch) {
         on_folder_scan_batch_ref(self, batch)
     }
-    /// 在打开的文件夹根目录查找 README 并自动加载
-    pub(super) fn try_open_readme(&mut self, folder: &Path) {
-        try_open_readme(self, folder)
-    }
     pub fn close_workspace(&mut self) {
         close_workspace(self)
-    }
-    /// 保存当前工作区的 AI 会话状态（完整标签页组快照）
-    fn save_current_workspace_ai_session(&mut self) {
-        save_current_workspace_ai_session(self)
-    }
-    /// 加载目标工作区的 AI 会话（恢复标签页组或从数据库加载）
-    fn load_workspace_ai_session(&mut self, workspace_hash: &str) {
-        load_workspace_ai_session(self, workspace_hash)
     }
     /// 工作区路径 → 短哈希（与 ai_warm_data.rs 中的 fnv1a_hex 一致）
     pub(crate) fn workspace_path_hash(path: &Path) -> String {

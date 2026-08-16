@@ -12,12 +12,6 @@ pub fn scroll(state: &mut EditorState, delta_y: f32) {
     state.emit_event(crate::events::EditorEvent::Scrolled);
 }
 
-/// P2.3: 大文件阈值（行数）
-/// 超过阈值即跳过高亮，避免点击大文件后数秒系统卡顿。
-pub(super) const LARGE_FILE_LINE_THRESHOLD: usize = 8_000;
-/// P2.3: 大文件阈值（字节数）
-pub(super) const LARGE_FILE_BYTE_THRESHOLD: usize = 2 * 1024 * 1024;
-
 /// P2.3: 重建行 Y 偏移前缀和缓存
 /// 优化：只在行数变化时重建，避免每帧重复计算
 pub fn rebuild_line_y_offsets(state: &mut EditorState) {

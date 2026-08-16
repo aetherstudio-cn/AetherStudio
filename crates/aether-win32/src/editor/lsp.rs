@@ -559,7 +559,7 @@ pub(crate) fn freeze_lsp(state: &mut EditorState) {
         let _ = client.shutdown_all().await;
     });
     // 清空诊断与补全状态（避免显示过期信息并释放内存）
-    state.lsp.diagnostics.clear();
+    state.lsp.lsp.diagnostics.clear();
     state.lsp.lsp.diagnostics.clear();
     state.lsp.lsp.completion_items.clear();
     state.lsp.lsp.completion_visible = false;

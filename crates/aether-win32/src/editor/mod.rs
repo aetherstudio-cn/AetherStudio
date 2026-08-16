@@ -22,8 +22,8 @@ pub(crate) use lsp_types::{CompletionItem, Diagnostic};
 pub(crate) use url::Url;
 
 pub(crate) use crate::activity_bar::ActivityBar;
-pub(crate) use crate::ai_agent::AiEdit;
-pub(crate) use crate::ai_context::{truncate_middle, wrap_code_block, AiContextAttachment};
+pub(crate) use crate::ai_panel::AiEdit;
+pub(crate) use crate::ai_panel::{truncate_middle, wrap_code_block, AiContextAttachment};
 pub(crate) use crate::ai_panel::AiPanel;
 pub(crate) use crate::command_palette::CommandPalette;
 pub(crate) use crate::dialogs::Dialogs;
@@ -367,6 +367,14 @@ pub(crate) struct ScannedBatch {
     complete: bool,
 }
 
+/// 子目录异步扫描结果（由后台线程通过 PostMessage WM_APP+12 发送回 UI 线程）
+pub(crate) struct SubdirScanResult {
+    node_idx: u32,
+    entries: Vec<ScannedEntry>,
+    dir_path: PathBuf,
+    child_depth: u8,
+}
+
 /// C-09: SSH 异步连接结果（由后台线程通过 PostMessage 发送回 UI 线程）
 struct SshConnectResult {
     session: Option<RemoteSession>,
@@ -434,68 +442,17 @@ pub struct DiagnosticItem {
 }
 
 /// 编辑器应用状态
-pub struct EditorState {
+/// 窗口与渲染硬件状态
+pub struct WindowRenderState {
     pub hwnd: HWND,
     pub d2d_factory: D2DFactory,
     pub render_ctx: crate::render_context::RenderContext,
     pub text_renderer: TextRenderer,
     pub theme: Theme,
-    /// REQ-P1-09: 当前活动标签页的编辑状态（单一归属，切换标签时通过 swap 交换）
-    pub content: TabContent,
-    pub is_selecting: bool,
-    /// 标签栏状态
-    pub tab_bar: TabBarState,
-    // 查找与替换状态
-    pub find: FindState,
-    // 全局 UI 状态
-    pub file_tree: Option<FileTree>,
-    pub current_folder: Option<PathBuf>,
-    /// 当前文件夹加载世代，用于丢弃过期批次消息
-    pub(crate) folder_generation: u64,
-    pub status_message: String,
-    pub key_map: KeyMap,
     pub window_width: u32,
     pub window_height: u32,
     /// DPI 缩放因子（1.0 = 100%, 1.5 = 150%）
     pub dpi_scale: f32,
-    /// UI-L02: IME 集成，控制 CJK 输入法候选窗口位置
-    pub ime: crate::ime::ImeIntegration,
-    // 新布局系统
-    pub layout: LayoutManager,
-    pub menu_bar: MenuBar,
-    pub activity_bar: ActivityBar,
-    pub status_bar: StatusBar,
-    pub activity_view: ActivityBarView,
-    pub sidebar_content: SidebarContent,
-    /// 最近项目管理器
-    pub recent_projects: crate::recent_projects::RecentProjectsManager,
-    /// 命令面板
-    pub command_palette: CommandPalette,
-    /// 多光标状态
-    pub multi_cursor: MultiCursorState,
-    /// Git 集成
-    pub git: GitIntegration,
-    /// 终端面板
-    pub terminal_panel: TerminalPanel,
-    /// 终端聚焦时缓存的原 IME 上下文句柄（HIMC）。
-    /// 终端聚焦时 disassociate，离开时 restore，从而彻底旁路 IME 系统级拦截
-    /// （修复：中文 IME 在"开启未合成"状态下会拦截 Backspace，导致终端里的汉字无法删除）
-    pub saved_ime_himc: Option<windows::Win32::UI::Input::Ime::HIMC>,
-    /// AI 助手面板
-    pub ai_panel: AiPanel,
-    /// 全局搜索面板
-    pub search_panel: crate::search_panel::SearchPanel,
-    /// 底部面板当前选中的子面板（终端 / 问题）
-    pub bottom_panel_tab: BottomPanelTab,
-    /// 当前工作区中各文件的 LSP 诊断（路径字符串 -> 诊断列表）
-    pub diagnostics: HashMap<String, Vec<DiagnosticItem>>,
-    /// LSP 子系统状态
-    pub lsp: LspState,
-    /// 远程开发子系统状态
-    pub remote: RemoteState,
-    /// 新建项目对话框
-    pub new_project_dialog: crate::new_project_dialog::NewProjectDialog,
-    /// 窗口是否最大化
     pub is_maximized: bool,
     /// P0.2c: 是否为主窗口(无 owner)。仅主窗口在退出时持久化窗口状态。
     pub is_main_window: bool,
@@ -504,12 +461,54 @@ pub struct EditorState {
     /// 标题栏左侧箭头按钮 X 位置（渲染时设置，悬停/点击时读取）
     pub titlebar_back_btn_x: f32,
     pub titlebar_forward_btn_x: f32,
-    /// 有可用新版本时为 Some(版本号)，用于右上角 badge 显示
-    pub update_available_version: Option<String>,
-    /// 是否正在后台检查更新（用于按钮加载动画）
-    pub update_checking: bool,
-    /// 侧边栏宽度调整手柄的悬停状态
-    pub hover_sidebar_resize: bool,
+    /// 脏矩形追踪器（用于局部重绘优化）
+    pub dirty_tracker: crate::dirty_rect::DirtyRectTracker,
+    /// EndDraw 连续失败计数：限制失败后自动重绘的重试次数，防止忙循环
+    pub end_draw_fail_streak: u8,
+    /// Logo 位图（aether-512.png），懒加载，用于欢迎页和空占位页
+    pub(crate) logo_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
+    /// 图片预览位图（设备相关缓存），由当前标签的 image_data 惰性创建；
+    /// 设备丢失/切换标签时清空重建
+    pub(crate) image_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
+    /// 图片预览缩放比例（1.0 = 100%）
+    pub image_zoom: f32,
+    /// 图片预览缩放后的水平偏移（用于平移查看）
+    pub image_offset_x: f32,
+    /// 图片预览缩放后的垂直偏移
+    pub image_offset_y: f32,
+    /// GPU 语法高亮器（可选，D3D11 Compute Shader 加速）
+    pub(crate) gpu_highlighter: Option<aether_render::gpu::lexer::GpuLexer>,
+    /// GPU 高亮配置
+    pub(crate) gpu_highlight_config: aether_render::gpu::viewport::GpuHighlightConfig,
+}
+
+/// 编辑器内容状态（标签页、缓冲区、光标、选择、查找）
+pub struct EditorContentState {
+    /// REQ-P1-09: 当前活动标签页的编辑状态（单一归属，切换标签时通过 swap 交换）
+    pub content: TabContent,
+    pub is_selecting: bool,
+    /// 标签栏状态
+    pub tab_bar: TabBarState,
+    // 查找与替换状态
+    pub find: FindState,
+    /// 多光标状态
+    pub multi_cursor: MultiCursorState,
+    /// P0-2: IME 合成串（pre-edit text），中文/日文输入过程中显示在光标处
+    pub composition: Option<String>,
+    /// Markdown 预览模式：true 时当前标签页渲染 Markdown 预览而非编辑器
+    pub markdown_preview: bool,
+    /// Markdown 预览切换按钮区域（渲染时计算，点击时命中检测）
+    pub markdown_toggle_btn: Option<crate::layout::Region>,
+    /// P3.1: 内联补全服务（占位）
+    pub inline_completion_service: crate::inline_completion::InlineCompletionService,
+}
+
+/// 文件树与工作区状态
+pub struct FileTreeState {
+    pub file_tree: Option<FileTree>,
+    pub current_folder: Option<PathBuf>,
+    /// 当前文件夹加载世代，用于丢弃过期批次消息
+    pub(crate) folder_generation: u64,
     /// 文件树中选中的节点索引
     pub selected_file_node: Option<u32>,
     /// 文件树中鼠标悬停的节点索引
@@ -527,16 +526,12 @@ pub struct EditorState {
     pub hover_file_tree_root: bool,
     /// 文件树内联输入状态（新建文件/文件夹）
     pub file_tree_input: Option<FileTreeInput>,
+    /// 正在异步加载子目录的节点集合（防止重复触发加载）
+    pub(crate) file_tree_loading_nodes: std::collections::HashSet<u32>,
     /// 文件树标题栏按钮区域（用于点击检测）
     pub file_tree_new_file_btn: Option<crate::layout::Region>,
     pub file_tree_new_folder_btn: Option<crate::layout::Region>,
     pub file_tree_open_folder_btn: Option<crate::layout::Region>,
-    /// 欢迎页悬停的操作项
-    pub welcome_hover_action: Option<crate::welcome::WelcomeAction>,
-    /// 欢迎页键盘焦点项
-    pub welcome_focus_action: Option<crate::welcome::WelcomeAction>,
-    /// 全局矢量图标缓存（欢迎页/状态栏/命令面板等共用）
-    pub icons: crate::icons::IconCache,
     /// 文件夹异步加载中（控制 sidebar spinner 显示）
     pub is_loading_folder: bool,
     /// AI 终端命令后监视工作区变化的截止时间（None=未监视）。
@@ -544,12 +539,78 @@ pub struct EditorState {
     pub fs_watch_until: Option<std::time::Instant>,
     /// 上一次记录的工作区根目录签名（用于变化检测，避免无谓刷新）
     pub fs_last_root_sig: u64,
-    /// C-09: Git 后台克隆中（防止重复触发，控制状态栏提示）
-    pub git_cloning: bool,
     /// 侧边栏滚动偏移（用于文件树虚拟滚动）
     pub sidebar_scroll_y: f32,
     /// 删除撤销栈：记录最近删除的文件路径，支持 Ctrl+Z 快速撤销
     pub delete_undo_stack: Vec<crate::undo_delete::DeleteRecord>,
+    /// 文件树拖拽状态（放置目标 + 浮标绘制信息）
+    pub file_drag: crate::file_drag_drop::FileDragDropState,
+}
+
+/// AI 面板与工作区会话状态
+pub struct AiPanelState {
+    /// AI 助手面板
+    pub ai_panel: AiPanel,
+    /// 工作区 AI 会话映射：工作区路径哈希 -> 该工作区的完整 AI 面板快照
+    /// 用于切换工作区时隔离并恢复对应的 AI 对话标签页组
+    pub workspace_ai_sessions: std::collections::HashMap<String, WorkspaceAiSessionSnapshot>,
+    /// 当前工作区的 AI 会话 ID（None 表示未打开工作区或新工作区）
+    pub current_workspace_ai_session: Option<String>,
+}
+
+/// 终端面板状态
+pub struct TerminalState {
+    /// 终端面板
+    pub terminal_panel: TerminalPanel,
+    /// 终端聚焦时缓存的原 IME 上下文句柄（HIMC）。
+    /// 终端聚焦时 disassociate，离开时 restore，从而彻底旁路 IME 系统级拦截
+    /// （修复：中文 IME 在"开启未合成"状态下会拦截 Backspace，导致终端里的汉字无法删除）
+    pub saved_ime_himc: Option<windows::Win32::UI::Input::Ime::HIMC>,
+    /// 底部面板当前选中的子面板（终端 / 问题）
+    pub bottom_panel_tab: BottomPanelTab,
+}
+
+/// LSP 与诊断状态
+pub struct LspDiagState {
+    /// 当前工作区中各文件的 LSP 诊断（路径字符串 -> 诊断列表）
+    pub diagnostics: HashMap<String, Vec<DiagnosticItem>>,
+    /// LSP 子系统状态
+    pub lsp: LspState,
+}
+
+/// UI 面板与组件状态
+pub struct UiPanelState {
+    pub status_message: String,
+    pub key_map: KeyMap,
+    // 新布局系统
+    pub layout: LayoutManager,
+    pub menu_bar: MenuBar,
+    pub activity_bar: ActivityBar,
+    pub status_bar: StatusBar,
+    pub activity_view: ActivityBarView,
+    pub sidebar_content: SidebarContent,
+    /// 最近项目管理器
+    pub recent_projects: crate::recent_projects::RecentProjectsManager,
+    /// 命令面板
+    pub command_palette: CommandPalette,
+    /// 全局搜索面板
+    pub search_panel: crate::search_panel::SearchPanel,
+    /// 新建项目对话框
+    pub new_project_dialog: crate::new_project_dialog::NewProjectDialog,
+    /// 有可用新版本时为 Some(版本号)，用于右上角 badge 显示
+    pub update_available_version: Option<String>,
+    /// 是否正在后台检查更新（用于按钮加载动画）
+    pub update_checking: bool,
+    /// 侧边栏宽度调整手柄的悬停状态
+    pub hover_sidebar_resize: bool,
+    /// 欢迎页悬停的操作项
+    pub welcome_hover_action: Option<crate::welcome::WelcomeAction>,
+    /// 欢迎页键盘焦点项
+    pub welcome_focus_action: Option<crate::welcome::WelcomeAction>,
+    /// 全局矢量图标缓存（欢迎页/状态栏/命令面板等共用）
+    pub icons: crate::icons::IconCache,
+    /// C-09: Git 后台克隆中（防止重复触发，控制状态栏提示）
+    pub git_cloning: bool,
     /// 应用设置
     pub app_settings: aether_shared::settings::AppSettings,
     /// 设置面板
@@ -560,62 +621,54 @@ pub struct EditorState {
     pub tabs_panel: crate::open_tabs::TabsPanel,
     /// Git 面板
     pub git_panel: crate::git::GitIntegration,
-    /// 脏矩形追踪器（用于局部重绘优化）
-    pub dirty_tracker: crate::dirty_rect::DirtyRectTracker,
-    /// EndDraw 连续失败计数：限制失败后自动重绘的重试次数，防止忙循环
-    pub end_draw_fail_streak: u8,
-    /// REQ-P0-05: 统一焦点管理器
-    pub focus_manager: FocusManager,
-    /// 事件队列（P1.1: 解耦模型改动与渲染）
-    pub event_queue: crate::events::EventQueue,
-    /// P3.1: 内联补全服务（占位）
-    pub inline_completion_service: crate::inline_completion::InlineCompletionService,
-    /// P3.4: hover tooltip 状态（鼠标悬停提示）
-    pub hover: HoverState,
-    /// 上一帧快照（脏追踪，用于检测各类 UI 变化）
-    pub prev: PrevFrameState,
-    /// 空闲内存优化：Frozen 冰冻态管理（最小化/长期空闲时释放内存）
-    pub power: crate::power::PowerManager,
+    /// Git 集成
+    pub git: GitIntegration,
     /// 用户菜单
     pub user_menu: crate::user_menu::UserMenu,
     /// 各处右键上下文菜单状态
     pub context_menus: ContextMenusState,
-    /// 鼠标按键/长按检测状态
-    pub mouse_press: MousePressState,
-    /// 文件树拖拽状态（放置目标 + 浮标绘制信息）
-    pub file_drag: crate::file_drag_drop::FileDragDropState,
-    /// P0-2: IME 合成串（pre-edit text），中文/日文输入过程中显示在光标处
-    pub composition: Option<String>,
-    /// 后台语法高亮器（独立线程，避免阻塞 UI 输入）
-    pub(crate) bg_highlighter: aether_tree_sitter::BackgroundHighlighter,
-    /// GPU 语法高亮器（可选，D3D11 Compute Shader 加速）
-    pub(crate) gpu_highlighter: Option<aether_render::gpu::lexer::GpuLexer>,
-    /// GPU 高亮配置
-    pub(crate) gpu_highlight_config: aether_render::gpu::viewport::GpuHighlightConfig,
-    /// 已发送后台高亮请求对应的 buffer_version（变化时触发新请求）
-    pub(crate) hl_request_version: u64,
     /// UI Tooltip 状态（500ms 延迟显示、4px 移动容差的悬停提示）
     pub tooltip_state: crate::tooltip::TooltipState,
-    /// Logo 位图（aether-512.png），懒加载，用于欢迎页和空占位页
-    pub(crate) logo_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
-    /// 图片预览位图（设备相关缓存），由当前标签的 image_data 惰性创建；
-    /// 设备丢失/切换标签时清空重建
-    pub(crate) image_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
-    /// 图片预览缩放比例（1.0 = 100%）
-    pub image_zoom: f32,
-    /// 图片预览缩放后的水平偏移（用于平移查看）
-    pub image_offset_x: f32,
-    /// 图片预览缩放后的垂直偏移
-    pub image_offset_y: f32,
-    /// 工作区 AI 会话映射：工作区路径哈希 -> 该工作区的完整 AI 面板快照
-    /// 用于切换工作区时隔离并恢复对应的 AI 对话标签页组
-    pub workspace_ai_sessions: std::collections::HashMap<String, WorkspaceAiSessionSnapshot>,
-    /// 当前工作区的 AI 会话 ID（None 表示未打开工作区或新工作区）
-    pub current_workspace_ai_session: Option<String>,
-    /// Markdown 预览模式：true 时当前标签页渲染 Markdown 预览而非编辑器
-    pub markdown_preview: bool,
-    /// Markdown 预览切换按钮区域（渲染时计算，点击时命中检测）
-    pub markdown_toggle_btn: Option<crate::layout::Region>,
+    /// UI-L02: IME 集成，控制 CJK 输入法候选窗口位置
+    pub ime: crate::ime::ImeIntegration,
+}
+
+/// 输入与交互状态
+pub struct InputState {
+    /// 鼠标按键/长按检测状态
+    pub mouse_press: MousePressState,
+    /// P3.4: hover tooltip 状态（鼠标悬停提示）
+    pub hover: HoverState,
+    /// 上一帧快照（脏追踪，用于检测各类 UI 变化）
+    pub prev: PrevFrameState,
+    /// REQ-P0-05: 统一焦点管理器
+    pub focus_manager: FocusManager,
+    /// 事件队列（P1.1: 解耦模型改动与渲染）
+    pub event_queue: crate::events::EventQueue,
+}
+
+/// 编辑器应用状态（按域分组的聚合体）
+pub struct EditorState {
+    /// 窗口与渲染硬件
+    pub win: WindowRenderState,
+    /// 编辑器内容
+    pub editor: EditorContentState,
+    /// 文件树与工作区
+    pub fs: FileTreeState,
+    /// AI 面板
+    pub ai: AiPanelState,
+    /// 终端面板
+    pub terminal: TerminalState,
+    /// LSP 与诊断
+    pub lsp: LspDiagState,
+    /// UI 面板与组件
+    pub ui: UiPanelState,
+    /// 输入与交互
+    pub input: InputState,
+    /// 远程开发子系统状态
+    pub remote: RemoteState,
+    /// 空闲内存优化：Frozen 冰冻态管理（最小化/长期空闲时释放内存）
+    pub power: crate::power::PowerManager,
 }
 
 /// 工作区 AI 面板快照：保存切换工作区时的完整对话标签页组状态
@@ -698,19 +751,25 @@ pub(crate) fn reopen_last_closed_tab_logic(
 }
 
 impl EditorState {
+    /// P2.3: 大文件阈值（行数）
+    /// 超过阈值即跳过高亮，避免点击大文件后数秒系统卡顿。
+    pub(crate) const LARGE_FILE_LINE_THRESHOLD: usize = 8_000;
+    /// P2.3: 大文件阈值（字节数）
+    pub(crate) const LARGE_FILE_BYTE_THRESHOLD: usize = 2 * 1024 * 1024;
+
     /// 确保 logo 位图已加载（懒加载，仅在首次需要时从文件读取）
     pub(crate) fn ensure_logo_bitmap(
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
     ) {
-        if self.logo_bitmap.is_some() {
+        if self.win.logo_bitmap.is_some() {
             return;
         }
         // 将吉祥物 PNG 嵌入二进制，避免运行时依赖外部资源文件
         const PNG_BYTES: &[u8] = include_bytes!("../../resources/app_icons/source/aether-512.png");
         match crate::bitmap_loader::load_png_to_bitmap(target, PNG_BYTES) {
             Ok(bitmap) => {
-                self.logo_bitmap = Some(bitmap);
+                self.win.logo_bitmap = Some(bitmap);
             }
             Err(e) => {
                 tracing::warn!("加载 logo 位图失败: {}", e);
@@ -764,60 +823,136 @@ impl EditorState {
         let hover_content = None;
 
         let mut state = Self {
-            hwnd,
-            d2d_factory,
-            render_ctx: crate::render_context::RenderContext::new(),
-            text_renderer,
-            theme,
-            content: TabContent::new(),
-            is_selecting: false,
-            tab_bar: TabBarState::default(),
-            find: FindState::default(),
-            file_tree: None,
-            current_folder: None,
-            folder_generation: 0,
-            status_message: "就绪".to_string(),
-            key_map,
-            window_width: 1280,
-            window_height: 800,
-            dpi_scale: 1.0,
-            // UI-L02: 实例化 IME 集成
-            ime: crate::ime::ImeIntegration::new(hwnd),
-            layout: LayoutManager::new(1280.0, 800.0),
-            menu_bar: MenuBar::new(),
-            activity_bar: ActivityBar::new(),
-            status_bar: StatusBar::new(),
-            activity_view: ActivityBarView::Explorer,
-            sidebar_content: SidebarContent::FileTree,
-            recent_projects: crate::recent_projects::RecentProjectsManager::new(),
-            command_palette: CommandPalette::new(),
-            multi_cursor: MultiCursorState::new(),
-            git: GitIntegration::new(),
-            terminal_panel: TerminalPanel::new(),
-            saved_ime_himc: None,
-            ai_panel: AiPanel::new(),
-            search_panel: crate::search_panel::SearchPanel::new(),
-            bottom_panel_tab: BottomPanelTab::default(),
-            diagnostics: HashMap::new(),
-            lsp: LspState {
-                legacy_lsp_client: None,
-                rx: None,
-                legacy_runtime: None,
-                tokio_runtime,
-                client: lsp_client,
-                diagnostics: lsp_diagnostics,
-                completion_items,
-                completion_visible: false,
-                completion_selected: 0,
-                completion_trigger_line: 0,
-                completion_trigger_col: 0,
-                hover_content,
-                frozen: false,
+            win: WindowRenderState {
+                hwnd,
+                d2d_factory,
+                render_ctx: crate::render_context::RenderContext::new(),
+                text_renderer,
+                theme,
+                window_width: 1280,
+                window_height: 800,
+                dpi_scale: 1.0,
+                is_maximized: false,
+                is_main_window,
+                titlebar_hover_button: None,
+                titlebar_back_btn_x: 0.0,
+                titlebar_forward_btn_x: 0.0,
+                dirty_tracker: crate::dirty_rect::DirtyRectTracker::new(1280.0, 800.0),
+                end_draw_fail_streak: 0,
+                logo_bitmap: None,
+                image_bitmap: None,
+                image_zoom: 1.0,
+                image_offset_x: 0.0,
+                image_offset_y: 0.0,
+                gpu_highlighter: None,
+                gpu_highlight_config: aether_render::gpu::viewport::GpuHighlightConfig::default(),
             },
-            settings_panel: crate::settings::SettingsPanel::from_settings(&app_settings),
-            sandbox_eval: crate::sandbox_eval::SandboxEvalPanel::new(),
-            tabs_panel: crate::open_tabs::TabsPanel::new(),
-            app_settings,
+            editor: EditorContentState {
+                content: TabContent::new(),
+                is_selecting: false,
+                tab_bar: TabBarState::default(),
+                find: FindState::default(),
+                multi_cursor: MultiCursorState::new(),
+                composition: None,
+                markdown_preview: false,
+                markdown_toggle_btn: None,
+                inline_completion_service: crate::inline_completion::InlineCompletionService::new(),
+            },
+            fs: FileTreeState {
+                file_tree: None,
+                current_folder: None,
+                folder_generation: 0,
+                selected_file_node: None,
+                hover_file_node: None,
+                file_tree_root_expanded: true,
+                file_tree_visible_rows: Vec::new(),
+                file_tree_rows_dirty: true,
+                file_tree_rows_tree_len: 0,
+                hover_file_tree_root: false,
+                file_tree_input: None,
+                file_tree_loading_nodes: std::collections::HashSet::new(),
+                file_tree_new_file_btn: None,
+                file_tree_new_folder_btn: None,
+                file_tree_open_folder_btn: None,
+                is_loading_folder: false,
+                fs_watch_until: None,
+                fs_last_root_sig: 0,
+                sidebar_scroll_y: 0.0,
+                delete_undo_stack: Vec::new(),
+                file_drag: crate::file_drag_drop::FileDragDropState::default(),
+            },
+            ai: AiPanelState {
+                ai_panel: AiPanel::new(),
+                workspace_ai_sessions: std::collections::HashMap::new(),
+                current_workspace_ai_session: None,
+            },
+            terminal: TerminalState {
+                terminal_panel: TerminalPanel::new(),
+                saved_ime_himc: None,
+                bottom_panel_tab: BottomPanelTab::default(),
+            },
+            lsp: LspDiagState {
+                diagnostics: HashMap::new(),
+                lsp: LspState {
+                    legacy_lsp_client: None,
+                    rx: None,
+                    legacy_runtime: None,
+                    tokio_runtime,
+                    client: lsp_client,
+                    diagnostics: lsp_diagnostics,
+                    completion_items,
+                    completion_visible: false,
+                    completion_selected: 0,
+                    completion_trigger_line: 0,
+                    completion_trigger_col: 0,
+                    hover_content,
+                    frozen: false,
+                },
+            },
+            ui: UiPanelState {
+                status_message: "就绪".to_string(),
+                key_map,
+                layout: LayoutManager::new(1280.0, 800.0),
+                menu_bar: MenuBar::new(),
+                activity_bar: ActivityBar::new(),
+                status_bar: StatusBar::new(),
+                activity_view: ActivityBarView::Explorer,
+                sidebar_content: SidebarContent::FileTree,
+                recent_projects: crate::recent_projects::RecentProjectsManager::new(),
+                command_palette: CommandPalette::new(),
+                search_panel: crate::search_panel::SearchPanel::new(),
+                new_project_dialog: crate::new_project_dialog::NewProjectDialog::new(),
+                update_available_version: None,
+                update_checking: false,
+                hover_sidebar_resize: false,
+                welcome_hover_action: None,
+                welcome_focus_action: None,
+                icons: crate::icons::IconCache::new(),
+                git_cloning: false,
+                settings_panel: crate::settings::SettingsPanel::from_settings(&app_settings),
+                app_settings,
+                sandbox_eval: crate::sandbox_eval::SandboxEvalPanel::new(),
+                tabs_panel: crate::open_tabs::TabsPanel::new(),
+                git_panel: crate::git::GitIntegration::new(),
+                git: GitIntegration::new(),
+                user_menu: crate::user_menu::UserMenu::new(),
+                context_menus: ContextMenusState {
+                    explorer: crate::context_menu::ExplorerContextMenu::new(),
+                    file_node: crate::context_menu::FileNodeContextMenu::new(),
+                    tab: crate::tab_context_menu::TabContextMenuState::default(),
+                    activity_bar:
+                        crate::activity_bar_context_menu::ActivityBarContextMenuState::default(),
+                },
+                tooltip_state: crate::tooltip::TooltipState::default(),
+                ime: crate::ime::ImeIntegration::new(hwnd),
+            },
+            input: InputState {
+                mouse_press: MousePressState::default(),
+                hover: HoverState::default(),
+                prev: PrevFrameState::default(),
+                focus_manager: FocusManager::new(),
+                event_queue: crate::events::EventQueue::new(),
+            },
             remote: RemoteState {
                 ssh_dialog: SshConnectionDialog::new(),
                 session: None,
@@ -830,99 +965,37 @@ impl EditorState {
                 active_ssh_index: None,
                 ssh_connecting: false,
             },
-            new_project_dialog: crate::new_project_dialog::NewProjectDialog::new(),
-            is_maximized: false,
-            is_main_window,
-            titlebar_hover_button: None,
-            titlebar_back_btn_x: 0.0,
-            titlebar_forward_btn_x: 0.0,
-            update_available_version: None,
-            update_checking: false,
-            hover_sidebar_resize: false,
-            selected_file_node: None,
-            hover_file_node: None,
-            file_tree_root_expanded: true,
-            file_tree_visible_rows: Vec::new(),
-            file_tree_rows_dirty: true,
-            file_tree_rows_tree_len: 0,
-            hover_file_tree_root: false,
-            file_tree_input: None,
-            file_tree_new_file_btn: None,
-            file_tree_new_folder_btn: None,
-            file_tree_open_folder_btn: None,
-            welcome_hover_action: None,
-            welcome_focus_action: None,
-            icons: crate::icons::IconCache::new(),
-            is_loading_folder: false,
-            fs_watch_until: None,
-            fs_last_root_sig: 0,
-            git_cloning: false,
-            sidebar_scroll_y: 0.0,
-            delete_undo_stack: Vec::new(),
-            git_panel: crate::git::GitIntegration::new(),
-            dirty_tracker: crate::dirty_rect::DirtyRectTracker::new(1280.0, 800.0),
-            end_draw_fail_streak: 0,
-            focus_manager: FocusManager::new(),
-            event_queue: crate::events::EventQueue::new(),
-            inline_completion_service: crate::inline_completion::InlineCompletionService::new(),
-            hover: HoverState::default(),
-            prev: PrevFrameState::default(),
             power: crate::power::PowerManager::new(),
-            user_menu: crate::user_menu::UserMenu::new(),
-            context_menus: ContextMenusState {
-                explorer: crate::context_menu::ExplorerContextMenu::new(),
-                file_node: crate::context_menu::FileNodeContextMenu::new(),
-                tab: crate::tab_context_menu::TabContextMenuState::default(),
-                activity_bar:
-                    crate::activity_bar_context_menu::ActivityBarContextMenuState::default(),
-            },
-            mouse_press: MousePressState::default(),
-            file_drag: crate::file_drag_drop::FileDragDropState::default(),
-            composition: None,
-            bg_highlighter: aether_tree_sitter::BackgroundHighlighter::new(),
-            gpu_highlighter: None,
-            gpu_highlight_config: aether_render::gpu::viewport::GpuHighlightConfig::default(),
-            hl_request_version: 0,
-            tooltip_state: crate::tooltip::TooltipState::default(),
-            logo_bitmap: None,
-            image_bitmap: None,
-            image_zoom: 1.0,
-            image_offset_x: 0.0,
-            image_offset_y: 0.0,
-            workspace_ai_sessions: std::collections::HashMap::new(),
-            current_workspace_ai_session: None,
-            markdown_preview: false,
-            markdown_toggle_btn: None,
         };
         // 加载 logo 位图（aether-512.png）
         // 注意：此时还没有 render target，位图会在首次渲染时通过 ensure_logo_bitmap 懒加载
         // 应用持久化的活动栏/菜单栏顺序（空配置使用默认顺序）
-        let activity_order = state.app_settings.ui.activity_bar_order.clone();
-        let menu_order = state.app_settings.ui.menu_bar_order.clone();
+        let activity_order = state.ui.app_settings.ui.activity_bar_order.clone();
+        let menu_order = state.ui.app_settings.ui.menu_bar_order.clone();
         if !activity_order.is_empty() {
-            state.activity_bar.apply_order(&activity_order);
+            state.ui.activity_bar.apply_order(&activity_order);
             // 应用顺序后修正当前活动视图
-            state.activity_view = state.activity_bar.active_view();
-            state.sidebar_content = crate::layout::SidebarContent::from_view(state.activity_view);
+            state.ui.activity_view = state.ui.activity_bar.active_view();
+            state.ui.sidebar_content = crate::layout::SidebarContent::from_view(state.ui.activity_view);
         }
         if !menu_order.is_empty() {
-            state.menu_bar.apply_order(&menu_order);
+            state.ui.menu_bar.apply_order(&menu_order);
         }
         // 启动时 tabs 为空，由渲染层根据 show_welcome()/show_empty_placeholder() 显示欢迎页
         // 不再创建 Tab::Welcome 作为显式标签页，避免标签栏出现"欢迎"tab
-        state.tab_bar.active_tab = 0;
+        state.editor.tab_bar.active_tab = 0;
 
         // P0.2c: 主窗口启动时自动恢复上次打开的工作区。
         // 仅在路径仍然存在时打开,避免引用已删除/移动的目录。
         // 异步扫描结果通过 WM_APP+7 批次回调到达,此处调用仅触发扫描。
         if is_main_window {
-            if let Some(workspace) = state.app_settings.ui.last_workspace.clone() {
+            if let Some(workspace) = state.ui.app_settings.ui.last_workspace.clone() {
                 if workspace.exists() {
                     // 信任检查在 open_folder 之前（不持有 RefCell 借用，避免模态框重入 panic）
-                    if crate::editor::files::check_workspace_trust(state.hwnd, &workspace) {
+                    if crate::editor::files::check_workspace_trust(state.win.hwnd, &workspace) {
                         state.open_folder(workspace);
                     } else {
-                        state.status_message = "已取消打开不受信任的工作区".to_string();
+                        state.ui.status_message = "已取消打开不受信任的工作区".to_string();
                     }
                 }
             }
@@ -934,7 +1007,7 @@ impl EditorState {
         // AI 对话持久化：启动温数据归档定时器（每 5s 检查空闲会话并归档进 SQLite）
         unsafe {
             let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
-                state.hwnd,
+                state.win.hwnd,
                 crate::window::AI_ARCHIVE_TIMER_ID,
                 crate::window::AI_ARCHIVE_MS,
                 None,
@@ -942,11 +1015,11 @@ impl EditorState {
         }
 
         // 语义检索：初始化嵌入模型（模型文件缺失时回退 n-gram，不阻塞启动）
-        crate::embedding::try_init_default_model();
+        crate::ai_panel::try_init_default_model();
 
         // ACE Reflector：用当前 AI 配置启用归档后自动反思（无 API Key 时静默禁用）
-        if let Some(warm) = state.ai_panel.warm_data_store.as_ref() {
-            warm.enable_reflector(&state.app_settings.active_ai_settings());
+        if let Some(warm) = state.ai.ai_panel.warm_data_store.as_ref() {
+            warm.enable_reflector(&state.ui.app_settings.active_ai_settings());
         }
 
         // Phase 2: 启动时从磁盘加载历史索引
@@ -956,29 +1029,29 @@ impl EditorState {
     }
 
     pub fn init_render_target(&mut self) -> Result<()> {
-        let _dpi = self.dpi_scale * 96.0;
-        let phys_w = (self.window_width as f32 * self.dpi_scale) as u32;
-        let phys_h = (self.window_height as f32 * self.dpi_scale) as u32;
-        self.render_ctx.init_render_target(
-            &self.d2d_factory,
-            self.hwnd,
+        let _dpi = self.win.dpi_scale * 96.0;
+        let phys_w = (self.win.window_width as f32 * self.win.dpi_scale) as u32;
+        let phys_h = (self.win.window_height as f32 * self.win.dpi_scale) as u32;
+        self.win.render_ctx.init_render_target(
+            &self.win.d2d_factory,
+            self.win.hwnd,
             phys_w,
             phys_h,
-            self.dpi_scale,
+            self.win.dpi_scale,
         )?;
         Ok(())
     }
 
     /// 调整窗口尺寸 - 接收物理像素，内部转换为逻辑像素(DIP)
     pub fn resize(&mut self, phys_width: u32, phys_height: u32) {
-        let log_w = (phys_width as f32 / self.dpi_scale) as u32;
-        let log_h = (phys_height as f32 / self.dpi_scale) as u32;
-        self.window_width = log_w;
-        self.window_height = log_h;
-        self.layout.resize_window(log_w as f32, log_h as f32);
+        let log_w = (phys_width as f32 / self.win.dpi_scale) as u32;
+        let log_h = (phys_height as f32 / self.win.dpi_scale) as u32;
+        self.win.window_width = log_w;
+        self.win.window_height = log_h;
+        self.ui.layout.resize_window(log_w as f32, log_h as f32);
         // 更新脏矩形追踪器窗口尺寸，触发全窗口重绘
-        self.dirty_tracker.resize(log_w as f32, log_h as f32);
-        self.render_ctx.resize(phys_width, phys_height);
+        self.win.dirty_tracker.resize(log_w as f32, log_h as f32);
+        self.win.render_ctx.resize(phys_width, phys_height);
         self.emit_event(crate::events::EditorEvent::WindowResized);
     }
 }
@@ -1115,17 +1188,17 @@ impl EditorState {
     /// 返回 `Some(text)` 表示应显示 tooltip；`None` 表示无需显示。
     /// 仅本地文件树有完整路径信息；远程节点 hover_remote_node 本身就是路径。
     pub fn compute_hover_tooltip_text(&self) -> Option<String> {
-        match &self.sidebar_content {
+        match &self.ui.sidebar_content {
             crate::layout::SidebarContent::FileTree => {
-                let node_idx = self.hover_file_node?;
-                let tree = self.file_tree.as_ref()?;
+                let node_idx = self.fs.hover_file_node?;
+                let tree = self.fs.file_tree.as_ref()?;
                 let relative = file_tree_node_path(tree, node_idx)?;
                 if relative.is_empty() {
                     return None;
                 }
                 // 显示绝对路径：工作区根 + 相对路径，用平台原生分隔符
                 let abs = self
-                    .current_folder
+    .fs.current_folder
                     .as_ref()
                     .map(|root| {
                         let mut p = root.clone();
@@ -1146,7 +1219,7 @@ impl EditorState {
 
     /// P3.4: 清除当前 hover tooltip
     pub fn clear_hover_tooltip(&mut self) {
-        self.hover.tooltip = None;
+        self.input.hover.tooltip = None;
     }
 }
 
@@ -1187,14 +1260,14 @@ impl EditorState {
     pub(crate) fn client_to_screen(&self, logical_x: f32, logical_y: f32) -> (i32, i32) {
         use windows::Win32::Foundation::POINT;
         use windows::Win32::Graphics::Gdi::ClientToScreen;
-        let physical_x = (logical_x * self.dpi_scale) as i32;
-        let physical_y = (logical_y * self.dpi_scale) as i32;
+        let physical_x = (logical_x * self.win.dpi_scale) as i32;
+        let physical_y = (logical_y * self.win.dpi_scale) as i32;
         let mut pt = POINT {
             x: physical_x,
             y: physical_y,
         };
         unsafe {
-            let _ = ClientToScreen(self.hwnd, &mut pt);
+            let _ = ClientToScreen(self.win.hwnd, &mut pt);
         }
         (pt.x, pt.y)
     }
@@ -1217,33 +1290,6 @@ const BINARY_EXTENSIONS: &[&str] = &[
     "db", "sqlite", "sqlite3", "mdb", "accdb", "cache", // 其他二进制
     "class", "jar", "war", "ear", "pyc", "pyo", "o", "lo", "la",
 ];
-
-/// 将 aether-core 的 Language 枚举映射到 tree-sitter highlighter 接受的语言字符串。
-/// 返回 None 的语言（Markdown/Html/Css/PlainText/Image）由调用方 fallback 到手写 lexer。
-/// 注意：aether-core::Language 没有 Cpp 变体，因此 cpp 暂不在此映射中。
-fn language_to_ts_str(lang: Language) -> Option<&'static str> {
-    match lang {
-        Language::Rust => Some("rust"),
-        Language::JavaScript => Some("javascript"),
-        Language::TypeScript => Some("typescript"),
-        Language::Python => Some("python"),
-        Language::C => Some("c"),
-        Language::Json => Some("json"),
-        Language::Toml => Some("toml"),
-        Language::Go => Some("go"),
-        Language::Java => Some("java"),
-        // Markdown/Html/Css/PlainText/Image → None，fallback 到手写 lexer
-        _ => None,
-    }
-}
-
-impl EditorState {
-    /// 当前活跃标签是否依赖后台 tree-sitter 高亮（冰冻态唤醒时用于判断
-    /// 是否需要强制重请求高亮并启动高亮刷新定时器）
-    pub(crate) fn needs_bg_highlight(&self) -> bool {
-        language_to_ts_str(self.content.language).is_some() && !self.content.is_large_file
-    }
-}
 
 /// 将 Language 枚举映射到 LSP language_id 字符串（Option 版本，供新 LSP 集成使用）。
 /// 仅返回有默认 server 配置的语言（rust/python/typescript/javascript/c）。

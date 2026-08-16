@@ -124,10 +124,6 @@ impl EditorState {
         new_project(self)
     }
 
-    pub(super) fn kill_caret_timer(&self) {
-        kill_caret_timer(self)
-    }
-
     /// 关闭新建项目对话框
     pub fn close_new_project_dialog(&mut self) {
         close_new_project_dialog(self)
