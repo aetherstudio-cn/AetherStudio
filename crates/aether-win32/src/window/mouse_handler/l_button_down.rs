@@ -29,22 +29,22 @@ pub(crate) unsafe fn on_l_button_down(
     // 公共初始化：坐标转换、布局克隆、退出自定义模式
     let (mouse_x, mouse_y, layout) = {
         let mut st = state.borrow_mut();
-        if st.terminal_panel.focused {
-            st.terminal_panel.focused = false;
+        if st.terminal.terminal_panel.focused {
+            st.terminal.terminal_panel.focused = false;
             st.set_terminal_ime_bypass(false);
         }
-        st.mouse_press.lbutton_down = true;
-        let mouse_x = raw_x / st.dpi_scale;
-        let mouse_y = raw_y / st.dpi_scale;
-        st.mouse_press.lbutton_down_pos = Some((mouse_x, mouse_y));
-        let layout = st.layout.clone();
+        st.input.mouse_press.lbutton_down = true;
+        let mouse_x = raw_x / st.win.dpi_scale;
+        let mouse_y = raw_y / st.win.dpi_scale;
+        st.input.mouse_press.lbutton_down_pos = Some((mouse_x, mouse_y));
+        let layout = st.ui.layout.clone();
         let activity_region = layout.activity_bar_region();
         let titlebar_region = layout.title_bar_region();
-        if st.activity_bar.customize_mode && !activity_region.contains(mouse_x, mouse_y) {
-            st.activity_bar.exit_customize();
+        if st.ui.activity_bar.customize_mode && !activity_region.contains(mouse_x, mouse_y) {
+            st.ui.activity_bar.exit_customize();
         }
-        if st.menu_bar.customize_mode && !titlebar_region.contains(mouse_x, mouse_y) {
-            st.menu_bar.exit_customize();
+        if st.ui.menu_bar.customize_mode && !titlebar_region.contains(mouse_x, mouse_y) {
+            st.ui.menu_bar.exit_customize();
         }
         (mouse_x, mouse_y, layout)
     };

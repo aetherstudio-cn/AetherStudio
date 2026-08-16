@@ -6,62 +6,71 @@ impl EditorState {
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
     ) {
         unsafe {
-            let scale = self.dpi_scale.max(1.0);
+            let scale = self.win.dpi_scale.max(1.0);
             let width = 460.0f32 / scale;
             let height = 220.0f32 / scale;
-            let x = (self.window_width as f32 / scale - width) / 2.0;
-            let y = (self.window_height as f32 / scale - height) / 2.0;
+            let x = (self.win.window_width as f32 / scale - width) / 2.0;
+            let y = (self.win.window_height as f32 / scale - height) / 2.0;
 
             let bg_color = color_f(0.18, 0.18, 0.18, 1.0);
             let bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let border_color = color_f(0.3, 0.3, 0.3, 1.0);
             let border_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             let text_color = color_f(0.9, 0.9, 0.9, 1.0);
             let text_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let dim_color = color_f(0.5, 0.5, 0.5, 1.0);
             let dim_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let input_bg_color = color_f(0.12, 0.12, 0.12, 1.0);
             let input_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
             let btn_bg_color = color_f(0.0, 0.47, 0.83, 1.0);
             let btn_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg_color)
                 .unwrap();
             let btn_hover_color = color_f(0.0, 0.55, 0.95, 1.0);
             let btn_hover_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
             let overlay_color = color_f(0.0, 0.0, 0.0, 0.5);
             let overlay_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &overlay_color)
                 .unwrap();
 
             let format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -72,6 +81,7 @@ impl EditorState {
                 )
                 .unwrap();
             let title_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -82,6 +92,7 @@ impl EditorState {
                 )
                 .unwrap();
             let small_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -96,8 +107,8 @@ impl EditorState {
             let overlay_rect = D2D_RECT_F {
                 left: 0.0,
                 top: 0.0,
-                right: self.window_width as f32,
-                bottom: self.window_height as f32,
+                right: self.win.window_width as f32,
+                bottom: self.win.window_height as f32,
             };
             target.FillRectangle(&overlay_rect, &overlay_brush);
 
@@ -148,6 +159,7 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
             let base_path_text: Vec<u16> = self
+                .ui
                 .new_project_dialog
                 .base_path
                 .to_string_lossy()
@@ -195,6 +207,7 @@ impl EditorState {
             };
             target.FillRectangle(&input_rect, &input_bg_brush);
             let val_text: Vec<u16> = self
+                .ui
                 .new_project_dialog
                 .project_name
                 .encode_utf16()
@@ -215,11 +228,12 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
 
-            if self.new_project_dialog.focus_field == 0 {
+            if self.ui.new_project_dialog.focus_field == 0 {
                 // 绘制输入框光标
-                if self.new_project_dialog.caret_visible {
-                    let char_width = self.text_renderer.char_width();
+                if self.ui.new_project_dialog.caret_visible {
+                    let char_width = self.win.text_renderer.char_width();
                     let text_width: f32 = self
+                        .ui
                         .new_project_dialog
                         .project_name
                         .chars()
@@ -234,6 +248,7 @@ impl EditorState {
                     };
                     let caret_color = color_f(0.9, 0.9, 0.9, 1.0);
                     let caret_brush = self
+                        .win
                         .render_ctx
                         .brush_cache
                         .get_brush(target, &caret_color)
@@ -249,6 +264,7 @@ impl EditorState {
                 };
                 let focus_color = color_f(0.0, 0.47, 0.83, 1.0);
                 let focus_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &focus_color)
@@ -258,7 +274,7 @@ impl EditorState {
             cy += 40.0;
 
             // 错误消息
-            if let Some(err) = &self.new_project_dialog.error_message {
+            if let Some(err) = &self.ui.new_project_dialog.error_message {
                 let err_text: Vec<u16> = err.encode_utf16().chain(Some(0)).collect();
                 let err_rect = D2D_RECT_F {
                     left: x + 16.0,
@@ -268,6 +284,7 @@ impl EditorState {
                 };
                 let err_color = color_f(0.9, 0.2, 0.2, 1.0);
                 let err_brush = self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &err_color)
@@ -295,7 +312,7 @@ impl EditorState {
                 right: x + width - 16.0 - btn_w - 8.0,
                 bottom: cy + btn_h,
             };
-            let is_confirm_hover = self.new_project_dialog.hover_button == Some(0);
+            let is_confirm_hover = self.ui.new_project_dialog.hover_button == Some(0);
             target.FillRectangle(
                 &confirm_btn_rect,
                 if is_confirm_hover {
@@ -328,17 +345,19 @@ impl EditorState {
             };
             let cancel_bg_color = color_f(0.25, 0.25, 0.25, 1.0);
             let cancel_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &cancel_bg_color)
                 .unwrap();
             let cancel_hover_color = color_f(0.35, 0.35, 0.35, 1.0);
             let cancel_hover_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &cancel_hover_color)
                 .unwrap();
-            let is_cancel_hover = self.new_project_dialog.hover_button == Some(1);
+            let is_cancel_hover = self.ui.new_project_dialog.hover_button == Some(1);
             target.FillRectangle(
                 &cancel_btn_rect,
                 if is_cancel_hover {
@@ -364,19 +383,19 @@ impl EditorState {
             );
 
             // 存储区域用于点击检测
-            self.new_project_dialog.input_rect = Some(crate::layout::Region::new(
+            self.ui.new_project_dialog.input_rect = Some(crate::layout::Region::new(
                 input_rect.left,
                 input_rect.top,
                 input_rect.right - input_rect.left,
                 input_rect.bottom - input_rect.top,
             ));
-            self.new_project_dialog.confirm_btn_rect = Some(crate::layout::Region::new(
+            self.ui.new_project_dialog.confirm_btn_rect = Some(crate::layout::Region::new(
                 confirm_btn_rect.left,
                 confirm_btn_rect.top,
                 confirm_btn_rect.right - confirm_btn_rect.left,
                 confirm_btn_rect.bottom - confirm_btn_rect.top,
             ));
-            self.new_project_dialog.cancel_btn_rect = Some(crate::layout::Region::new(
+            self.ui.new_project_dialog.cancel_btn_rect = Some(crate::layout::Region::new(
                 cancel_btn_rect.left,
                 cancel_btn_rect.top,
                 cancel_btn_rect.right - cancel_btn_rect.left,
@@ -397,9 +416,10 @@ impl EditorState {
         unsafe {
             // 背景
             let bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &self.theme.editor_bg)
+                .get_brush(target, &self.win.theme.editor_bg)
                 .unwrap();
             let bg_rect = D2D_RECT_F {
                 left: x,
@@ -410,7 +430,7 @@ impl EditorState {
             target.FillRectangle(&bg_rect, &bg_brush);
 
             // 有解码图像：绘制实际位图 + 顶部信息栏
-            if self.content.image_data.is_some() {
+            if self.editor.content.image_data.is_some() {
                 self.render_image_bitmap(target, x, y, width, height);
                 return;
             }
@@ -434,12 +454,12 @@ impl EditorState {
             const MARGIN: f32 = 20.0;
 
             // 惰性创建位图缓存（设备相关）
-            if self.image_bitmap.is_none() {
-                if let Some(img) = &self.content.image_data {
+            if self.win.image_bitmap.is_none() {
+                if let Some(img) = &self.editor.content.image_data {
                     match crate::bitmap_loader::create_bitmap_from_rgba(
                         target, img.width, img.height, &img.rgba,
                     ) {
-                        Ok(bmp) => self.image_bitmap = Some(bmp),
+                        Ok(bmp) => self.win.image_bitmap = Some(bmp),
                         Err(e) => {
                             tracing::warn!(error = %e, "创建图片预览位图失败");
                         }
@@ -449,24 +469,27 @@ impl EditorState {
 
             // 顶部信息栏：文件名 + 尺寸/格式（左对齐，垂直居中）
             let (img_w, img_h, fmt) = self
+                .editor
                 .content
                 .image_data
                 .as_ref()
                 .map(|i| (i.width, i.height, i.format_name))
                 .unwrap_or((0, 0, "?"));
             let file_name = self
+                .editor
                 .content
                 .file_path
                 .as_ref()
                 .and_then(|p| p.file_name())
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "图片".to_string());
-            let zoom_percent = (self.image_zoom * 100.0).round() as i32;
+            let zoom_percent = (self.win.image_zoom * 100.0).round() as i32;
             let info_text = format!(
                 "{}  |  {} x {}  |  {}  |  {}%",
                 file_name, img_w, img_h, fmt, zoom_percent
             );
             let info_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -479,6 +502,7 @@ impl EditorState {
                 .unwrap();
             let info_color = color_f(0.6, 0.6, 0.6, 1.0);
             let info_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &info_color)
@@ -505,16 +529,16 @@ impl EditorState {
             let area_w = (width - MARGIN * 2.0).max(1.0);
             let area_h = (height - INFO_BAR_H - MARGIN * 2.0).max(1.0);
 
-            if let Some(ref bitmap) = self.image_bitmap {
+            if let Some(ref bitmap) = self.win.image_bitmap {
                 // 计算基础缩放（适应窗口，保持宽高比）
                 let fit_scale = (area_w / img_w as f32).min(area_h / img_h as f32);
                 // 应用用户缩放
-                let scale = fit_scale * self.image_zoom;
+                let scale = fit_scale * self.win.image_zoom;
                 let draw_w = img_w as f32 * scale;
                 let draw_h = img_h as f32 * scale;
                 // 居中 + 用户偏移
-                let draw_x = area_x + (area_w - draw_w) / 2.0 + self.image_offset_x;
-                let draw_y = area_y + (area_h - draw_h) / 2.0 + self.image_offset_y;
+                let draw_x = area_x + (area_w - draw_w) / 2.0 + self.win.image_offset_x;
+                let draw_y = area_y + (area_h - draw_h) / 2.0 + self.win.image_offset_y;
                 let dest_rect = D2D_RECT_F {
                     left: draw_x,
                     top: draw_y,
@@ -555,11 +579,13 @@ impl EditorState {
     ) {
         unsafe {
             let title_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_center_format(20.0, DWRITE_FONT_WEIGHT_BOLD.0 as u32)
                 .unwrap();
             let info_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_center_format(14.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
@@ -567,18 +593,21 @@ impl EditorState {
 
             let title_color = color_f(0.83, 0.83, 0.83, 1.0);
             let title_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &title_color)
                 .unwrap();
             let info_color = color_f(0.5, 0.5, 0.5, 1.0);
             let info_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &info_color)
                 .unwrap();
             let icon_color = color_f(0.3, 0.7, 1.0, 1.0);
             let icon_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &icon_color)
@@ -640,7 +669,7 @@ impl EditorState {
             );
 
             // 文件路径
-            if let Some(path) = &self.content.file_path {
+            if let Some(path) = &self.editor.content.file_path {
                 let path_text = format!("{}", path.display());
                 let path_wide: Vec<u16> = path_text.encode_utf16().chain(Some(0)).collect();
                 let path_rect = D2D_RECT_F {

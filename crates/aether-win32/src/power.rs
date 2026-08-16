@@ -97,18 +97,17 @@ impl EditorState {
         // 2. 定时器管控：停掉纯 UI 定时器（AUTOSAVE_*/AI_ARCHIVE 保留）；
         //    AI/Agent 活跃时由 AI 定时器转为无头泵保活（回调内检测 frozen）
         unsafe {
-            let hwnd = self.hwnd;
+            let hwnd = self.win.hwnd;
             let _ = KillTimer(hwnd, crate::window::UI_ANIM_TIMER_ID);
-            let _ = KillTimer(hwnd, crate::window::HIGHLIGHT_TIMER_ID);
             let _ = KillTimer(hwnd, crate::window::CARET_TIMER_ID);
             let _ = KillTimer(hwnd, crate::window::HOVER_TIMER_ID);
             let _ = KillTimer(hwnd, crate::window::TOOLTIP_TIMER_ID);
             let _ = KillTimer(hwnd, crate::window::LP_TIMER_ID);
             // 冰冻态终端刷新交由无头泵驱动，独立定时器停止
             let _ = KillTimer(hwnd, crate::window::TERM_TIMER_ID);
-            if self.ai_panel.any_generating()
-                || self.settings_panel.is_testing
-                || self.terminal_panel.has_agent_activity()
+            if self.ai.ai_panel.any_generating()
+                || self.ui.settings_panel.is_testing
+                || self.terminal.terminal_panel.has_agent_activity()
             {
                 SetTimer(hwnd, crate::window::AI_TIMER_ID, HEADLESS_PUMP_MS, None);
             } else {
@@ -123,13 +122,13 @@ impl EditorState {
         self.trim_all_tab_caches();
 
         // 5. 释放 D2D 渲染资源（唤醒后由渲染路径经设备丢失恢复逻辑自动重建）
-        self.render_ctx.release_for_suspend();
-        self.icons.clear();
-        self.logo_bitmap = None;
-        self.image_bitmap = None;
+        self.win.render_ctx.release_for_suspend();
+        self.ui.icons.clear();
+        self.win.logo_bitmap = None;
+        self.win.image_bitmap = None;
 
         // 6. 收缩 SQLite 页缓存
-        if let Some(warm) = self.ai_panel.warm_data_store.as_ref() {
+        if let Some(warm) = self.ai.ai_panel.warm_data_store.as_ref() {
             warm.shrink_memory();
         }
 
@@ -151,17 +150,11 @@ impl EditorState {
 
         // 全量重绘：D2D 资源在 render() 内经设备丢失恢复路径重建，
         // 同时保证欢迎页三区域等不出现黑块残影
-        self.dirty_tracker.mark_full_window();
-        // tree-sitter 语言：强制重新请求后台高亮（裁剪过的 cached_tokens 需重建）。
-        // 非 tree-sitter 语言不能置 0：永远不会发请求，高亮定时器将无限空转
-        let rearm_highlight = self.needs_bg_highlight();
-        if rearm_highlight {
-            self.hl_request_version = 0;
-        }
+        self.win.dirty_tracker.mark_full_window();
 
         unsafe {
-            let hwnd = self.hwnd;
-            if self.ai_panel.any_generating() || self.settings_panel.is_testing {
+            let hwnd = self.win.hwnd;
+            if self.ai.ai_panel.any_generating() || self.ui.settings_panel.is_testing {
                 SetTimer(
                     hwnd,
                     crate::window::AI_TIMER_ID,
@@ -169,7 +162,7 @@ impl EditorState {
                     None,
                 );
             }
-            if self.layout.bottom_panel_visible && self.terminal_panel.running {
+            if self.ui.layout.bottom_panel_visible && self.terminal.terminal_panel.running {
                 SetTimer(
                     hwnd,
                     crate::window::TERM_TIMER_ID,
@@ -177,26 +170,16 @@ impl EditorState {
                     None,
                 );
             }
-            // 周期重绘直到后台高亮结果到达并着色（结果消费后自动停止）；
-            // 仅 tree-sitter 语言需要，否则停止条件永不满足会空转
-            if rearm_highlight {
-                SetTimer(
-                    hwnd,
-                    crate::window::HIGHLIGHT_TIMER_ID,
-                    crate::window::HIGHLIGHT_REFRESH_MS,
-                    None,
-                );
-            }
         }
-        crate::window::invalidate_window(self.hwnd);
+        crate::window::invalidate_window(self.win.hwnd);
         log_memory_usage("exit_frozen");
     }
 
     /// 裁剪所有标签页（含活跃标签）的渲染缓存，输出释放量遥测
     fn trim_all_tab_caches(&mut self) {
-        let mut total = self.content.cache_bytes();
-        self.content.trim_caches();
-        for tab in &mut self.tab_bar.tabs {
+        let mut total = self.editor.content.cache_bytes();
+        self.editor.content.trim_caches();
+        for tab in &mut self.editor.tab_bar.tabs {
             if let crate::tabs::Tab::File(content) = tab {
                 total += content.cache_bytes();
                 content.trim_caches();

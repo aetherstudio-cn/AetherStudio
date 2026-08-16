@@ -8,20 +8,21 @@ impl EditorState {
         y: f32,
     ) {
         unsafe {
-            let menu_width = self.user_menu.menu_width();
-            let menu_height = self.user_menu.menu_height();
+            let menu_width = self.ui.user_menu.menu_width();
+            let menu_height = self.ui.user_menu.menu_height();
 
             // 边界检查：确保菜单不超出窗口右边界
-            let max_x = (self.window_width as f32 - menu_width).max(4.0);
+            let max_x = (self.win.window_width as f32 - menu_width).max(4.0);
             let menu_x = x.min(max_x);
 
             // 菜单背景
-            let bg_color = if self.theme.glass_enabled {
-                self.theme.submenu_bg
+            let bg_color = if self.win.theme.glass_enabled {
+                self.win.theme.submenu_bg
             } else {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
             let bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
@@ -36,6 +37,7 @@ impl EditorState {
             // 绘制阴影（右侧和底部）
             let shadow_color = color_f(0.0, 0.0, 0.0, 0.35);
             let shadow_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &shadow_color)
@@ -60,6 +62,7 @@ impl EditorState {
             // 菜单边框
             let border_color = color_f(0.3, 0.3, 0.3, 1.0);
             let border_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
@@ -67,7 +70,7 @@ impl EditorState {
             target.DrawRectangle(&menu_rect, &border_brush, 1.0, None);
 
             // 保存菜单区域用于点击检测（使用调整后的位置）
-            self.user_menu.menu_rect = Some(crate::layout::Region::new(
+            self.ui.user_menu.menu_rect = Some(crate::layout::Region::new(
                 menu_x,
                 y,
                 menu_width,
@@ -76,17 +79,20 @@ impl EditorState {
 
             let text_color = color_f(0.85, 0.85, 0.85, 1.0);
             let text_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let hover_bg = color_f(0.0, 0.47, 0.83, 1.0);
             let hover_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_bg)
                 .unwrap();
             let text_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -97,6 +103,7 @@ impl EditorState {
                 )
                 .unwrap();
             let shortcut_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -117,6 +124,7 @@ impl EditorState {
             };
             target.FillRectangle(&header_rect, &hover_brush);
             let username_wide: Vec<u16> = self
+                .ui
                 .user_menu
                 .username
                 .encode_utf16()
@@ -133,6 +141,7 @@ impl EditorState {
                 &text_format,
                 &username_rect,
                 &self
+                    .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
@@ -146,7 +155,7 @@ impl EditorState {
             let separator_height = 9.0;
             let mut current_y = y + header_height;
 
-            for (i, item) in self.user_menu.items.iter().enumerate() {
+            for (i, item) in self.ui.user_menu.items.iter().enumerate() {
                 if item.is_separator() {
                     // 分隔线
                     let sep_rect = D2D_RECT_F {
@@ -157,6 +166,7 @@ impl EditorState {
                     };
                     let sep_color = color_f(0.3, 0.3, 0.3, 1.0);
                     let sep_brush = self
+                        .win
                         .render_ctx
                         .brush_cache
                         .get_brush(target, &sep_color)
@@ -164,7 +174,7 @@ impl EditorState {
                     target.FillRectangle(&sep_rect, &sep_brush);
                     current_y += separator_height;
                 } else {
-                    let is_hover = self.user_menu.hover_index == Some(i);
+                    let is_hover = self.ui.user_menu.hover_index == Some(i);
                     if is_hover {
                         let item_rect = D2D_RECT_F {
                             left: menu_x + 4.0,
@@ -203,6 +213,7 @@ impl EditorState {
                         };
                         let shortcut_color = color_f(0.6, 0.6, 0.6, 1.0);
                         let shortcut_brush = self
+                            .win
                             .render_ctx
                             .brush_cache
                             .get_brush(target, &shortcut_color)

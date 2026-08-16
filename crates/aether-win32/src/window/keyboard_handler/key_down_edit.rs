@@ -17,7 +17,7 @@ pub(crate) unsafe fn okd_edit_dispatch(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool)
     let terminal_active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().terminal_panel.focused)
+            .map(|state| state.borrow().terminal.terminal_panel.focused)
             .unwrap_or(false)
     });
     // IME 合成期间（中文/日文候选框打开时）不要拦截任何按键，
@@ -25,7 +25,7 @@ pub(crate) unsafe fn okd_edit_dispatch(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool)
     let ime_composing = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().composition.is_some())
+            .map(|state| state.borrow().editor.composition.is_some())
             .unwrap_or(false)
     });
     if terminal_active && !ime_composing && okd_edit_terminal(hwnd, vk) {
@@ -57,7 +57,7 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_RETURN => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal_panel.send_enter();
+                    state.borrow_mut().terminal.terminal_panel.send_enter();
                 }
             });
             true
@@ -65,7 +65,7 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_BACK => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal_panel.send_backspace();
+                    state.borrow_mut().terminal.terminal_panel.send_backspace();
                 }
             });
             true
@@ -73,7 +73,7 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_DELETE => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal_panel.send_delete();
+                    state.borrow_mut().terminal.terminal_panel.send_delete();
                 }
             });
             true
@@ -81,7 +81,7 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_TAB => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal_panel.send_tab();
+                    state.borrow_mut().terminal.terminal_panel.send_tab();
                 }
             });
             true
@@ -89,7 +89,11 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_UP => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal_panel.send_arrow(ArrowKey::Up);
+                    state
+                        .borrow_mut()
+                        .terminal
+                        .terminal_panel
+                        .send_arrow(ArrowKey::Up);
                 }
             });
             true
@@ -97,7 +101,11 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_DOWN => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal_panel.send_arrow(ArrowKey::Down);
+                    state
+                        .borrow_mut()
+                        .terminal
+                        .terminal_panel
+                        .send_arrow(ArrowKey::Down);
                 }
             });
             true
@@ -105,7 +113,11 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_LEFT => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal_panel.send_arrow(ArrowKey::Left);
+                    state
+                        .borrow_mut()
+                        .terminal
+                        .terminal_panel
+                        .send_arrow(ArrowKey::Left);
                 }
             });
             true
@@ -115,6 +127,7 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 if let Some(state) = s.borrow().as_ref() {
                     state
                         .borrow_mut()
+                        .terminal
                         .terminal_panel
                         .send_arrow(ArrowKey::Right);
                 }
@@ -124,7 +137,7 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_HOME => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal_panel.send_home();
+                    state.borrow_mut().terminal.terminal_panel.send_home();
                 }
             });
             true
@@ -132,7 +145,7 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         VK_END => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().terminal_panel.send_end();
+                    state.borrow_mut().terminal.terminal_panel.send_end();
                 }
             });
             true
@@ -144,8 +157,8 @@ unsafe fn okd_edit_terminal(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
                 let mut st = state.borrow_mut();
-                let bp = st.layout.bottom_panel_region();
-                st.dirty_tracker.mark_region(
+                let bp = st.ui.layout.bottom_panel_region();
+                st.win.dirty_tracker.mark_region(
                     bp.x,
                     bp.y,
                     bp.width,
@@ -165,12 +178,12 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
     let mode = EDITOR_STATE.with(|s| {
         s.borrow().as_ref().and_then(|state| {
             let st = state.borrow();
-            if !st.ai_panel.history_open {
+            if !st.ai.ai_panel.history_open {
                 return None;
             }
-            if st.ai_panel.history_editing_id.is_some() {
+            if st.ai.ai_panel.history_editing_id.is_some() {
                 Some(1u8) // 编辑态
-            } else if st.ai_panel.history_search_focused {
+            } else if st.ai.ai_panel.history_search_focused {
                 Some(2u8) // 搜索态
             } else {
                 Some(3u8) // 浮窗打开但无输入焦点（仅响应 Esc 关闭）
@@ -187,7 +200,7 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
         if vk == VK_ESCAPE {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().ai_panel.close_history_window();
+                    state.borrow_mut().ai.ai_panel.close_history_window();
                 }
             });
             invalidate_window(hwnd);
@@ -202,9 +215,9 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 EDITOR_STATE.with(|s| {
                     if let Some(state) = s.borrow().as_ref() {
                         let mut st = state.borrow_mut();
-                        match st.ai_panel.commit_history_edit() {
-                            Ok(()) => st.status_message = "已重命名对话".to_string(),
-                            Err(e) => st.status_message = e,
+                        match st.ai.ai_panel.commit_history_edit() {
+                            Ok(()) => st.ui.status_message = "已重命名对话".to_string(),
+                            Err(e) => st.ui.status_message = e,
                         }
                     }
                 });
@@ -216,6 +229,7 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                         .map(|state| {
                             state
                                 .borrow()
+                                .ai
                                 .ai_panel
                                 .history_page_indices()
                                 .first()
@@ -227,8 +241,8 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                     EDITOR_STATE.with(|s| {
                         if let Some(state) = s.borrow().as_ref() {
                             let mut st = state.borrow_mut();
-                            st.ai_panel.restore_from_history(i);
-                            st.ai_panel.close_history_window();
+                            st.ai.ai_panel.restore_from_history(i);
+                            st.ai.ai_panel.close_history_window();
                         }
                     });
                 }
@@ -240,10 +254,10 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if editing {
-                        st.ai_panel.cancel_history_edit();
+                        st.ai.ai_panel.cancel_history_edit();
                     } else {
                         // 搜索态 Esc：失焦；再按一次（已失焦）由外层关闭浮窗
-                        st.ai_panel.history_search_focused = false;
+                        st.ai.ai_panel.history_search_focused = false;
                     }
                 }
             });
@@ -254,9 +268,9 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if editing {
-                        st.ai_panel.history_edit_backspace();
+                        st.ai.ai_panel.history_edit_backspace();
                     } else {
-                        st.ai_panel.history_search_backspace();
+                        st.ai.ai_panel.history_search_backspace();
                     }
                 }
             });
@@ -267,14 +281,14 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if editing {
-                        let text = st.ai_panel.history_editing_text.clone();
-                        let c = st.ai_panel.history_editing_caret;
+                        let text = st.ai.ai_panel.history_editing_text.clone();
+                        let c = st.ai.ai_panel.history_editing_caret;
                         if c > 0 {
-                            st.ai_panel.history_editing_caret =
+                            st.ai.ai_panel.history_editing_caret =
                                 text[..c].char_indices().last().map(|(i, _)| i).unwrap_or(0);
                         }
                     } else {
-                        st.ai_panel.history_search_move_left();
+                        st.ai.ai_panel.history_search_move_left();
                     }
                 }
             });
@@ -285,18 +299,18 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if editing {
-                        let text = st.ai_panel.history_editing_text.clone();
+                        let text = st.ai.ai_panel.history_editing_text.clone();
                         let len = text.len();
-                        let c = st.ai_panel.history_editing_caret;
+                        let c = st.ai.ai_panel.history_editing_caret;
                         if c < len {
-                            st.ai_panel.history_editing_caret = text[c..]
+                            st.ai.ai_panel.history_editing_caret = text[c..]
                                 .char_indices()
                                 .nth(1)
                                 .map(|(i, _)| c + i)
                                 .unwrap_or(len);
                         }
                     } else {
-                        st.ai_panel.history_search_move_right();
+                        st.ai.ai_panel.history_search_move_right();
                     }
                 }
             });
@@ -307,9 +321,9 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if editing {
-                        st.ai_panel.history_editing_caret = 0;
+                        st.ai.ai_panel.history_editing_caret = 0;
                     } else {
-                        st.ai_panel.history_search_caret = 0;
+                        st.ai.ai_panel.history_search_caret = 0;
                     }
                 }
             });
@@ -320,9 +334,10 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if editing {
-                        st.ai_panel.history_editing_caret = st.ai_panel.history_editing_text.len();
+                        st.ai.ai_panel.history_editing_caret =
+                            st.ai.ai_panel.history_editing_text.len();
                     } else {
-                        st.ai_panel.history_search_caret = st.ai_panel.history_search.len();
+                        st.ai.ai_panel.history_search_caret = st.ai.ai_panel.history_search.len();
                     }
                 }
             });
@@ -338,7 +353,7 @@ unsafe fn okd_history_window(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
 
 /// 判断当前是否有选中文本
 fn has_selection(st: &EditorState) -> bool {
-    st.content.selection_start.is_some() && st.content.selection_end.is_some()
+    st.editor.content.selection_start.is_some() && st.editor.content.selection_end.is_some()
 }
 
 /// VK_RETURN：终端/AI/查找/编辑器各自的回车处理
@@ -346,22 +361,22 @@ unsafe fn okd_edit_return(hwnd: HWND) {
     let terminal_active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().terminal_panel.focused)
+            .map(|state| state.borrow().terminal.terminal_panel.focused)
             .unwrap_or(false)
     });
     let ai_panel_active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
             // C-10: 改用 input_focused 而非 right_panel_visible，避免面板可见即劫持回车
-            .map(|state| state.borrow().ai_panel.input_focused)
+            .map(|state| state.borrow().ai.ai_panel.input_focused)
             .unwrap_or(false)
     });
     let find_active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().find.visible
-                    && state.borrow().find.focus != crate::editor::FindReplaceFocus::None
+                state.borrow().editor.find.visible
+                    && state.borrow().editor.find.focus != crate::editor::FindReplaceFocus::None
             })
             .unwrap_or(false)
     });
@@ -371,12 +386,13 @@ unsafe fn okd_edit_return(hwnd: HWND) {
     } else if ai_panel_active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                let settings = state.borrow().app_settings.active_ai_settings();
-                let mode = state.borrow().ai_panel.mode;
-                let attachments = state.borrow().ai_panel.attachments.clone();
+                let settings = state.borrow().ui.app_settings.active_ai_settings();
+                let mode = state.borrow().ai.ai_panel.mode;
+                let attachments = state.borrow().ai.ai_panel.attachments.clone();
                 let context = state.borrow().gather_context(&attachments);
                 let _ = state
                     .borrow_mut()
+                    .ai
                     .ai_panel
                     .send_message_with_prepared_context(&settings, context, mode);
                 // 启动后台刷新定时器，使流式回复逐字平滑显示，完成后自动停止
@@ -405,16 +421,16 @@ unsafe fn okd_edit_return(hwnd: HWND) {
 unsafe fn okd_edit_return_find(hwnd: HWND) {
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            let focus = state.borrow().find.focus;
+            let focus = state.borrow().editor.find.focus;
             match focus {
                 crate::editor::FindReplaceFocus::FindQuery => {
                     let st = &mut *state.borrow_mut();
-                    st.find.find_next(&mut st.content);
+                    st.editor.find.find_next(&mut st.editor.content);
                 }
                 crate::editor::FindReplaceFocus::ReplaceText => {
                     let st = &mut *state.borrow_mut();
-                    st.find.replace_current(&mut st.content);
-                    st.find.find_next(&mut st.content);
+                    st.editor.find.replace_current(&mut st.editor.content);
+                    st.editor.find.find_next(&mut st.editor.content);
                 }
                 _ => {}
             }
@@ -428,21 +444,21 @@ unsafe fn okd_edit_back(hwnd: HWND) {
     let terminal_active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().terminal_panel.focused)
+            .map(|state| state.borrow().terminal.terminal_panel.focused)
             .unwrap_or(false)
     });
     let ai_panel_active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow().ai_panel.input_focused)
+            .map(|state| state.borrow().ai.ai_panel.input_focused)
             .unwrap_or(false)
     });
     let find_active = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().find.visible
-                    && state.borrow().find.focus != crate::editor::FindReplaceFocus::None
+                state.borrow().editor.find.visible
+                    && state.borrow().editor.find.focus != crate::editor::FindReplaceFocus::None
             })
             .unwrap_or(false)
     });
@@ -451,7 +467,7 @@ unsafe fn okd_edit_back(hwnd: HWND) {
     } else if ai_panel_active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().ai_panel.backspace();
+                state.borrow_mut().ai.ai_panel.backspace();
                 invalidate_window(hwnd);
             }
         });
@@ -477,15 +493,15 @@ unsafe fn okd_edit_back(hwnd: HWND) {
 unsafe fn okd_edit_back_find(hwnd: HWND) {
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
-            let focus = state.borrow().find.focus;
+            let focus = state.borrow().editor.find.focus;
             match focus {
                 crate::editor::FindReplaceFocus::FindQuery => {
                     let st = &mut *state.borrow_mut();
-                    st.find.query.pop();
-                    st.find.find_all(&st.content);
+                    st.editor.find.query.pop();
+                    st.editor.find.find_all(&st.editor.content);
                 }
                 crate::editor::FindReplaceFocus::ReplaceText => {
-                    state.borrow_mut().find.replace_text.pop();
+                    state.borrow_mut().editor.find.replace_text.pop();
                 }
                 _ => {}
             }
@@ -515,10 +531,10 @@ unsafe fn okd_edit_delete_misc(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(state) = s.borrow().as_ref() {
                     if shift {
                         let st = &mut *state.borrow_mut();
-                        st.find.find_prev(&mut st.content);
+                        st.editor.find.find_prev(&mut st.editor.content);
                     } else {
                         let st = &mut *state.borrow_mut();
-                        st.find.find_next(&mut st.content);
+                        st.editor.find.find_next(&mut st.editor.content);
                     }
                     invalidate_window(hwnd);
                 }
@@ -527,7 +543,7 @@ unsafe fn okd_edit_delete_misc(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
         VK_ESCAPE => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().find.close_find_replace();
+                    state.borrow_mut().editor.find.close_find_replace();
                     invalidate_window(hwnd);
                 }
             });
@@ -544,18 +560,17 @@ unsafe fn okd_edit_left_right(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if shift {
-                        if st.content.selection_start.is_none() {
+                        if st.editor.content.selection_start.is_none() {
                             st.start_selection();
                         }
                         st.move_cursor_left();
                         st.update_selection();
                     } else {
-                        if st.content.selection_start.is_some() {
+                        if st.editor.content.selection_start.is_some() {
                             st.clear_selection();
                         }
                         st.move_cursor_left();
                     }
-                    drop(st);
                     invalidate_window(hwnd);
                 }
             });
@@ -565,18 +580,17 @@ unsafe fn okd_edit_left_right(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if shift {
-                        if st.content.selection_start.is_none() {
+                        if st.editor.content.selection_start.is_none() {
                             st.start_selection();
                         }
                         st.move_cursor_right();
                         st.update_selection();
                     } else {
-                        if st.content.selection_start.is_some() {
+                        if st.editor.content.selection_start.is_some() {
                             st.clear_selection();
                         }
                         st.move_cursor_right();
                     }
-                    drop(st);
                     invalidate_window(hwnd);
                 }
             });
@@ -593,18 +607,17 @@ unsafe fn okd_edit_up_down(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if shift {
-                        if st.content.selection_start.is_none() {
+                        if st.editor.content.selection_start.is_none() {
                             st.start_selection();
                         }
                         st.move_cursor_up();
                         st.update_selection();
                     } else {
-                        if st.content.selection_start.is_some() {
+                        if st.editor.content.selection_start.is_some() {
                             st.clear_selection();
                         }
                         st.move_cursor_up();
                     }
-                    drop(st);
                     invalidate_window(hwnd);
                 }
             });
@@ -614,18 +627,17 @@ unsafe fn okd_edit_up_down(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                 if let Some(state) = s.borrow().as_ref() {
                     let mut st = state.borrow_mut();
                     if shift {
-                        if st.content.selection_start.is_none() {
+                        if st.editor.content.selection_start.is_none() {
                             st.start_selection();
                         }
                         st.move_cursor_down();
                         st.update_selection();
                     } else {
-                        if st.content.selection_start.is_some() {
+                        if st.editor.content.selection_start.is_some() {
                             st.clear_selection();
                         }
                         st.move_cursor_down();
                     }
-                    drop(st);
                     invalidate_window(hwnd);
                 }
             });
@@ -642,7 +654,7 @@ unsafe fn okd_edit_home_end_page(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
         VK_PRIOR => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    let page = state.borrow().window_height as f32 - 24.0;
+                    let page = state.borrow().win.window_height as f32 - 24.0;
                     state.borrow_mut().scroll(-page);
                     invalidate_window(hwnd);
                 }
@@ -651,7 +663,7 @@ unsafe fn okd_edit_home_end_page(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
         VK_NEXT => {
             EDITOR_STATE.with(|s| {
                 if let Some(state) = s.borrow().as_ref() {
-                    let page = state.borrow().window_height as f32 - 24.0;
+                    let page = state.borrow().win.window_height as f32 - 24.0;
                     state.borrow_mut().scroll(page);
                     invalidate_window(hwnd);
                 }
@@ -668,9 +680,10 @@ unsafe fn okd_edit_home(hwnd: HWND, shift: bool) {
             let mut st = state.borrow_mut();
             // 计算当前行首个非空白位置，判断是否已在该位置
             let already_at_smart = st
+                .editor
                 .content
                 .buffer
-                .get_line(st.content.cursor_line)
+                .get_line(st.editor.content.cursor_line)
                 .map(|text| {
                     let first_non_ws = text
                         .char_indices()
@@ -678,22 +691,21 @@ unsafe fn okd_edit_home(hwnd: HWND, shift: bool) {
                         .map(|(i, _)| i)
                         .next()
                         .unwrap_or(text.len());
-                    st.content.cursor_col == first_non_ws
+                    st.editor.content.cursor_col == first_non_ws
                 })
                 .unwrap_or(false);
             if shift {
-                if st.content.selection_start.is_none() {
+                if st.editor.content.selection_start.is_none() {
                     st.start_selection();
                 }
                 st.move_cursor_smart_home(already_at_smart);
                 st.update_selection();
             } else {
-                if st.content.selection_start.is_some() {
+                if st.editor.content.selection_start.is_some() {
                     st.clear_selection();
                 }
                 st.move_cursor_smart_home(already_at_smart);
             }
-            drop(st);
             invalidate_window(hwnd);
         }
     });
@@ -705,18 +717,17 @@ unsafe fn okd_edit_end(hwnd: HWND, shift: bool) {
         if let Some(state) = s.borrow().as_ref() {
             let mut st = state.borrow_mut();
             if shift {
-                if st.content.selection_start.is_none() {
+                if st.editor.content.selection_start.is_none() {
                     st.start_selection();
                 }
                 st.move_cursor_end();
                 st.update_selection();
             } else {
-                if st.content.selection_start.is_some() {
+                if st.editor.content.selection_start.is_some() {
                     st.clear_selection();
                 }
                 st.move_cursor_end();
             }
-            drop(st);
             invalidate_window(hwnd);
         }
     });
@@ -728,16 +739,16 @@ unsafe fn okd_edit_tab(hwnd: HWND) {
         s.borrow()
             .as_ref()
             .map(|state| {
-                state.borrow().find.visible
-                    && state.borrow().find.focus != crate::editor::FindReplaceFocus::None
+                state.borrow().editor.find.visible
+                    && state.borrow().editor.find.focus != crate::editor::FindReplaceFocus::None
             })
             .unwrap_or(false)
     });
     if find_active {
         EDITOR_STATE.with(|s| {
             if let Some(state) = s.borrow().as_ref() {
-                let focus = state.borrow().find.focus;
-                let replace_visible = state.borrow().find.replace_visible;
+                let focus = state.borrow().editor.find.focus;
+                let replace_visible = state.borrow().editor.find.replace_visible;
                 let new_focus = match focus {
                     crate::editor::FindReplaceFocus::FindQuery => {
                         if replace_visible {
@@ -751,7 +762,7 @@ unsafe fn okd_edit_tab(hwnd: HWND) {
                     }
                     _ => crate::editor::FindReplaceFocus::FindQuery,
                 };
-                state.borrow_mut().find.focus = new_focus;
+                state.borrow_mut().editor.find.focus = new_focus;
                 invalidate_window(hwnd);
             }
         });

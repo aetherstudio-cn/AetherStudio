@@ -43,8 +43,6 @@ pub(crate) const HOVER_TIMER_ID: usize = 0xA003;
 pub const CARET_TIMER_ID: usize = 0xA004;
 /// AI 后台刷新定时器 ID（流式生成 / 测试连接期间周期性重绘，完成后自动停止）
 pub(crate) const AI_TIMER_ID: usize = 0xA005;
-/// 语法高亮刷新定时器 ID（打开文件后周期性重绘，直到后台高亮结果到达并着色，随后自动停止）
-pub(crate) const HIGHLIGHT_TIMER_ID: usize = 0xA006;
 /// AI 对话温数据归档定时器 ID（周期检查空闲会话，归档进 MemoryStore）
 pub(crate) const AI_ARCHIVE_TIMER_ID: usize = 0xA007;
 /// UI 动画定时器 ID（历史记录下拉面板展开/收起动画，动画结束后自动停止）
@@ -65,8 +63,6 @@ pub(crate) const LP_THRESHOLD_MS: u32 = 500;
 pub(crate) const TERM_REFRESH_MS: u32 = 16;
 /// AI 后台刷新间隔（毫秒），用于流式生成与测试连接期间的平滑重绘
 pub(crate) const AI_REFRESH_MS: u32 = 80;
-/// 语法高亮刷新间隔（毫秒），约 30fps，让后台高亮结果尽快着色显示
-pub(crate) const HIGHLIGHT_REFRESH_MS: u32 = 33;
 /// P3.4: Hover tooltip 触发延迟（毫秒）
 pub(crate) const HOVER_DELAY_MS: u32 = 500;
 /// 长按期间允许的鼠标移动容差（逻辑像素，超过则取消长按检测）
@@ -293,11 +289,11 @@ unsafe fn init_editor_state(hwnd: HWND, is_main_window: bool) {
         let dpi = GetDpiForWindow(hwnd);
         let scale = dpi as f32 / 96.0;
         let mut state = state_rc.borrow_mut();
-        state.dpi_scale = scale;
+        state.win.dpi_scale = scale;
         // REQ-P2-07: 布局常量按 DPI 缩放
-        state.layout.apply_dpi_scale(scale);
+        state.ui.layout.apply_dpi_scale(scale);
         // REQ-P2-04: IME 候选/合成窗口尺寸按 DPI 缩放
-        state.ime.set_dpi_scale(scale);
+        state.ui.ime.set_dpi_scale(scale);
     }
 
     // 获取实际客户区物理像素尺寸
@@ -390,6 +386,7 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             msg if msg == WM_APP + 9 => on_wm_app_9(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 10 => on_wm_app_10(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 11 => on_wm_app_11(hwnd, msg, wparam, lparam),
+            msg if msg == WM_APP + 12 => on_wm_app_12(hwnd, msg, wparam, lparam),
             msg if msg == crate::updater::WM_UPDATE_CHECK_DONE => {
                 on_wm_app_8(hwnd, msg, wparam, lparam)
             }

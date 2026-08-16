@@ -842,7 +842,7 @@ impl SandboxEvalPanel {
         }
         // 最终响应：应用文件块、拦截命令、记录总结
         self.apply_response_files(task_idx, response);
-        let blocked = crate::ai_agent::parse_run_commands(response);
+        let blocked = crate::ai_panel::parse_run_commands(response);
         for cmd in &blocked {
             self.push_log(
                 SandboxLogKind::Warn,
@@ -966,9 +966,9 @@ impl SandboxEvalPanel {
         let Some(sandbox) = self.sandbox_dir.clone() else {
             return;
         };
-        let edits = crate::ai_agent::parse_edits(response, None);
+        let edits = crate::ai_panel::parse_edits(response, None);
         let mut salvage = Vec::new();
-        if let Some(partial) = crate::ai_agent::parse_trailing_create_block(response) {
+        if let Some(partial) = crate::ai_panel::parse_trailing_create_block(response) {
             salvage.push(partial);
         }
         for edit in edits.into_iter().chain(salvage) {
@@ -1287,10 +1287,10 @@ pub fn parse_sandbox_plan(response: &str) -> Vec<String> {
     let lines: Vec<&str> = response.lines().collect();
     let start = lines
         .iter()
-        .position(|l| l.trim_end() == crate::ai_agent::PLAN_HEADER);
+        .position(|l| l.trim_end() == crate::ai_panel::PLAN_HEADER);
     let end = lines
         .iter()
-        .position(|l| l.trim_end() == crate::ai_agent::PLAN_FOOTER);
+        .position(|l| l.trim_end() == crate::ai_panel::PLAN_FOOTER);
     let body: Vec<&str> = match (start, end) {
         (Some(s), Some(e)) if e > s => lines[s + 1..e].to_vec(),
         _ => lines.clone(),
@@ -1343,10 +1343,10 @@ pub fn parse_search_query(response: &str) -> Option<String> {
 
 /// 从最终响应中提取文字总结（剥离文件/命令块后的 Text 部分，截断）
 pub fn extract_summary(response: &str) -> String {
-    let blocks = crate::ai_agent::parse_display_blocks(response);
+    let blocks = crate::ai_panel::parse_display_blocks(response);
     let mut text = String::new();
     for b in blocks {
-        if let crate::ai_agent::AgentDisplayBlock::Text(t) = b {
+        if let crate::ai_panel::AgentDisplayBlock::Text(t) = b {
             if !text.is_empty() {
                 text.push(' ');
             }

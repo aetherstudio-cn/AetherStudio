@@ -61,6 +61,7 @@ impl EditorState {
     ) {
         // 背景
         let bg = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.10, 0.10, 0.11, 1.0));
@@ -86,12 +87,12 @@ impl EditorState {
             D2D1_ANTIALIAS_MODE_ALIASED,
         );
 
-        self.sandbox_eval.regions.clear();
-        self.sandbox_eval.view_height = h;
+        self.ui.sandbox_eval.regions.clear();
+        self.ui.sandbox_eval.view_height = h;
 
         let content_w = w.min(SB_CONTENT_MAX_W + 48.0) - 48.0;
         let cx = x + (w - content_w) / 2.0;
-        let mut cy = y + 24.0 - self.sandbox_eval.scroll_y;
+        let mut cy = y + 24.0 - self.ui.sandbox_eval.scroll_y;
 
         // ===== 页头 =====
         self.sb_text(
@@ -119,8 +120,8 @@ impl EditorState {
         );
         cy += 26.0;
         // 沙盒路径（运行后显示）
-        if let Some(dir) = self.sandbox_eval.sandbox_dir.clone() {
-            let phase_label = match self.sandbox_eval.phase {
+        if let Some(dir) = self.ui.sandbox_eval.sandbox_dir.clone() {
+            let phase_label = match self.ui.sandbox_eval.phase {
                 SandboxPhase::Setup => "未开始",
                 SandboxPhase::Planning => "任务规划中",
                 SandboxPhase::Running => "执行中",
@@ -140,7 +141,7 @@ impl EditorState {
             cy += 24.0;
         }
         // 评测目标模型（有指定时显示）
-        if let Some(model_name) = self.sandbox_eval.target_model_name.clone() {
+        if let Some(model_name) = self.ui.sandbox_eval.target_model_name.clone() {
             self.sb_text(
                 target,
                 &format!("评测模型：{}", model_name),
@@ -156,7 +157,7 @@ impl EditorState {
         }
         cy += 4.0;
 
-        match self.sandbox_eval.phase {
+        match self.ui.sandbox_eval.phase {
             SandboxPhase::Setup => {
                 cy = self.sb_render_setup(target, cx, cy, content_w);
             }
@@ -175,7 +176,7 @@ impl EditorState {
         }
 
         // 内容总高度（用于滚轮钳制）
-        self.sandbox_eval.content_height = (cy + self.sandbox_eval.scroll_y - y) + 24.0;
+        self.ui.sandbox_eval.content_height = (cy + self.ui.sandbox_eval.scroll_y - y) + 24.0;
 
         target.PopAxisAlignedClip();
     }
@@ -192,7 +193,7 @@ impl EditorState {
         content_w: f32,
     ) -> f32 {
         // ---- 配置卡片 ----
-        let is_timed = self.sandbox_eval.mode == SandboxMode::Timed;
+        let is_timed = self.ui.sandbox_eval.mode == SandboxMode::Timed;
         let card_h = if is_timed { 316.0 } else { 262.0 };
         self.sb_card(target, cx, cy, content_w, card_h);
         let ix = cx + SB_PAD;
@@ -215,9 +216,9 @@ impl EditorState {
             c_text_dim(),
         );
         iy += 22.0;
-        let topic_active = self.sandbox_eval.active_field == Some(SandboxField::Topic);
-        let topic = self.sandbox_eval.topic.clone();
-        let caret = topic_active && self.sandbox_eval.caret_visible;
+        let topic_active = self.ui.sandbox_eval.active_field == Some(SandboxField::Topic);
+        let topic = self.ui.sandbox_eval.topic.clone();
+        let caret = topic_active && self.ui.sandbox_eval.caret_visible;
         self.sb_input_field(
             target,
             ix,
@@ -229,7 +230,7 @@ impl EditorState {
             topic_active,
             caret,
         );
-        self.sandbox_eval.regions.topic_field = Some((ix, iy, iw, 34.0));
+        self.ui.sandbox_eval.regions.topic_field = Some((ix, iy, iw, 34.0));
         iy += 46.0;
 
         // 并发智能体数量
@@ -246,22 +247,23 @@ impl EditorState {
         );
         iy += 22.0;
         let mut chip_x = ix;
-        let custom_active = self.sandbox_eval.active_field == Some(SandboxField::CustomCount);
-        let custom_set = !self.sandbox_eval.custom_count.trim().is_empty();
+        let custom_active = self.ui.sandbox_eval.active_field == Some(SandboxField::CustomCount);
+        let custom_set = !self.ui.sandbox_eval.custom_count.trim().is_empty();
         for n in AGENT_PRESETS {
             let label = format!("{} 个", n);
-            let selected = !custom_set && self.sandbox_eval.agent_count == n;
+            let selected = !custom_set && self.ui.sandbox_eval.agent_count == n;
             let cw = 56.0;
             self.sb_chip(target, chip_x, iy, cw, 26.0, &label, selected);
-            self.sandbox_eval
+            self.ui
+                .sandbox_eval
                 .regions
                 .agent_chips
                 .push((n, (chip_x, iy, cw, 26.0)));
             chip_x += cw + 8.0;
         }
         // 自定义数量输入
-        let custom = self.sandbox_eval.custom_count.clone();
-        let caret2 = custom_active && self.sandbox_eval.caret_visible;
+        let custom = self.ui.sandbox_eval.custom_count.clone();
+        let caret2 = custom_active && self.ui.sandbox_eval.caret_visible;
         self.sb_input_field(
             target,
             chip_x,
@@ -273,7 +275,7 @@ impl EditorState {
             custom_active || custom_set,
             caret2,
         );
-        self.sandbox_eval.regions.custom_count_field = Some((chip_x, iy, 96.0, 26.0));
+        self.ui.sandbox_eval.regions.custom_count_field = Some((chip_x, iy, 96.0, 26.0));
         iy += 40.0;
 
         // 任务模式
@@ -294,10 +296,11 @@ impl EditorState {
             .iter()
             .enumerate()
         {
-            let selected = self.sandbox_eval.mode == *mode;
+            let selected = self.ui.sandbox_eval.mode == *mode;
             let cw = 96.0;
             self.sb_chip(target, mx, iy, cw, 26.0, mode.label(), selected);
-            self.sandbox_eval
+            self.ui
+                .sandbox_eval
                 .regions
                 .mode_chips
                 .push((i, (mx, iy, cw, 26.0)));
@@ -320,10 +323,11 @@ impl EditorState {
             let mut dx = ix;
             for mins in DURATION_PRESETS {
                 let label = format!("{} 分钟", mins);
-                let selected = self.sandbox_eval.duration_min == mins;
+                let selected = self.ui.sandbox_eval.duration_min == mins;
                 let cw = 72.0;
                 self.sb_chip(target, dx, iy, cw, 26.0, &label, selected);
-                self.sandbox_eval
+                self.ui
+                    .sandbox_eval
                     .regions
                     .duration_chips
                     .push((mins, (dx, iy, cw, 26.0)));
@@ -333,7 +337,7 @@ impl EditorState {
         iy += 40.0;
 
         // 错误提示 + 开始按钮
-        if let Some(err) = self.sandbox_eval.error.clone() {
+        if let Some(err) = self.ui.sandbox_eval.error.clone() {
             self.sb_text(
                 target,
                 &err,
@@ -349,7 +353,7 @@ impl EditorState {
         let btn_w = 120.0;
         let btn_x = ix + iw - btn_w;
         self.sb_button(target, btn_x, iy, btn_w, 32.0, "开始评测", true);
-        self.sandbox_eval.regions.start_button = Some((btn_x, iy, btn_w, 32.0));
+        self.ui.sandbox_eval.regions.start_button = Some((btn_x, iy, btn_w, 32.0));
         cy += card_h + 16.0;
 
         // ---- 沙盒规则说明卡片 ----
@@ -405,8 +409,8 @@ impl EditorState {
         mut cy: f32,
         content_w: f32,
     ) -> f32 {
-        let live = self.sandbox_eval.live_tail.clone();
-        let thinking = self.sandbox_eval.live_thinking;
+        let live = self.ui.sandbox_eval.live_tail.clone();
+        let thinking = self.ui.sandbox_eval.live_thinking;
         let preview_h = if live.is_empty() { 0.0 } else { 110.0 };
         let card_h = SB_PAD * 2.0 + 30.0 + 24.0 + preview_h + 44.0;
         self.sb_card(target, cx, cy, content_w, card_h);
@@ -438,7 +442,7 @@ impl EditorState {
         }
         iy += 8.0;
         self.sb_button(target, ix, iy, 96.0, 30.0, "终止评测", false);
-        self.sandbox_eval.regions.stop_button = Some((ix, iy, 96.0, 30.0));
+        self.ui.sandbox_eval.regions.stop_button = Some((ix, iy, 96.0, 30.0));
         cy += card_h + 16.0;
         cy
     }
@@ -460,14 +464,16 @@ impl EditorState {
         let ix = cx + SB_PAD;
         let iw = content_w - SB_PAD * 2.0;
         let mut iy = cy + SB_PAD;
-        let total = self.sandbox_eval.tasks.len();
+        let total = self.ui.sandbox_eval.tasks.len();
         let done = self
+            .ui
             .sandbox_eval
             .tasks
             .iter()
             .filter(|t| t.is_finished())
             .count();
         let running_count = self
+            .ui
             .sandbox_eval
             .tasks
             .iter()
@@ -493,8 +499,8 @@ impl EditorState {
             c_text(),
         );
         // 倒计时（定时模式）
-        if let Some(remaining) = self.sandbox_eval.remaining_secs() {
-            let warned = self.sandbox_eval.five_min_warned;
+        if let Some(remaining) = self.ui.sandbox_eval.remaining_secs() {
+            let warned = self.ui.sandbox_eval.five_min_warned;
             let color = if warned { c_red() } else { c_text() };
             self.sb_text_aligned(
                 target,
@@ -538,14 +544,14 @@ impl EditorState {
         }
         iy += 34.0;
         self.sb_button(target, ix, iy, 96.0, 28.0, "终止评测", false);
-        self.sandbox_eval.regions.stop_button = Some((ix, iy, 96.0, 28.0));
+        self.ui.sandbox_eval.regions.stop_button = Some((ix, iy, 96.0, 28.0));
         cy += card_h + 16.0;
 
         // ---- 任务列表 ----
-        let n = self.sandbox_eval.tasks.len();
+        let n = self.ui.sandbox_eval.tasks.len();
         for i in 0..n {
             let (title, status, files, elapsed_ms, _agent) = {
-                let t = &self.sandbox_eval.tasks[i];
+                let t = &self.ui.sandbox_eval.tasks[i];
                 (
                     t.title.clone(),
                     t.status,
@@ -556,6 +562,7 @@ impl EditorState {
             };
             // 查找正在执行此任务的 worker 以展示其实时输出
             let (live, thinking) = self
+                .ui
                 .sandbox_eval
                 .workers
                 .iter()
@@ -669,7 +676,7 @@ impl EditorState {
             c_text(),
         );
         // 平均分（大号）
-        let avg = self.sandbox_eval.average_score();
+        let avg = self.ui.sandbox_eval.average_score();
         let avg_text = match avg {
             Some(a) => format!("{:.1}", a),
             None => "—".to_string(),
@@ -691,15 +698,17 @@ impl EditorState {
             DWRITE_TEXT_ALIGNMENT_TRAILING,
         );
         iy += 30.0;
-        let total = self.sandbox_eval.tasks.len();
+        let total = self.ui.sandbox_eval.tasks.len();
         let done = self
+            .ui
             .sandbox_eval
             .tasks
             .iter()
             .filter(|t| t.status == SandboxTaskStatus::Done)
             .count();
-        let secs = self.sandbox_eval.total_elapsed_ms / 1000;
+        let secs = self.ui.sandbox_eval.total_elapsed_ms / 1000;
         let scored = self
+            .ui
             .sandbox_eval
             .tasks
             .iter()
@@ -727,13 +736,13 @@ impl EditorState {
         iy += 26.0;
         // 导出 / 再来一轮 / 打开沙盒目录
         self.sb_button(target, ix, iy, 130.0, 32.0, "打包导出结果", true);
-        self.sandbox_eval.regions.export_button = Some((ix, iy, 130.0, 32.0));
+        self.ui.sandbox_eval.regions.export_button = Some((ix, iy, 130.0, 32.0));
         self.sb_button(target, ix + 142.0, iy, 110.0, 32.0, "再来一轮", false);
-        self.sandbox_eval.regions.restart_button = Some((ix + 142.0, iy, 110.0, 32.0));
+        self.ui.sandbox_eval.regions.restart_button = Some((ix + 142.0, iy, 110.0, 32.0));
         self.sb_button(target, ix + 264.0, iy, 130.0, 32.0, "打开沙盒目录", false);
-        self.sandbox_eval.regions.open_dir_button = Some((ix + 264.0, iy, 130.0, 32.0));
+        self.ui.sandbox_eval.regions.open_dir_button = Some((ix + 264.0, iy, 130.0, 32.0));
         // 导出结果 / 提示信息
-        if let Some(msg) = self.sandbox_eval.export_message.clone() {
+        if let Some(msg) = self.ui.sandbox_eval.export_message.clone() {
             self.sb_text_aligned(
                 target,
                 &crate::sandbox_eval::truncate_chars(&msg, 60),
@@ -746,7 +755,7 @@ impl EditorState {
                 c_green(),
                 DWRITE_TEXT_ALIGNMENT_TRAILING,
             );
-        } else if !self.sandbox_eval.all_scored() {
+        } else if !self.ui.sandbox_eval.all_scored() {
             self.sb_text_aligned(
                 target,
                 "为每个任务打分后可得到平均分",
@@ -763,10 +772,10 @@ impl EditorState {
         cy += card_h + 16.0;
 
         // ---- 逐任务打分卡片 ----
-        let n = self.sandbox_eval.tasks.len();
+        let n = self.ui.sandbox_eval.tasks.len();
         for i in 0..n {
             let (title, status, files, searches, summary, score, elapsed_ms) = {
-                let t = &self.sandbox_eval.tasks[i];
+                let t = &self.ui.sandbox_eval.tasks[i];
                 (
                     t.title.clone(),
                     t.status,
@@ -869,7 +878,8 @@ impl EditorState {
                     let selected = score == Some(s);
                     let cw = 30.0;
                     self.sb_score_chip(target, sx, ty, cw, 26.0, s, selected);
-                    self.sandbox_eval
+                    self.ui
+                        .sandbox_eval
                         .regions
                         .score_chips
                         .push((i, s, (sx, ty, cw, 26.0)));
@@ -906,11 +916,12 @@ impl EditorState {
         mut cy: f32,
         content_w: f32,
     ) -> f32 {
-        if self.sandbox_eval.log.is_empty() {
+        if self.ui.sandbox_eval.log.is_empty() {
             return cy;
         }
         // 只显示最近 14 条
         let entries: Vec<(String, SandboxLogKind, String)> = self
+            .ui
             .sandbox_eval
             .log
             .iter()
@@ -985,10 +996,16 @@ impl EditorState {
             radiusX: 6.0,
             radiusY: 6.0,
         };
-        if let Ok(bg) = self.render_ctx.brush_cache.get_brush(target, &c_card_bg()) {
+        if let Ok(bg) = self
+            .win
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &c_card_bg())
+        {
             target.FillRoundedRectangle(&rounded, &bg);
         }
         if let Ok(border) = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &c_card_border())
@@ -1044,7 +1061,7 @@ impl EditorState {
         } else {
             DWRITE_FONT_WEIGHT_NORMAL
         };
-        let Ok(format) = self.render_ctx.text_format_cache.get_format(
+        let Ok(format) = self.win.render_ctx.text_format_cache.get_format(
             size,
             weight.0 as u32,
             align.0 as u32,
@@ -1052,7 +1069,7 @@ impl EditorState {
         ) else {
             return;
         };
-        let Ok(brush) = self.render_ctx.brush_cache.get_brush(target, &color) else {
+        let Ok(brush) = self.win.render_ctx.brush_cache.get_brush(target, &color) else {
             return;
         };
         let rect = D2D_RECT_F {
@@ -1097,11 +1114,21 @@ impl EditorState {
             radiusX: 5.0,
             radiusY: 5.0,
         };
-        if let Ok(bg) = self.render_ctx.brush_cache.get_brush(target, &c_field_bg()) {
+        if let Ok(bg) = self
+            .win
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &c_field_bg())
+        {
             target.FillRoundedRectangle(&rounded, &bg);
         }
         let border_color = if active { c_accent() } else { c_card_border() };
-        if let Ok(border) = self.render_ctx.brush_cache.get_brush(target, &border_color) {
+        if let Ok(border) = self
+            .win
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &border_color)
+        {
             target.DrawRoundedRectangle(&rounded, &border, 1.0, None);
         }
         // 文本内容（超长显示尾部）
@@ -1181,7 +1208,7 @@ impl EditorState {
         } else {
             c_field_bg()
         };
-        if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &bg) {
+        if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &bg) {
             target.FillRoundedRectangle(&rounded, &b);
         }
         let border = if selected {
@@ -1189,7 +1216,7 @@ impl EditorState {
         } else {
             c_card_border()
         };
-        if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &border) {
+        if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &border) {
             target.DrawRoundedRectangle(&rounded, &b, 1.0, None);
         }
         let color = if selected { c_accent() } else { c_text_dim() };
@@ -1235,11 +1262,11 @@ impl EditorState {
         } else {
             c_field_bg()
         };
-        if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &bg) {
+        if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &bg) {
             target.FillRoundedRectangle(&rounded, &b);
         }
         let border = if selected { c_green() } else { c_card_border() };
-        if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &border) {
+        if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &border) {
             target.DrawRoundedRectangle(&rounded, &b, 1.0, None);
         }
         let color = if selected { c_green() } else { c_text_dim() };
@@ -1285,11 +1312,12 @@ impl EditorState {
         } else {
             color_f(0.22, 0.22, 0.24, 1.0)
         };
-        if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &bg) {
+        if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &bg) {
             target.FillRoundedRectangle(&rounded, &b);
         }
         if !primary {
             if let Ok(b) = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &c_card_border())
@@ -1344,7 +1372,7 @@ impl EditorState {
             b: color.b,
             a: 0.16,
         };
-        if let Ok(b) = self.render_ctx.brush_cache.get_brush(target, &bg) {
+        if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &bg) {
             target.FillRoundedRectangle(&rounded, &b);
         }
         self.sb_text_aligned(
@@ -1383,6 +1411,7 @@ impl EditorState {
             radiusY: 5.0,
         };
         if let Ok(b) = self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.08, 0.08, 0.09, 1.0))

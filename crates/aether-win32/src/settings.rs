@@ -8,6 +8,8 @@ pub enum SettingsField {
     ApiKey,
     BaseUrl,
     Model,
+    /// 自定义模型名称（用户可自由编写，用于区分不同厂商的相同模型）
+    DisplayName,
     Temperature,
     MaxTokens,
     MaxInputTokens,
@@ -288,6 +290,8 @@ pub struct SettingsPanel {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
+    /// 自定义模型名称（用户可自由编写，用于区分不同厂商的相同模型）
+    pub display_name: String,
     pub temperature: String,
     pub top_p: String,
     pub max_tokens: String,
@@ -420,6 +424,7 @@ impl SettingsPanel {
             api_key: String::new(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             model: "deepseek-v4-pro".to_string(),
+            display_name: String::new(),
             temperature: "0.7".to_string(),
             top_p: "1.0".to_string(),
             max_tokens: "8192".to_string(),
@@ -502,6 +507,7 @@ impl SettingsPanel {
             api_key: settings.ai.api_key.clone(),
             base_url: settings.ai.base_url.clone().unwrap_or_default(),
             model: settings.ai.model.clone(),
+            display_name: String::new(),
             temperature: settings
                 .ai
                 .temperature
@@ -699,6 +705,7 @@ impl SettingsPanel {
             self.api_key = m.api_key;
             self.base_url = m.base_url;
             self.model = m.name;
+            self.display_name = m.display_name;
             self.temperature = m.temperature;
             self.top_p = m.top_p;
             self.max_tokens = m.max_tokens;
@@ -719,6 +726,7 @@ impl SettingsPanel {
             self.api_key = fallback_ai.api_key.clone();
             self.base_url = fallback_ai.base_url.clone().unwrap_or_default();
             self.model = fallback_ai.model.clone();
+            self.display_name = String::new();
             self.temperature = fallback_ai
                 .temperature
                 .map(|t| t.to_string())
@@ -817,6 +825,7 @@ impl SettingsPanel {
         let api_key = self.api_key.clone();
         let base_url = self.base_url.clone();
         let model = self.model.clone();
+        let display_name = self.display_name.clone();
         let temperature = self.temperature.clone();
         let top_p = self.top_p.clone();
         let max_tokens = self.max_tokens.clone();
@@ -853,7 +862,10 @@ impl SettingsPanel {
                 m.logprobs = logprobs;
                 m.top_logprobs = top_logprobs;
                 m.user_id = user_id;
-                if m.display_name.is_empty() && !model.is_empty() {
+                // 用户自定义名称优先；为空时回退为模型 ID
+                if !display_name.is_empty() {
+                    m.display_name = display_name;
+                } else if m.display_name.is_empty() && !model.is_empty() {
                     m.display_name = model;
                 }
             }
@@ -1039,6 +1051,7 @@ impl SettingsPanel {
                 SettingsField::ApiKey => self.api_key.push(ch),
                 SettingsField::BaseUrl => self.base_url.push(ch),
                 SettingsField::Model => self.model.push(ch),
+                SettingsField::DisplayName => self.display_name.push(ch),
                 SettingsField::Temperature => self.temperature.push(ch),
                 SettingsField::MaxTokens => self.max_tokens.push(ch),
                 SettingsField::MaxInputTokens => self.max_input_tokens.push(ch),
@@ -1058,6 +1071,7 @@ impl SettingsPanel {
                 SettingsField::ApiKey => self.api_key.push_str(text),
                 SettingsField::BaseUrl => self.base_url.push_str(text),
                 SettingsField::Model => self.model.push_str(text),
+                SettingsField::DisplayName => self.display_name.push_str(text),
                 SettingsField::Temperature => self.temperature.push_str(text),
                 SettingsField::MaxTokens => self.max_tokens.push_str(text),
                 SettingsField::MaxInputTokens => self.max_input_tokens.push_str(text),
@@ -1084,6 +1098,9 @@ impl SettingsPanel {
                 }
                 SettingsField::Model => {
                     self.model.pop();
+                }
+                SettingsField::DisplayName => {
+                    self.display_name.pop();
                 }
                 SettingsField::Temperature => {
                     self.temperature.pop();
@@ -1118,6 +1135,7 @@ impl SettingsPanel {
                 SettingsField::ApiKey => self.api_key.clear(),
                 SettingsField::BaseUrl => self.base_url.clear(),
                 SettingsField::Model => self.model.clear(),
+                SettingsField::DisplayName => self.display_name.clear(),
                 SettingsField::Temperature => self.temperature.clear(),
                 SettingsField::MaxTokens => self.max_tokens.clear(),
                 SettingsField::MaxInputTokens => self.max_input_tokens.clear(),
@@ -1137,6 +1155,8 @@ impl SettingsPanel {
         if self.provider == "custom" {
             fields.push(SettingsField::BaseUrl);
         }
+        // 自定义名称在模型下拉框之后，参与 Tab 循环
+        fields.push(SettingsField::DisplayName);
         // 温度已改为滑块交互，不参与键盘 Tab 循环
         fields.push(SettingsField::MaxInputTokens);
         fields.push(SettingsField::MaxTokens);

@@ -20,10 +20,10 @@ impl EditorState {
         let btn_y = y + btn_margin;
 
         // 保存按钮区域供点击命中检测
-        self.markdown_toggle_btn =
+        self.editor.markdown_toggle_btn =
             Some(crate::layout::Region::new(btn_x, btn_y, btn_size, btn_size));
 
-        let is_preview = self.markdown_preview;
+        let is_preview = self.editor.markdown_preview;
         let icon = if is_preview {
             crate::icons::IconKind::Pencil
         } else {
@@ -37,7 +37,7 @@ impl EditorState {
             } else {
                 color_f(0.3, 0.3, 0.35, 0.6)
             };
-            let bg_brush = match self.render_ctx.brush_cache.get_brush(target, &bg_color) {
+            let bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &bg_color) {
                 Ok(b) => b,
                 Err(_) => return,
             };
@@ -53,6 +53,7 @@ impl EditorState {
 
             // SVG 图标
             let icon_brush = match self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.9, 0.9, 0.9, 1.0))
@@ -63,8 +64,8 @@ impl EditorState {
             let icon_size = 16.0;
             let icon_x = btn_x + (btn_size - icon_size) / 2.0;
             let icon_y = btn_y + (btn_size - icon_size) / 2.0;
-            self.icons.ensure_created_from_target(target);
-            self.icons.draw(
+            self.ui.icons.ensure_created_from_target(target);
+            self.ui.icons.draw(
                 target,
                 icon,
                 icon_x,
@@ -88,9 +89,10 @@ impl EditorState {
         unsafe {
             // 背景
             let bg_brush = match self
+                .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &self.theme.editor_bg)
+                .get_brush(target, &self.win.theme.editor_bg)
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -107,9 +109,10 @@ impl EditorState {
 
             // 读取当前 buffer 文本
             let text = self
+                .editor
                 .content
                 .buffer
-                .get_text(0, self.content.buffer.len_bytes());
+                .get_text(0, self.editor.content.buffer.len_bytes());
             if text.is_empty() {
                 self.render_markdown_empty(target, x, y, width, height);
                 return;
@@ -122,8 +125,8 @@ impl EditorState {
             let padding: f32 = 24.0;
             let content_x = x + padding;
             let content_width = (width - padding * 2.0).max(100.0);
-            let line_height = self.text_renderer.line_height();
-            let scroll_y = self.content.scroll_y;
+            let line_height = self.win.text_renderer.line_height();
+            let scroll_y = self.editor.content.scroll_y;
 
             // 裁剪区域
             target.PushAxisAlignedClip(
@@ -173,6 +176,7 @@ impl EditorState {
         height: f32,
     ) {
         let text_brush = match self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.5, 0.5, 0.55, 1.0))
@@ -180,7 +184,7 @@ impl EditorState {
             Ok(b) => b,
             Err(_) => return,
         };
-        let format = match self.render_ctx.text_format_cache.get_format(
+        let format = match self.win.render_ctx.text_format_cache.get_format(
             14.0,
             DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
             DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
@@ -278,14 +282,15 @@ impl EditorState {
     ) {
         let font_size = heading_font_size(level);
         let text_brush = match self
+            .win
             .render_ctx
             .brush_cache
-            .get_brush(target, &self.theme.text_default)
+            .get_brush(target, &self.win.theme.text_default)
         {
             Ok(b) => b,
             Err(_) => return,
         };
-        let format = match self.render_ctx.text_format_cache.get_format(
+        let format = match self.win.render_ctx.text_format_cache.get_format(
             font_size,
             DWRITE_FONT_WEIGHT_BOLD.0 as u32,
             DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -312,6 +317,7 @@ impl EditorState {
         // H1/H2 下方绘制分割线
         if level <= 2 {
             let sep_brush = match self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(0.3, 0.3, 0.3, 0.5))
@@ -348,14 +354,15 @@ impl EditorState {
         }
 
         let text_brush = match self
+            .win
             .render_ctx
             .brush_cache
-            .get_brush(target, &self.theme.text_default)
+            .get_brush(target, &self.win.theme.text_default)
         {
             Ok(b) => b,
             Err(_) => return,
         };
-        let format = match self.render_ctx.text_format_cache.get_format(
+        let format = match self.win.render_ctx.text_format_cache.get_format(
             13.0,
             DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
             DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -368,7 +375,7 @@ impl EditorState {
         let wide: Vec<u16> = plain.encode_utf16().chain(Some(0)).collect();
 
         // 使用 TextLayout 支持富文本范围样式
-        let dwrite = self.text_renderer.dwrite_factory();
+        let dwrite = self.win.text_renderer.dwrite_factory();
         let layout = match dwrite.CreateTextLayout(
             &wide[..wide.len() - 1],
             &format,
@@ -446,14 +453,15 @@ impl EditorState {
 
         // 绘制圆点
         let bullet_brush = match self
+            .win
             .render_ctx
             .brush_cache
-            .get_brush(target, &self.theme.text_default)
+            .get_brush(target, &self.win.theme.text_default)
         {
             Ok(b) => b,
             Err(_) => return,
         };
-        let bullet_format = match self.render_ctx.text_format_cache.get_format(
+        let bullet_format = match self.win.render_ctx.text_format_cache.get_format(
             13.0,
             DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
             DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -504,14 +512,15 @@ impl EditorState {
         let num_x = x + indent_px;
 
         let num_brush = match self
+            .win
             .render_ctx
             .brush_cache
-            .get_brush(target, &self.theme.text_default)
+            .get_brush(target, &self.win.theme.text_default)
         {
             Ok(b) => b,
             Err(_) => return,
         };
-        let num_format = match self.render_ctx.text_format_cache.get_format(
+        let num_format = match self.win.render_ctx.text_format_cache.get_format(
             13.0,
             DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
             DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -558,6 +567,7 @@ impl EditorState {
     ) {
         // 代码块背景
         let code_bg = match self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.15, 0.15, 0.18, 1.0))
@@ -576,6 +586,7 @@ impl EditorState {
         );
 
         let code_brush = match self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.85, 0.85, 0.85, 1.0))
@@ -583,7 +594,7 @@ impl EditorState {
             Ok(b) => b,
             Err(_) => return,
         };
-        let format = match self.render_ctx.text_format_cache.get_format(
+        let format = match self.win.render_ctx.text_format_cache.get_format(
             12.0,
             DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
             DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -620,6 +631,7 @@ impl EditorState {
     ) {
         // 左侧竖线
         let bar_brush = match self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.4, 0.6, 0.9, 1.0))
@@ -639,6 +651,7 @@ impl EditorState {
 
         // 引用文本（灰色）
         let quote_brush = match self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.6, 0.6, 0.65, 1.0))
@@ -647,7 +660,7 @@ impl EditorState {
             Err(_) => return,
         };
         let plain: String = segments.iter().map(|s| s.text.as_str()).collect();
-        let format = match self.render_ctx.text_format_cache.get_format(
+        let format = match self.win.render_ctx.text_format_cache.get_format(
             13.0,
             DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
             DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -682,6 +695,7 @@ impl EditorState {
         line_height: f32,
     ) {
         let sep_brush = match self
+            .win
             .render_ctx
             .brush_cache
             .get_brush(target, &color_f(0.4, 0.4, 0.4, 0.6))

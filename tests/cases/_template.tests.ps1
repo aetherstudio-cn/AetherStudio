@@ -9,6 +9,16 @@
 #   AI-Prompt  : 生成该用例的原始指令（可选）
 #   Layout     : 依赖的布局常量（坐标计算基准）
 # =============================================================================
+#
+# 【框架能力速查】
+#   鼠标：Send-AetherClickMsg / Send-AetherDoubleClickMsg / Send-AetherMiddleClickMsg
+#         Send-AetherMouseWheel / Send-AetherMouseMoveMsg / Send-AetherDrag
+#   键盘：Send-AetherTextMsg / Send-AetherKeyMsg / Send-AetherHotkey
+#   窗口：Resize-AetherWindow / Move-AetherWindow / Set-AetherWindowState / Close-AetherWindow
+#   智能：Invoke-AetherSmartClick / Wait-AetherHitRegion / Get-AetherEditorState
+#   DSL ：Invoke-AetherActionScript（click/dblclick/mclick/hover/move/wheel/drag/
+#         keys/key/hotkey/wait/shot/expect/resize/movewin/winstate/closewin）
+# =============================================================================
 
 param([switch]$SkipBuild)
 
@@ -59,6 +69,62 @@ try {
         Start-Sleep -Milliseconds 500
         Save-AetherScreenshot -Window $win -Name "switched" | Out-Null
     }
+
+    # ---- 快捷键示例（取消注释以使用） ----
+    # Invoke-TestStep "Ctrl+S 保存文件" {
+    #     Send-AetherHotkey -Hwnd $win.Hwnd -Modifiers @('Ctrl') -Key 'S'
+    #     Assert-AetherLogEvent -Pattern "已保存|save"
+    # }
+
+    # Invoke-TestStep "Ctrl+B 切换侧栏" {
+    #     Send-AetherHotkey -Hwnd $win.Hwnd -Modifiers @('Ctrl') -Key 'B'
+    #     Start-Sleep -Milliseconds 300
+    #     Save-AetherScreenshot -Window $win -Name "sidebar_toggled" | Out-Null
+    # }
+
+    # ---- 滚轮示例 ----
+    # Invoke-TestStep "编辑器滚轮滚动" {
+    #     $editorX = NX ($L.ACTIVITY_W + $L.SIDEBAR_W + 100)
+    #     $editorY = NX ($L.TITLE_BAR + $L.TAB_BAR_H + 100)
+    #     Send-AetherMouseWheel -Hwnd $win.Hwnd -X $editorX -Y $editorY -Delta (-120 * 3)  # 向下滚 3 格
+    #     Save-AetherScreenshot -Window $win -Name "scrolled" | Out-Null
+    # }
+
+    # ---- 拖拽示例 ----
+    # Invoke-TestStep "拖拽标签重排" {
+    #     Send-AetherDrag -Hwnd $win.Hwnd -FromX (NX 300) -FromY (NX ($L.TITLE_BAR + 15)) `
+    #                     -ToX (NX 500) -ToY (NX ($L.TITLE_BAR + 15)) -Steps 15
+    #     Save-AetherScreenshot -Window $win -Name "tab_dragged" | Out-Null
+    # }
+
+    # ---- 智能操作示例（基于 hit regions 语义定位） ----
+    # Invoke-TestStep "智能点击新建文件按钮" {
+    #     Invoke-AetherSmartClick -Window $win -ActionLike "new_file"
+    #     Save-AetherScreenshot -Window $win -Name "smart_clicked" | Out-Null
+    # }
+
+    # ---- 动作脚本 DSL 示例 ----
+    # Invoke-TestStep "动作脚本：打开文件并保存" {
+    #     $actions = @(
+    #         @{type='click';  x=$rowLabelX; y=(RowCenterY 0)},
+    #         @{type='wait';   ms=500},
+    #         @{type='hotkey'; modifiers=@('Ctrl'); key='S'},
+    #         @{type='shot';   name='saved'},
+    #         @{type='expect'; pattern='已保存|save'}
+    #     )
+    #     $results = Invoke-AetherActionScript -Window $win -Actions $actions
+    #     $failed = @($results | Where-Object { -not $_.ok })
+    #     Assert-Condition ($failed.Count -eq 0) "动作脚本全部成功（$($results.Count) 步）"
+    # }
+
+    # ---- 窗口操作示例 ----
+    # Invoke-TestStep "窗口最小化触发冰冻态" {
+    #     Set-AetherWindowState -Window $win -State Minimized
+    #     Start-Sleep -Seconds 2
+    #     Set-AetherWindowState -Window $win -State Restored
+    #     $win = Get-AetherWindow -Process $proc -Isolate  # 重新获取窗口信息
+    #     Save-AetherScreenshot -Window $win -Name "restored" | Out-Null
+    # }
 
     # ---- 失败处理：断言异常会被 Invoke-TestStep 捕获，无需手动 try/catch ----
     # ---- 失败后（可选）：New-AetherDiagBundle -CaseName "template_case" 打包诊断材料 ----

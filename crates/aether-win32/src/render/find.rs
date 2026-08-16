@@ -9,60 +9,69 @@ impl EditorState {
         width: f32,
     ) {
         unsafe {
-            let bg_color = if self.theme.glass_enabled {
+            let bg_color = if self.win.theme.glass_enabled {
                 color_f(0.18, 0.18, 0.18, 0.95)
             } else {
                 color_f(0.18, 0.18, 0.18, 1.0)
             };
             let bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
             let border_color = color_f(0.0, 0.47, 0.83, 1.0);
             let border_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
             let text_color = color_f(0.9, 0.9, 0.9, 1.0);
             let text_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let dim_color = color_f(0.5, 0.5, 0.5, 1.0);
             let dim_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let input_bg_color = color_f(0.12, 0.12, 0.12, 1.0);
             let input_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
             let match_color = color_f(0.2, 0.8, 0.3, 1.0);
             let match_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &match_color)
                 .unwrap();
             let btn_bg_color = color_f(0.25, 0.25, 0.25, 1.0);
             let _btn_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg_color)
                 .unwrap();
             let btn_hover_color = color_f(0.35, 0.35, 0.35, 1.0);
             let _btn_hover_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
 
             let label_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -73,6 +82,7 @@ impl EditorState {
                 )
                 .unwrap();
             let input_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -83,7 +93,7 @@ impl EditorState {
                 )
                 .unwrap();
 
-            let panel_height = if self.find.replace_visible {
+            let panel_height = if self.editor.find.replace_visible {
                 72.0
             } else {
                 40.0
@@ -136,7 +146,7 @@ impl EditorState {
             };
             target.FillRectangle(&find_input_rect, &input_bg_brush);
             // 焦点边框
-            if self.find.focus == crate::editor::FindReplaceFocus::FindQuery {
+            if self.editor.find.focus == crate::editor::FindReplaceFocus::FindQuery {
                 let focus_border = D2D_RECT_F {
                     left: panel_x + 50.0,
                     top: cy,
@@ -152,12 +162,12 @@ impl EditorState {
                 };
                 target.FillRectangle(&focus_border2, &border_brush);
             }
-            let find_text = if self.find.query.is_empty() {
+            let find_text = if self.editor.find.query.is_empty() {
                 "输入查找内容..."
             } else {
-                &self.find.query
+                &self.editor.find.query
             };
-            let find_text_color = if self.find.query.is_empty() {
+            let find_text_color = if self.editor.find.query.is_empty() {
                 &dim_brush
             } else {
                 &text_brush
@@ -179,9 +189,13 @@ impl EditorState {
             );
 
             // 匹配计数
-            let match_text = if !self.find.results.is_empty() {
-                format!("{}/{}", self.find.active_index + 1, self.find.results.len())
-            } else if !self.find.query.is_empty() {
+            let match_text = if !self.editor.find.results.is_empty() {
+                format!(
+                    "{}/{}",
+                    self.editor.find.active_index + 1,
+                    self.editor.find.results.len()
+                )
+            } else if !self.editor.find.query.is_empty() {
                 "0/0".to_string()
             } else {
                 String::new()
@@ -207,7 +221,7 @@ impl EditorState {
             cy += input_h + 8.0;
 
             // 替换输入框（如果可见）
-            if self.find.replace_visible {
+            if self.editor.find.replace_visible {
                 let replace_label: Vec<u16> = "替换:".encode_utf16().chain(Some(0)).collect();
                 let replace_label_rect = D2D_RECT_F {
                     left: panel_x + 10.0,
@@ -232,7 +246,7 @@ impl EditorState {
                 };
                 target.FillRectangle(&replace_input_rect, &input_bg_brush);
                 // 焦点边框
-                if self.find.focus == crate::editor::FindReplaceFocus::ReplaceText {
+                if self.editor.find.focus == crate::editor::FindReplaceFocus::ReplaceText {
                     let focus_border = D2D_RECT_F {
                         left: panel_x + 50.0,
                         top: cy,
@@ -248,12 +262,12 @@ impl EditorState {
                     };
                     target.FillRectangle(&focus_border2, &border_brush);
                 }
-                let replace_text = if self.find.replace_text.is_empty() {
+                let replace_text = if self.editor.find.replace_text.is_empty() {
                     "输入替换内容..."
                 } else {
-                    &self.find.replace_text
+                    &self.editor.find.replace_text
                 };
-                let replace_text_color = if self.find.replace_text.is_empty() {
+                let replace_text_color = if self.editor.find.replace_text.is_empty() {
                     &dim_brush
                 } else {
                     &text_brush

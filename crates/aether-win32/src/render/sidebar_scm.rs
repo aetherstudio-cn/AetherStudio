@@ -12,6 +12,7 @@ impl EditorState {
     ) {
         unsafe {
             let ui_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -22,6 +23,7 @@ impl EditorState {
                 )
                 .unwrap();
             let bold_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -32,6 +34,7 @@ impl EditorState {
                 )
                 .unwrap();
             let mono_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -44,66 +47,76 @@ impl EditorState {
 
             let text_color = color_f(0.9, 0.9, 0.9, 1.0);
             let text_br2 = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &text_color)
                 .unwrap();
             let dim_color = color_f(0.5, 0.5, 0.5, 1.0);
             let dim_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
             let sel_color = color_f(0.0, 0.47, 0.83, 1.0);
             let sel_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &sel_color)
                 .unwrap();
             let hover_color = color_f(0.2, 0.2, 0.2, 1.0);
             let hover_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &hover_color)
                 .unwrap();
             let sep_color = color_f(0.2, 0.2, 0.2, 1.0);
             let sep_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &sep_color)
                 .unwrap();
             let green_color = color_f(0.2, 0.8, 0.3, 1.0);
             let green_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &green_color)
                 .unwrap();
             let yellow_color = color_f(0.9, 0.7, 0.2, 1.0);
             let _yellow_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &yellow_color)
                 .unwrap();
             let red_color = color_f(0.9, 0.2, 0.2, 1.0);
             let _red_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &red_color)
                 .unwrap();
             let btn_bg_color = color_f(0.2, 0.2, 0.2, 1.0);
             let btn_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg_color)
                 .unwrap();
             let btn_hover_color = color_f(0.3, 0.3, 0.3, 1.0);
             let btn_hover_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_hover_color)
                 .unwrap();
 
-            let mut current_y = y + 10.0 - self.git.scroll_y;
+            let mut current_y = y + 10.0 - self.ui.git.scroll_y;
 
             // 标题
             let title: Vec<u16> = "源代码管理".encode_utf16().chain(Some(0)).collect();
@@ -123,7 +136,7 @@ impl EditorState {
             );
             current_y += 24.0;
 
-            if !self.git.is_repo() {
+            if !self.ui.git.is_repo() {
                 let msg: Vec<u16> = "当前文件夹不是 Git 仓库"
                     .encode_utf16()
                     .chain(Some(0))
@@ -146,7 +159,7 @@ impl EditorState {
             }
 
             // 分支名称
-            if let Some(branch) = self.git.current_branch_name() {
+            if let Some(branch) = self.ui.git.current_branch_name() {
                 let branch_text: Vec<u16> = format!("{} {}", "🌿", branch)
                     .encode_utf16()
                     .chain(Some(0))
@@ -187,17 +200,18 @@ impl EditorState {
             };
             let input_bg_color = color_f(0.18, 0.18, 0.18, 1.0);
             let input_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &input_bg_color)
                 .unwrap();
             target.FillRectangle(&input_bg, &input_bg_brush);
-            let msg_label = if self.git.commit_message.is_empty() {
+            let msg_label = if self.ui.git.commit_message.is_empty() {
                 "输入提交消息..."
             } else {
-                &self.git.commit_message
+                &self.ui.git.commit_message
             };
-            let msg_color = if self.git.commit_message.is_empty() {
+            let msg_color = if self.ui.git.commit_message.is_empty() {
                 dim_brush.clone()
             } else {
                 text_br2.clone()
@@ -232,6 +246,7 @@ impl EditorState {
                 bottom: btn_y + btn_h,
             };
             let is_commit_hover = self
+                .ui
                 .git
                 .hover_button
                 .as_ref()
@@ -269,6 +284,7 @@ impl EditorState {
                 bottom: btn_y + btn_h,
             };
             let is_refresh_hover = self
+                .ui
                 .git
                 .hover_button
                 .as_ref()
@@ -314,7 +330,7 @@ impl EditorState {
             let section_header_h = 20.0;
 
             // Staged Changes
-            let staged = self.git.staged_files();
+            let staged = self.ui.git.staged_files();
             if !staged.is_empty() {
                 let header_text: Vec<u16> = format!("已暂存的更改 ({})", staged.len())
                     .encode_utf16()
@@ -341,8 +357,8 @@ impl EditorState {
                         break;
                     }
                     if current_y + item_h >= y {
-                        let is_selected = self.git.selected_file.as_ref() == Some(file);
-                        let is_hover = self.git.hover_file.as_ref() == Some(file);
+                        let is_selected = self.ui.git.selected_file.as_ref() == Some(file);
+                        let is_hover = self.ui.git.hover_file.as_ref() == Some(file);
                         let file_rect = D2D_RECT_F {
                             left: x + 10.0,
                             top: current_y,
@@ -358,6 +374,7 @@ impl EditorState {
                         let icon = crate::git::GitRepository::status_icon(*status);
                         let icon_color = crate::git::GitRepository::status_color(*status);
                         let icon_brush = self
+                            .win
                             .render_ctx
                             .brush_cache
                             .get_brush(
@@ -420,7 +437,7 @@ impl EditorState {
             }
 
             // Changes (unstaged)
-            let unstaged = self.git.unstaged_files();
+            let unstaged = self.ui.git.unstaged_files();
             if !unstaged.is_empty() {
                 let header_text: Vec<u16> = format!("更改 ({})", unstaged.len())
                     .encode_utf16()
@@ -447,8 +464,8 @@ impl EditorState {
                         break;
                     }
                     if current_y + item_h >= y {
-                        let is_selected = self.git.selected_file.as_ref() == Some(file);
-                        let is_hover = self.git.hover_file.as_ref() == Some(file);
+                        let is_selected = self.ui.git.selected_file.as_ref() == Some(file);
+                        let is_hover = self.ui.git.hover_file.as_ref() == Some(file);
                         let file_rect = D2D_RECT_F {
                             left: x + 10.0,
                             top: current_y,
@@ -464,6 +481,7 @@ impl EditorState {
                         let icon = crate::git::GitRepository::status_icon(*status);
                         let icon_color = crate::git::GitRepository::status_color(*status);
                         let icon_brush = self
+                            .win
                             .render_ctx
                             .brush_cache
                             .get_brush(
@@ -526,7 +544,7 @@ impl EditorState {
             }
 
             // Untracked Files
-            let untracked = self.git.untracked_files();
+            let untracked = self.ui.git.untracked_files();
             if !untracked.is_empty() {
                 let header_text: Vec<u16> = format!("未跟踪的文件 ({})", untracked.len())
                     .encode_utf16()
@@ -553,8 +571,8 @@ impl EditorState {
                         break;
                     }
                     if current_y + item_h >= y {
-                        let is_selected = self.git.selected_file.as_ref() == Some(file);
-                        let is_hover = self.git.hover_file.as_ref() == Some(file);
+                        let is_selected = self.ui.git.selected_file.as_ref() == Some(file);
+                        let is_hover = self.ui.git.hover_file.as_ref() == Some(file);
                         let file_rect = D2D_RECT_F {
                             left: x + 10.0,
                             top: current_y,

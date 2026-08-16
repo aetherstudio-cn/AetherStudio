@@ -13,7 +13,7 @@ impl EditorState {
             let mut cy = start_y;
 
             // 分组「版本信息」
-            let last_check = self.app_settings.update.last_check_ts;
+            let last_check = self.ui.app_settings.update.last_check_ts;
             let last_check_text = if last_check == 0 {
                 "从未".to_string()
             } else {
@@ -30,20 +30,20 @@ impl EditorState {
                 ("当前版本", crate::updater::APP_VERSION.to_string(), None),
                 ("上次检查", last_check_text, None),
             ];
-            if let Some(ref ver) = self.update_available_version {
+            if let Some(ref ver) = self.ui.update_available_version {
                 version_rows.push(("发现新版本", ver.clone(), Some(true)));
             }
             cy = self.draw_settings_group(target, "版本信息", x, width, cy, &version_rows);
             cy += 20.0;
 
             // 分组「更新策略」
-            let policy = &self.app_settings.update.policy;
+            let policy = &self.ui.app_settings.update.policy;
             let policy_label = match policy {
                 aether_shared::settings::UpdatePolicy::AutoInstall => "自动下载并安装（推荐）",
                 aether_shared::settings::UpdatePolicy::NotifyOnly => "仅通知，手动下载",
                 aether_shared::settings::UpdatePolicy::Disabled => "关闭自动更新",
             };
-            let suppress = self.app_settings.update.suppress_days;
+            let suppress = self.ui.app_settings.update.suppress_days;
             let suppress_label = match suppress {
                 0 => "每次启动检查".to_string(),
                 1 => "1 天内不再提醒".to_string(),
@@ -59,7 +59,7 @@ impl EditorState {
             cy += 20.0;
 
             // "立即检查更新"按钮 / 检查中状态
-            let is_checking = self.update_checking;
+            let is_checking = self.ui.update_checking;
             let btn_text = if is_checking {
                 "正在检查..."
             } else {
@@ -80,11 +80,13 @@ impl EditorState {
                 color_f(0.0, 0.47, 0.83, 1.0)
             };
             let btn_bg_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &btn_bg)
                 .unwrap();
             let white_brush = self
+                .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
@@ -96,6 +98,7 @@ impl EditorState {
             };
             target.FillRoundedRectangle(&rounded, &btn_bg_brush);
             let btn_format = self
+                .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
@@ -115,7 +118,7 @@ impl EditorState {
             );
 
             // 注册按钮命中区域供点击检测
-            self.settings_panel.button_regions.push((
+            self.ui.settings_panel.button_regions.push((
                 crate::settings::SettingsButton::CheckUpdate,
                 btn_rect.left,
                 btn_rect.top,

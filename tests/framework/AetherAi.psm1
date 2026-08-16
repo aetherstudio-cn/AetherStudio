@@ -21,19 +21,32 @@ function Invoke-AetherActionScript {
     <# 执行动作脚本（探索式测试 / AI 生成的交互序列）。
        每个动作返回结果对象，整体返回数组（含每步截图路径与耗时）。
        动作类型：
-         click   @{type='click';  x; y; [right]}       PostMessage 点击（窗口内物理坐标）
-         hover   @{type='hover';  x; y}                真实鼠标移动（触发 hover 高亮）
-         keys    @{type='keys';   text}                PostMessage 注入文本（不受焦点影响）
-         key     @{type='key';    key}                 PostMessage 注入按键（{ENTER}/{ESC}/{F2}...）
-         wait    @{type='wait';   ms}
-         shot    @{type='shot';   name}                截图（保存到用例截图目录）
-         expect  @{type='expect'; pattern; [timeout_ms]}  等待日志出现指定模式（仅观察新增日志）
+         click     @{type='click';  x; y; [right]}         PostMessage 点击（窗口内物理坐标）
+         dblclick  @{type='dblclick'; x; y; [right]}       PostMessage 双击
+         mclick    @{type='mclick'; x; y}                  PostMessage 中键点击
+         hover     @{type='hover';  x; y}                  真实鼠标移动（触发 hover 高亮）
+         move      @{type='move';   x; y}                  PostMessage 鼠标移动（不依赖前台）
+         wheel     @{type='wheel';  x; y; delta; [horizontal]; [shift]; [ctrl]}  滚轮
+         drag      @{type='drag';   from_x; from_y; to_x; to_y; [steps]; [right]}  拖拽
+         keys      @{type='keys';   text}                  PostMessage 注入文本（不受焦点影响）
+         key       @{type='key';    key}                   PostMessage 注入按键（{ENTER}/{ESC}/{F2}...）
+         hotkey    @{type='hotkey'; modifiers; key}        组合键（modifiers=@('Ctrl','Shift','Alt')）
+         wait      @{type='wait';   ms}
+         shot      @{type='shot';   name}                  截图（保存到用例截图目录）
+         expect    @{type='expect'; pattern; [timeout_ms]} 等待日志出现指定模式（仅观察新增日志）
+         resize    @{type='resize'; width; height}         调整窗口大小
+         movewin   @{type='movewin'; x; y}                 移动窗口位置
+         winstate  @{type='winstate'; state}               窗口状态（Normal/Minimized/Maximized/Restored）
+         closewin  @{type='closewin'}                      发送 WM_CLOSE 关闭窗口
        示例：
          $actions = @(
-             @{type='click'; x=92; y=181},
-             @{type='keys';  text='hello.rs'},
-             @{type='key';   key='{ENTER}'},
-             @{type='shot';  name='created'},
+             @{type='click';  x=92; y=181},
+             @{type='keys';   text='hello.rs'},
+             @{type='key';    key='{ENTER}'},
+             @{type='hotkey'; modifiers=@('Ctrl'); key='S'},
+             @{type='wheel';  x=500; y=300; delta=-120},
+             @{type='drag';   from_x=100; from_y=200; to_x=300; to_y=400},
+             @{type='shot';   name='created'},
              @{type='expect'; pattern='DIAG|error'}
          )
          $r = Invoke-AetherActionScript -Window $win -Actions $actions
@@ -58,12 +71,46 @@ function Invoke-AetherActionScript {
                     Send-AetherClickMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y @(if ($a.right) { @{Right=$true} } else { @{} })
                     $r.note = "click($($a.x),$($a.y))"
                 }
+                'dblclick' {
+                    Send-AetherDoubleClickMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y @(if ($a.right) { @{Right=$true} } else { @{} })
+                    $r.note = "dblclick($($a.x),$($a.y))"
+                }
+                'mclick' {
+                    Send-AetherMiddleClickMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y
+                    $r.note = "mclick($($a.x),$($a.y))"
+                }
                 'hover' {
                     $px = $Window.Rect.Left + $a.x
                     $py = $Window.Rect.Top + $a.y
                     [AetherWin32]::SetCursorPos($px, $py) | Out-Null
                     Start-Sleep -Milliseconds 300
                     $r.note = "hover($($a.x),$($a.y))"
+                }
+                'move' {
+                    Send-AetherMouseMoveMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y
+                    $r.note = "move($($a.x),$($a.y))"
+                }
+                'wheel' {
+                    $params = @{
+                        Hwnd = $Window.Hwnd
+                        X = $a.x; Y = $a.y; Delta = $a.delta
+                    }
+                    if ($a.horizontal) { $params.Horizontal = $true }
+                    if ($a.shift) { $params.Shift = $true }
+                    if ($a.ctrl) { $params.Ctrl = $true }
+                    Send-AetherMouseWheel @params
+                    $r.note = "wheel($($a.x),$($a.y),delta=$($a.delta))"
+                }
+                'drag' {
+                    $params = @{
+                        Hwnd = $Window.Hwnd
+                        FromX = $a.from_x; FromY = $a.from_y
+                        ToX = $a.to_x; ToY = $a.to_y
+                    }
+                    if ($a.steps) { $params.Steps = $a.steps }
+                    if ($a.right) { $params.Right = $true }
+                    Send-AetherDrag @params
+                    $r.note = "drag($($a.from_x),$($a.from_y))->($($a.to_x),$($a.to_y))"
                 }
                 'keys' {
                     Send-AetherTextMsg -Hwnd $Window.Hwnd -Text $a.text
@@ -73,9 +120,13 @@ function Invoke-AetherActionScript {
                     Send-AetherKeyMsg -Hwnd $Window.Hwnd -Key $a.key
                     $r.note = "key:$($a.key)"
                 }
+                'hotkey' {
+                    Send-AetherHotkey -Hwnd $Window.Hwnd -Modifiers $a.modifiers -Key $a.key
+                    $r.note = "hotkey:$($a.modifiers -join '+')+$($a.key)"
+                }
                 'wait' {
                     Start-Sleep -Milliseconds $a.ms
-                    $r.note = "wait ${ms}ms"
+                    $r.note = "wait $($a.ms)ms"
                 }
                 'shot' {
                     $r.screenshot = Save-AetherScreenshot -Window $Window -Name $a.name
@@ -86,6 +137,22 @@ function Invoke-AetherActionScript {
                     $ev = Wait-AetherLogEvent -Pattern $a.pattern -TimeoutMs $timeout
                     if (-not $ev.Found) { throw "等待日志事件超时: $($a.pattern)" }
                     $r.note = "expect:$($a.pattern)"
+                }
+                'resize' {
+                    Resize-AetherWindow -Window $Window -Width $a.width -Height $a.height | Out-Null
+                    $r.note = "resize($($a.width)x$($a.height))"
+                }
+                'movewin' {
+                    Move-AetherWindow -Window $Window -X $a.x -Y $a.y
+                    $r.note = "movewin($($a.x),$($a.y))"
+                }
+                'winstate' {
+                    Set-AetherWindowState -Window $Window -State $a.state
+                    $r.note = "winstate:$($a.state)"
+                }
+                'closewin' {
+                    Close-AetherWindow -Window $Window
+                    $r.note = "closewin"
                 }
                 default { throw "未知动作类型: $($a.type)" }
             }
@@ -264,5 +331,77 @@ function New-AetherDiagBundle {
     return $dir
 }
 
+# ---------------------------------------------------------------- AI 智能操作辅助
+
+function Find-AetherHitRegion {
+    <# 智能查找 hit region：按动作名称模糊匹配，返回最佳匹配区域。
+       用于 AI 根据语义（如"新建文件按钮"）定位可点击区域。
+       -ActionLike 动作名称模式（支持 * 通配符）。
+       -PreferCenter 优先返回靠近窗口中心的区域（当有多个匹配时）。 #>
+    param(
+        [Parameter(Mandatory)][string]$ActionLike,
+        [switch]$PreferCenter
+    )
+    $regions = @(Read-AetherHitRegions -ActionLike $ActionLike)
+    if ($regions.Count -eq 0) { return $null }
+    if ($regions.Count -eq 1) { return $regions[0] }
+    # 多个匹配时返回最新的（最后记录的）
+    return $regions[-1]
+}
+
+function Invoke-AetherSmartClick {
+    <# 智能点击：根据 hit region 动作名称自动定位并点击。
+       示例：Invoke-AetherSmartClick -Window $win -ActionLike "new_file" #>
+    param(
+        [Parameter(Mandatory)]$Window,
+        [Parameter(Mandatory)][string]$ActionLike,
+        [switch]$Right
+    )
+    $region = Find-AetherHitRegion -ActionLike $ActionLike
+    if (-not $region) { throw "未找到 hit region: $ActionLike" }
+    $cx = [int]($region.x + $region.width / 2)
+    $cy = [int]($region.y + $region.height / 2)
+    Send-AetherClickMsg -Hwnd $Window.Hwnd -X $cx -Y $cy @(if ($Right) { @{Right=$true} } else { @{} })
+    return $region
+}
+
+function Wait-AetherHitRegion {
+    <# 等待指定 hit region 出现（用于等待 UI 元素加载完成）。
+       -TimeoutMs 超时时间（默认 5000ms）。 #>
+    param(
+        [Parameter(Mandatory)][string]$ActionLike,
+        [int]$TimeoutMs = 5000,
+        [int]$PollMs = 200
+    )
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    while ((Get-Date) -lt $deadline) {
+        $region = Find-AetherHitRegion -ActionLike $ActionLike
+        if ($region) { return $region }
+        Start-Sleep -Milliseconds $PollMs
+    }
+    return $null
+}
+
+function Get-AetherEditorState {
+    <# 获取编辑器当前状态摘要（供 AI 分析）：
+       当前标签数、活动标签、光标位置、选区状态、文件路径等。
+       通过日志和 hit regions 推断。 #>
+    param([Parameter(Mandatory)]$Process)
+    $log = Get-AetherLog -Tail 50
+    $regions = @(Read-AetherHitRegions)
+    # 从 hit regions 提取标签信息
+    $tabs = @($regions | Where-Object { $_.action -like "tab:*" })
+    $statusBar = @($regions | Where-Object { $_.action -like "status:*" })
+    [pscustomobject]@{
+        Timestamp = (Get-Date).ToString("o")
+        TabCount = $tabs.Count
+        Tabs = @($tabs | ForEach-Object { $_.action -replace '^tab:', '' })
+        StatusBarItems = @($statusBar | ForEach-Object { $_.action })
+        RecentLog = $log.Lines | Select-Object -Last 10
+    }
+}
+
 Export-ModuleMember -Function Invoke-AetherActionScript, Test-AetherPixelRegion,
-    Get-AetherUiState, Assert-AetherLogEvent, New-AetherDiagBundle
+    Get-AetherUiState, Assert-AetherLogEvent, New-AetherDiagBundle,
+    Find-AetherHitRegion, Invoke-AetherSmartClick, Wait-AetherHitRegion,
+    Get-AetherEditorState
