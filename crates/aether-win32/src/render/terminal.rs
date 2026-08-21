@@ -1,5 +1,14 @@
 use super::*;
 
+/// 底部面板内层标签栏（终端/问题）高度
+pub(crate) const TERMINAL_INNER_TAB_H: f32 = 28.0;
+/// 终端内容区顶部相对面板顶部的偏移（内层标签栏 + 间距）
+pub(crate) const TERMINAL_CONTENT_TOP: f32 = TERMINAL_INNER_TAB_H + 4.0;
+/// 终端文本渲染左内边距
+pub(crate) const TERMINAL_TEXT_LEFT: f32 = 10.0;
+/// 终端行高（11pt 字体行高约 14.7px，16px 行距避免上下行字形贴靠、提升可读性）
+pub(crate) const TERMINAL_LINE_H: f32 = 16.0;
+
 impl EditorState {
     pub(super) fn render_bottom_panel(
         &mut self,
@@ -10,10 +19,11 @@ impl EditorState {
         height: f32,
     ) {
         unsafe {
+            // 终端底色：纯黑（经典终端观感）
             let bg_color = if self.win.theme.glass_enabled {
-                color_f(0.13, 0.13, 0.14, 0.95)
+                color_f(0.02, 0.02, 0.02, 0.96)
             } else {
-                color_f(0.13, 0.13, 0.14, 1.0)
+                color_f(0.02, 0.02, 0.02, 1.0)
             };
             let bg_brush = self
                 .win
@@ -53,14 +63,14 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &dim_color)
                 .unwrap();
-            let output_color = color_f(0.8, 0.8, 0.8, 1.0);
+            let output_color = color_f(0.72, 0.72, 0.72, 1.0);
             let output_brush = self
                 .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &output_color)
                 .unwrap();
-            let _prompt_color = color_f(0.0, 0.8, 0.0, 1.0);
+            // 提示符用 dim_brush（灰色），已输入内容用 active_brush（白色）
 
             let ui_format = self
                 .win
@@ -394,7 +404,7 @@ impl EditorState {
             // 注意：标签顺序必须与 BottomPanelTab 枚举的 discriminant 一致。
             // 当前只保留"终端"和"问题"两个标签；"输出"标签已移除，
             // 问题面板的引擎/数据采集待后续设计。
-            let tab_height = 28.0;
+            let tab_height = TERMINAL_INNER_TAB_H;
             let tabs: [BottomPanelTab; 2] = [BottomPanelTab::Terminal, BottomPanelTab::Problems];
             let mut tab_x = x + 10.0;
             let tab_w = 60.0;
@@ -443,8 +453,8 @@ impl EditorState {
 
             // 标签下方的内容：根据当前 tab 分支渲染
             // 0 = 终端（已有逻辑）；1 = 问题面板（暂未实现）
-            let content_y = y + tab_height + 4.0;
-            let content_h = height - tab_height - 8.0;
+            let content_y = y + TERMINAL_CONTENT_TOP;
+            let content_h = height - TERMINAL_CONTENT_TOP - 8.0;
 
             // P-问题: 问题面板占位。问题数据/采集引擎后续从 diagnostics 字段设计。
             // 当前仅渲染居中提示，让用户能验证"终端/问题"切换能力已生效。
@@ -485,6 +495,22 @@ impl EditorState {
                 );
                 return;
             }
+
+            // 终端几何：由面板宽高推导行列数，未启动/运行中两个分支共用。
+            // 未启动时也同步，确保首次 start() 时 ConPTY 使用与面板匹配的宽度
+            //（默认 80 列与面板宽度不匹配会导致换行错位），并为 ANSI 解析器提供正确换行宽度。
+            let cell_w = self
+                .win
+                .render_ctx
+                .text_format_cache
+                .measure_text_width("M", 11.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
+                .unwrap_or(7.0);
+            let line_h = TERMINAL_LINE_H;
+            let content_bottom = y + height - 6.0;
+            let visible_lines = ((content_bottom - content_y) / line_h).floor().max(1.0) as usize;
+            let term_cols = ((width - 20.0) / cell_w).max(20.0) as i16;
+            let term_rows = visible_lines.max(5) as i16;
+            self.terminal.terminal_panel.set_size(term_cols, term_rows);
 
             // 终端未启动时：若有历史输出（进程已退出）则显示输出+重启提示；
             // 否则显示居中引导文案
@@ -527,7 +553,7 @@ impl EditorState {
                     );
                 } else {
                     // 进程已退出：显示历史输出 + 底部重启提示
-                    let line_h = 14.0;
+                    let line_h = TERMINAL_LINE_H;
                     let content_bottom = y + height - 24.0; // 底部留空给重启提示
                     let visible_lines =
                         ((content_bottom - content_y) / line_h).floor().max(1.0) as usize;
@@ -549,7 +575,8 @@ impl EditorState {
                             &mono_format,
                             &text_rect,
                             &output_brush,
-                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            // CLIP：超长行裁剪而非视觉换行，避免换行部分叠到相邻行形成重影
+                            D2D1_DRAW_TEXT_OPTIONS_CLIP,
                             DWRITE_MEASURING_MODE_NATURAL,
                         );
                         line_y += line_h;
@@ -582,22 +609,15 @@ impl EditorState {
                     );
                 }
             } else {
-                // 计算可见行数并同步 ConPTY 尺寸
-                // 使用 DirectWrite 实测 11pt Consolas 等宽字符宽度，避免硬编码 7px 与渲染偏差
-                let cell_w = self
-                    .win
-                    .render_ctx
-                    .text_format_cache
-                    .measure_text_width("M", 11.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
-                    .unwrap_or(7.0);
-                let line_h = 14.0;
-                let content_bottom = y + height - 6.0;
-                let visible_lines =
-                    ((content_bottom - content_y) / line_h).floor().max(1.0) as usize;
-                let term_cols = ((width - 20.0) / cell_w).max(20.0) as i16;
-                let term_rows = visible_lines.max(5) as i16;
-                self.terminal.terminal_panel.set_size(term_cols, term_rows);
+                // 复用上方统一计算的几何（cell_w/line_h/visible_lines/term_cols/term_rows）
                 let lines = self.terminal.terminal_panel.visible_window(visible_lines);
+
+                // 光标与可见窗口信息（行循环与光标绘制共用）
+                let total_lines = self.terminal.terminal_panel.output_lines.len();
+                let scroll_off = self.terminal.terminal_panel.scroll_offset;
+                let end_line = total_lines.saturating_sub(scroll_off);
+                let start_line = end_line.saturating_sub(visible_lines);
+                let (cursor_row, cursor_col) = self.terminal.terminal_panel.cursor_position();
 
                 // 滚动提示：用户向上浏览历史时显示提示
                 if self.terminal.terminal_panel.scroll_offset > 0 {
@@ -622,78 +642,125 @@ impl EditorState {
                 }
 
                 let mut line_y = content_y;
-                for line in &lines {
+                for (li, line) in lines.iter().enumerate() {
                     if line_y + line_h > content_bottom {
                         break;
                     }
-                    let text: Vec<u16> = line.encode_utf16().chain(Some(0)).collect();
                     let text_rect = D2D_RECT_F {
-                        left: x + 10.0,
+                        left: x + TERMINAL_TEXT_LEFT,
                         top: line_y,
                         right: x + width - 10.0,
                         bottom: line_y + line_h,
                     };
-                    target.DrawText(
-                        &text,
-                        &mono_format,
-                        &text_rect,
-                        &output_brush,
-                        D2D1_DRAW_TEXT_OPTIONS_NONE,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                    );
+                    // 当前输入行（光标所在行）：提示符灰色 + 已输入内容白色；
+                    // 其余历史输出行统一浅灰
+                    let mut drawn_split = false;
+                    if start_line + li == cursor_row {
+                        let boundary = self
+                            .terminal
+                            .terminal_panel
+                            .fake_prompt_char_count()
+                            .or_else(|| prompt_boundary_chars(line));
+                        if let Some(b) = boundary.filter(|&b| b > 0 && b <= line.chars().count()) {
+                            let byte_idx = line
+                                .char_indices()
+                                .nth(b)
+                                .map(|(i, _)| i)
+                                .unwrap_or(line.len());
+                            let (prompt_part, rest_part) = line.split_at(byte_idx);
+                            let prompt_wide: Vec<u16> =
+                                prompt_part.encode_utf16().chain(Some(0)).collect();
+                            target.DrawText(
+                                &prompt_wide,
+                                &mono_format,
+                                &text_rect,
+                                &dim_brush,
+                                D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                                DWRITE_MEASURING_MODE_NATURAL,
+                            );
+                            if !rest_part.is_empty() {
+                                let prompt_utf16 = prompt_part.encode_utf16().count();
+                                let prompt_x = self
+                                    .win
+                                    .render_ctx
+                                    .text_format_cache
+                                    .text_position_x(
+                                        prompt_part,
+                                        prompt_utf16,
+                                        11.0,
+                                        DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                                    )
+                                    .unwrap_or(b as f32 * cell_w);
+                                let rest_wide: Vec<u16> =
+                                    rest_part.encode_utf16().chain(Some(0)).collect();
+                                let rest_rect = D2D_RECT_F {
+                                    left: x + TERMINAL_TEXT_LEFT + prompt_x,
+                                    ..text_rect
+                                };
+                                target.DrawText(
+                                    &rest_wide,
+                                    &mono_format,
+                                    &rest_rect,
+                                    &active_brush,
+                                    D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                                    DWRITE_MEASURING_MODE_NATURAL,
+                                );
+                            }
+                            drawn_split = true;
+                        }
+                    }
+                    if !drawn_split {
+                        let text: Vec<u16> = line.encode_utf16().chain(Some(0)).collect();
+                        target.DrawText(
+                            &text,
+                            &mono_format,
+                            &text_rect,
+                            &output_brush,
+                            D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+                    }
                     line_y += line_h;
                 }
 
-                // 渲染光标：在光标位置绘制一个半透明方块
-                // ConPTY 模式下光标位置由 ANSI 解析器跟踪
-                let total_lines = self.terminal.terminal_panel.output_lines.len();
-                let scroll_off = self.terminal.terminal_panel.scroll_offset;
-                let end_line = total_lines.saturating_sub(scroll_off);
-                let start_line = end_line.saturating_sub(visible_lines);
-                let (cursor_row, cursor_col) = self.terminal.terminal_panel.cursor_position();
+                // 渲染光标：在光标位置绘制方块
+                // ConPTY 模式下光标位置由 ANSI 解析器跟踪（col 为 cell 制）
                 if cursor_row >= start_line && cursor_row < end_line {
                     let display_row = cursor_row - start_line;
-                    // 光标 x 使用 DirectWrite HitTestTextPosition 获取光标行前缀尾端的精确像素坐标
-                    // cursor_col 是字符索引（非显示列宽），因此按字符个数取前缀
+                    // 光标 x 用 split_line_at_cell 把 cell 列换算成前缀，
+                    // 再用 DirectWrite HitTestTextPosition 取前缀尾端精确像素坐标
                     let cursor_x = if let Some(line) =
                         self.terminal.terminal_panel.output_lines.get(cursor_row)
                     {
-                        let char_count = line.chars().count();
-                        let take = cursor_col.min(char_count);
-                        let mut prefix_len = 0usize;
-                        let mut prefix_utf16_len = 0usize;
-                        for (idx, ch) in line.char_indices().take(take) {
-                            prefix_len = idx + ch.len_utf8();
-                            prefix_utf16_len += ch.encode_utf16(&mut [0; 2]).len();
-                        }
-                        let prefix = &line[..prefix_len];
+                        let (byte_len, utf16_len, extra_cells) =
+                            crate::terminal::TerminalPanel::split_line_at_cell(line, cursor_col);
+                        let prefix = &line[..byte_len];
                         let prefix_x = self
                             .win
                             .render_ctx
                             .text_format_cache
                             .text_position_x(
                                 prefix,
-                                prefix_utf16_len,
+                                utf16_len,
                                 11.0,
                                 DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                             )
                             .unwrap_or(cursor_col as f32 * cell_w);
-                        let extra = (cursor_col.saturating_sub(char_count)) as f32 * cell_w;
-                        x + 10.0 + prefix_x + extra
+                        x + TERMINAL_TEXT_LEFT + prefix_x + extra_cells as f32 * cell_w
                     } else {
-                        x + 10.0 + cursor_col as f32 * cell_w
+                        x + TERMINAL_TEXT_LEFT + cursor_col as f32 * cell_w
                     };
                     let cursor_y = content_y + display_row as f32 * line_h;
-                    let cursor_w = if let Some(line) =
-                        self.terminal.terminal_panel.output_lines.get(cursor_row)
-                    {
-                        line.chars()
-                            .nth(cursor_col)
-                            .map(|ch| (unicode_char_width(ch) as f32).max(1.0) * cell_w)
-                            .unwrap_or(cell_w)
-                    } else {
-                        cell_w
-                    };
+                    let cursor_w = self
+                        .terminal
+                        .terminal_panel
+                        .output_lines
+                        .get(cursor_row)
+                        .and_then(|line| {
+                            crate::terminal::TerminalPanel::char_at_cell(line, cursor_col)
+                        })
+                        .map(|ch| (unicode_char_width(ch) as f32).max(1.0) * cell_w)
+                        .unwrap_or(cell_w);
                     let cursor_h = line_h;
                     // 只在光标可见区域内绘制
                     if cursor_y + cursor_h <= content_bottom {
@@ -710,10 +777,35 @@ impl EditorState {
                             right: cursor_x + cursor_w,
                             bottom: cursor_y + cursor_h,
                         };
-                        target.FillRectangle(&cursor_rect, &cursor_brush);
+                        if self.terminal.terminal_panel.focused {
+                            // 聚焦：实心方块
+                            target.FillRectangle(&cursor_rect, &cursor_brush);
+                        } else {
+                            // 失焦：空心边框（保留位置指示，不吸引注意）
+                            target.DrawRectangle(&cursor_rect, &cursor_brush, 1.0, None);
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/// 启发式识别终端输入行的提示符边界（返回字符数，含结束标记）。
+///
+/// 仅用于当前输入行的双色渲染：优先匹配 PowerShell 风格 "> "，
+/// 其次 cmd 风格行尾 ">"，再次 bash/zsh 风格 "$ " / "% "。
+fn prompt_boundary_chars(line: &str) -> Option<usize> {
+    if let Some(idx) = line.rfind("> ") {
+        return Some(line[..idx].chars().count() + 2);
+    }
+    for marker in ["$ ", "% "] {
+        if let Some(idx) = line.rfind(marker) {
+            return Some(line[..idx].chars().count() + 2);
+        }
+    }
+    if let Some(idx) = line.rfind('>') {
+        return Some(line[..idx].chars().count() + 1);
+    }
+    None
 }

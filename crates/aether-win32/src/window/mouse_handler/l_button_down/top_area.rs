@@ -15,7 +15,7 @@ use super::super::super::{
     invalidate_window, LP_THRESHOLD_MS, LP_TIMER_ID, TERM_REFRESH_MS, TERM_TIMER_ID,
 };
 
-/// 对话框优先拦截点击（SSH / 克隆 / 新建项目）。
+/// 对话框优先拦截点击（SSH / 克隆 / 新建项目 / 设置弹窗）。
 pub(super) unsafe fn lbd_dialogs(
     hwnd: HWND,
     state: &Rc<RefCell<EditorState>>,
@@ -182,6 +182,8 @@ unsafe fn lbd_titlebar_controls(
     let right_panel_btn_x = tb.right_panel_btn_x;
     let bottom_panel_btn_x = tb.bottom_panel_btn_x;
     let left_sidebar_btn_x = tb.left_sidebar_btn_x;
+    let mode_btn_x = tb.mode_btn_x;
+    let mode_btn_width = tb.mode_btn_width;
 
     let mut st = state.borrow_mut();
     // 左侧箭头按钮（动态位置，从渲染帧缓存读取）
@@ -213,7 +215,7 @@ unsafe fn lbd_titlebar_controls(
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     } else if mouse_x >= settings_btn_x {
-        // 设置：打开设置标签页
+        // 设置：双模式统一以标签页打开（智能体模式弹窗方式已取消）
         st.open_settings_tab();
         invalidate_window(hwnd);
         return Some(LRESULT(0));
@@ -222,21 +224,50 @@ unsafe fn lbd_titlebar_controls(
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     } else if mouse_x >= bottom_panel_btn_x {
-        st.ui.layout.toggle_terminal_panel();
-        if st.ui.layout.bottom_panel_visible {
-            st.terminal.terminal_panel.focused = true;
-            if !st.terminal.terminal_panel.running {
-                let _ = st.terminal.terminal_panel.start();
-            }
-            let _ = SetTimer(hwnd, TERM_TIMER_ID, TERM_REFRESH_MS, None);
+        // 智能体模式下：终端注册为标签页；开发者模式下：切换底部面板
+        if st.editor_mode.is_agent() {
+            st.open_terminal_tab();
         } else {
-            st.terminal.terminal_panel.focused = false;
-            let _ = KillTimer(hwnd, TERM_TIMER_ID);
+            st.ui.layout.toggle_terminal_panel();
+            if st.ui.layout.bottom_panel_visible {
+                st.terminal.terminal_panel.focused = true;
+                if !st.terminal.terminal_panel.running {
+                    let _ = st.terminal.terminal_panel.start();
+                }
+                let _ = SetTimer(hwnd, TERM_TIMER_ID, TERM_REFRESH_MS, None);
+            } else {
+                st.terminal.terminal_panel.focused = false;
+                let _ = KillTimer(hwnd, TERM_TIMER_ID);
+            }
         }
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     } else if mouse_x >= left_sidebar_btn_x {
         st.ui.layout.toggle_sidebar();
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    } else if mouse_x >= mode_btn_x && mouse_x < mode_btn_x + mode_btn_width {
+        // 模式切换：开发者 ↔ 智能体
+        st.editor_mode = match st.editor_mode {
+            crate::layout::EditorMode::Developer => crate::layout::EditorMode::Agent,
+            crate::layout::EditorMode::Agent => crate::layout::EditorMode::Developer,
+        };
+        // 持久化到设置
+        st.ui.app_settings.ui.editor_mode = st.editor_mode.as_str().to_string();
+        st.ui.status_message = if st.editor_mode.is_agent() {
+            "已切换到智能体模式".to_string()
+        } else {
+            "已切换到开发者模式".to_string()
+        };
+        // 智能体模式：自动显示右侧面板（文件编辑区）；设置标签页双模式共用，切换时保留
+        if st.editor_mode.is_agent() {
+            if !st.ui.layout.right_panel_visible {
+                st.ui.layout.right_panel_visible = true;
+                if st.ui.layout.right_panel_width < 1.0 {
+                    st.ui.layout.right_panel_width = 400.0;
+                }
+            }
+        }
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     } else if mouse_x >= fwd_x && mouse_x < fwd_x + arrow_size {
@@ -276,6 +307,7 @@ unsafe fn lbd_titlebar_menu(
     // 自定义模式下：不展开子菜单，而是开始拖拽
     if st.ui.menu_bar.customize_mode {
         st.ui.menu_bar.begin_drag(idx);
+        st.win.dirty_tracker.mark_full_window();
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     }
@@ -284,6 +316,8 @@ unsafe fn lbd_titlebar_menu(
     if !was_active {
         st.ui.menu_bar.expand(idx);
     }
+    // 展开/收起切换需全窗重绘，清除旧子菜单残影
+    st.win.dirty_tracker.mark_full_window();
     invalidate_window(hwnd);
     Some(LRESULT(0))
 }
@@ -292,6 +326,7 @@ unsafe fn lbd_titlebar_menu(
 unsafe fn lbd_titlebar_drag(hwnd: HWND, state: &Rc<RefCell<EditorState>>) -> Option<LRESULT> {
     let mut st = state.borrow_mut();
     st.ui.menu_bar.close_all();
+    st.win.dirty_tracker.mark_full_window();
     drop(st);
     let _ = ReleaseCapture();
     let _ = SendMessageW(
@@ -643,6 +678,7 @@ pub(super) unsafe fn lbd_submenu(
                 if menu_item.enabled && menu_item.command_id != crate::menu_bar::CommandId::None {
                     let cmd = menu_item.command_id;
                     st.ui.menu_bar.close_all();
+                    st.win.dirty_tracker.mark_full_window();
                     drop(st);
                     state.borrow_mut().execute_command(cmd, hwnd);
                     invalidate_window(hwnd);
@@ -654,6 +690,7 @@ pub(super) unsafe fn lbd_submenu(
     // 菜单处于展开状态，但点击未命中任何有效菜单项：
     // 关闭菜单并消费事件，防止穿透到欢迎页/编辑器等背景元素
     st.ui.menu_bar.close_all();
+    st.win.dirty_tracker.mark_full_window();
     invalidate_window(hwnd);
     Some(LRESULT(0))
 }

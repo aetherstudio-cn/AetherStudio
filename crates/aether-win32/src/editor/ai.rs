@@ -387,7 +387,7 @@ impl EditorState {
     }
 
     /// 刷新 AI 历史索引。
-    /// 从 SQLite（温数据层）加载元数据到内存 history；可按工作区过滤。
+    /// 从 AetherDB（温数据层）加载元数据到内存 history；可按工作区过滤。
     pub fn refresh_ai_history(&mut self) {
         if let Some(store) = self.ai.ai_panel.warm_data_store.as_ref() {
             let ws_only = self.ai.ai_panel.history_workspace_only;

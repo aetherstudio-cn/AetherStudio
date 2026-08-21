@@ -1,25 +1,26 @@
-# Tree-sitter 语法解析集成
+# 自定义词法分析与GPU加速高亮系统
 
 <cite>
 **本文引用的文件**
-- [crates/aether-tree-sitter/src/lib.rs](file://crates/aether-tree-sitter/src/lib.rs)
-- [crates/aether-tree-sitter/src/language.rs](file://crates/aether-tree-sitter/src/language.rs)
-- [crates/aether-tree-sitter/src/highlighter.rs](file://crates/aether-tree-sitter/src/highlighter.rs)
-- [crates/aether-tree-sitter/src/theme_mapping.rs](file://crates/aether-tree-sitter/src/theme_mapping.rs)
-- [crates/aether-tree-sitter/src/background.rs](file://crates/aether-tree-sitter/src/background.rs)
-- [crates/aether-tree-sitter/Cargo.toml](file://crates/aether-tree-sitter/Cargo.toml)
 - [crates/aether-core/src/lexer/mod.rs](file://crates/aether-core/src/lexer/mod.rs)
+- [crates/aether-core/src/incremental_lexer.rs](file://crates/aether-core/src/incremental_lexer.rs)
+- [crates/aether-render/src/gpu/lexer.rs](file://crates/aether-render/src/gpu/lexer.rs)
+- [crates/aether-render/src/gpu/language_tables.rs](file://crates/aether-render/src/gpu/language_tables.rs)
+- [crates/aether-render/src/gpu/render.rs](file://crates/aether-render/src/gpu/render.rs)
 - [crates/aether-render/src/theme.rs](file://crates/aether-render/src/theme.rs)
 - [crates/aether-render/src/vscode_theme.rs](file://crates/aether-render/src/vscode_theme.rs)
+- [crates/aether-core/src/lexer/c_lexer.rs](file://crates/aether-core/src/lexer/c_lexer.rs)
+- [crates/aether-core/src/lexer/rust_lexer.rs](file://crates/aether-core/src/lexer/rust_lexer.rs)
 </cite>
 
 ## 更新摘要
 **所做更改**
-- 新增 Go 和 Java 语言支持，通过 tree-sitter-go 和 tree-sitter-java 依赖（版本 0.20）
-- 在 TreeSitterHighlighter 结构体中为两种新语言添加配置字段
-- 扩展语言解析逻辑以支持新的语言 ID
-- 改进错误处理以实现优雅降级场景
-- 更新测试用例以验证新语言的高亮功能
+- 完全移除 Tree-sitter 依赖，转向自定义词法分析器架构
+- 实现 GPU 加速的高亮系统，使用 D3D11 Compute Shader 进行并行处理
+- 构建多语言支持的语言特定 DFA 表和关键字哈希表
+- 实现增量词法分析器，优化编辑性能
+- 建立主题映射系统，支持 VS Code 主题格式
+- 提供性能基准测试和内存管理优化
 
 ## 目录
 1. [简介](#简介)
@@ -27,110 +28,101 @@
 3. [核心组件](#核心组件)
 4. [架构总览](#架构总览)
 5. [详细组件分析](#详细组件分析)
-6. [依赖关系分析](#依赖关系分析)
-7. [性能与内存管理](#性能与内存管理)
-8. [故障排查指南](#故障排查指南)
-9. [结论](#结论)
-10. [附录：扩展指南](#附录扩展指南)
+6. [GPU 加速实现](#gpu-加速实现)
+7. [多语言支持](#多语言支持)
+8. [性能与内存管理](#性能与内存管理)
+9. [故障排查指南](#故障排查指南)
+10. [结论](#结论)
+11. [附录：扩展指南](#附录扩展指南)
 
 ## 简介
-本文件面向 Tree-sitter 集成模块，系统性阐述以下方面：
-- 语法解析器初始化流程（语言定义加载、解析器实例化、缓存策略）
-- 高亮系统实现（语法树遍历、Token 提取、样式应用）
-- 语言检测机制（文件扩展名匹配、内容分析与优先级排序）
-- 主题映射系统（语法节点到视觉样式的转换、颜色方案适配）
-- 增量解析优化、内存管理与性能调优
-- 如何配置新语言支持、自定义高亮规则与扩展语法定义
+本文件面向牧羊人编辑器的自定义词法分析与GPU加速高亮系统，系统性阐述以下方面：
+- 自定义词法分析器架构（替代 Tree-sitter）
+- GPU 加速的高亮系统实现（D3D11 Compute Shader）
+- 多语言支持机制（语言特定的 DFA 表和关键字表）
+- 增量词法分析优化（编辑时只重新分析受影响行）
+- 主题映射系统（VS Code 主题兼容）
+- 性能调优与内存管理策略
 
 ## 项目结构
-Tree-sitter 集成位于 aether-tree-sitter crate，围绕四个核心源文件组织：
-- language.rs：语言 ID 到 tree-sitter Language 的映射
-- highlighter.rs：基于 tree-sitter-highlight 的高亮与增量解析
-- theme_mapping.rs：capture name 到 TextMate scope 的映射
-- background.rs：后台线程异步高亮，避免阻塞 UI
+系统由两个主要部分组成：
+- **aether-core**: 包含自定义词法分析器、增量分析和语言检测
+- **aether-render**: 包含 GPU 加速渲染、主题系统和可视化
 
 ```mermaid
 graph TB
-subgraph "aether-tree-sitter"
-L["language.rs<br/>语言ID→Language"]
-H["highlighter.rs<br/>高亮/增量解析/缓存"]
-T["theme_mapping.rs<br/>capture→TextMate scope"]
-B["background.rs<br/>后台高亮线程"]
-CARGO["Cargo.toml<br/>依赖版本锁定"]
-end
 subgraph "aether-core"
-LM["lexer/mod.rs<br/>语言检测/扩展名→Language"]
+L["lexer/mod.rs<br/>语言检测/Token定义"]
+IL["incremental_lexer.rs<br/>增量分析缓存"]
+CL["c_lexer.rs<br/>C/C++词法分析"]
+RL["rust_lexer.rs<br/>Rust词法分析"]
 end
 subgraph "aether-render"
-TH["theme.rs<br/>TokenKind→D2D颜色"]
-VT["vscode_theme.rs<br/>VS Code主题→Theme"]
+GL["gpu/lexer.rs<br/>GPU词法分析器"]
+LT["gpu/language_tables.rs<br/>语言特定表"]
+TH["theme.rs<br/>主题系统"]
+VT["vscode_theme.rs<br/>VS Code主题"]
 end
-L --> H
-T --> H
-B --> H
-LM --> H
-H --> TH
+L --> IL
+L --> CL
+L --> RL
+IL --> GL
+GL --> LT
+GL --> TH
 TH --> VT
 ```
 
 **图表来源**
-- [crates/aether-tree-sitter/src/language.rs:1-22](file://crates/aether-tree-sitter/src/language.rs#L1-L22)
-- [crates/aether-tree-sitter/src/highlighter.rs:1-120](file://crates/aether-tree-sitter/src/highlighter.rs#L1-L120)
-- [crates/aether-tree-sitter/src/theme_mapping.rs:1-120](file://crates/aether-tree-sitter/src/theme_mapping.rs#L1-L120)
-- [crates/aether-tree-sitter/src/background.rs:1-70](file://crates/aether-tree-sitter/src/background.rs#L1-L70)
-- [crates/aether-core/src/lexer/mod.rs:98-142](file://crates/aether-core/src/lexer/mod.rs#L98-L142)
-- [crates/aether-render/src/theme.rs:244-276](file://crates/aether-render/src/theme.rs#L244-L276)
-- [crates/aether-render/src/vscode_theme.rs:103-176](file://crates/aether-render/src/vscode_theme.rs#L103-L176)
-
-**章节来源**
-- [crates/aether-tree-sitter/src/lib.rs:1-10](file://crates/aether-tree-sitter/src/lib.rs#L1-L10)
-- [crates/aether-tree-sitter/Cargo.toml:1-25](file://crates/aether-tree-sitter/Cargo.toml#L1-L25)
+- [crates/aether-core/src/lexer/mod.rs:94-196](file://crates/aether-core/src/lexer/mod.rs#L94-L196)
+- [crates/aether-core/src/incremental_lexer.rs:8-16](file://crates/aether-core/src/incremental_lexer.rs#L8-L16)
+- [crates/aether-render/src/gpu/lexer.rs:48-77](file://crates/aether-render/src/gpu/lexer.rs#L48-L77)
+- [crates/aether-render/src/gpu/language_tables.rs:1-35](file://crates/aether-render/src/gpu/language_tables.rs#L1-L35)
 
 ## 核心组件
-- 语言映射：提供 get_language(language_id) → Option<Language>，将常见语言 ID 映射到对应 tree-sitter Language。
-- 高亮器：TreeSitterHighlighter，封装 Highlighter、各语言 HighlightConfiguration、文档级 Parser 与语法树缓存，并提供单行/全文高亮与增量解析接口。
-- 主题映射：capture_to_textmate_scope 将 capture 名称映射为 TextMate scope，便于与 VS Code 主题生态对接。
-- 后台高亮：BackgroundHighlighter 通过 mpsc channel 在独立线程执行高亮，主线程非阻塞轮询结果。
+- **语言检测**: `Language` 枚举提供从文件扩展名到语言类型的映射
+- **词法分析器**: 每个语言都有专门的 Lexer 实现，基于 DFA 算法
+- **增量分析器**: `IncrementalLexer` 缓存每行 token，编辑时只重新分析受影响区域
+- **GPU 词法分析器**: `GpuLexer` 使用 D3D11 Compute Shader 并行处理大文件
+- **主题系统**: 将 TokenKind 映射为 D2D1_COLOR_F 颜色值
+- **语言表生成器**: 为不同语言生成 DFA 状态转换表和关键字哈希表
 
 **章节来源**
-- [crates/aether-tree-sitter/src/language.rs:1-22](file://crates/aether-tree-sitter/src/language.rs#L1-L22)
-- [crates/aether-tree-sitter/src/highlighter.rs:1-120](file://crates/aether-tree-sitter/src/highlighter.rs#L1-L120)
-- [crates/aether-tree-sitter/src/theme_mapping.rs:1-120](file://crates/aether-tree-sitter/src/theme_mapping.rs#L1-L120)
-- [crates/aether-tree-sitter/src/background.rs:1-70](file://crates/aether-tree-sitter/src/background.rs#L1-L70)
+- [crates/aether-core/src/lexer/mod.rs:94-196](file://crates/aether-core/src/lexer/mod.rs#L94-L196)
+- [crates/aether-core/src/incremental_lexer.rs:8-16](file://crates/aether-core/src/incremental_lexer.rs#L8-L16)
+- [crates/aether-render/src/gpu/lexer.rs:48-77](file://crates/aether-render/src/gpu/lexer.rs#L48-L77)
+- [crates/aether-render/src/theme.rs:7-31](file://crates/aether-render/src/theme.rs#L7-L31)
 
 ## 架构总览
-整体数据流从"语言检测"开始，经"高亮器"生成 Token 列表，再经"主题系统"转换为渲染颜色。
+整体数据流从"语言检测"开始，经"词法分析器"生成 Token 列表，再通过"GPU 加速"或"CPU 回退"进行处理，最后经"主题系统"转换为渲染颜色。
 
 ```mermaid
 sequenceDiagram
 participant UI as "UI/编辑器"
-participant Det as "语言检测(lexer/mod)"
-participant BG as "后台高亮器"
-participant HS as "TreeSitterHighlighter"
-participant TM as "主题映射(theme_mapping)"
-participant TH as "主题(theme.rs)"
+participant Det as "语言检测"
+participant IL as "增量分析器"
+participant GL as "GPU词法分析器"
+participant TH as "主题系统"
 UI->>Det : 根据路径/扩展名推断语言
-UI->>BG : request(doc_id, language, full_text)
-BG->>HS : highlight_document(...)
-HS-->>BG : Vec<Vec<LexemeSpan>>
-BG-->>UI : poll_result() -> Some(result)
+UI->>IL : analyze_all/update_for_edit
+IL-->>UI : Vec<Vec<LexemeSpan>>
+UI->>GL : 大文件时使用GPU加速
+GL-->>UI : 高性能token处理
 UI->>TH : color_for_token(kind)
 TH-->>UI : D2D1_COLOR_F
 ```
 
 **图表来源**
-- [crates/aether-core/src/lexer/mod.rs:98-142](file://crates/aether-core/src/lexer/mod.rs#L98-L142)
-- [crates/aether-tree-sitter/src/background.rs:79-113](file://crates/aether-tree-sitter/src/background.rs#L79-L113)
-- [crates/aether-tree-sitter/src/highlighter.rs:431-495](file://crates/aether-tree-sitter/src/highlighter.rs#L431-L495)
-- [crates/aether-tree-sitter/src/theme_mapping.rs:6-120](file://crates/aether-tree-sitter/src/theme_mapping.rs#L6-L120)
-- [crates/aether-render/src/theme.rs:244-276](file://crates/aether-render/src/theme.rs#L244-L276)
+- [crates/aether-core/src/lexer/mod.rs:113-196](file://crates/aether-core/src/lexer/mod.rs#L113-L196)
+- [crates/aether-core/src/incremental_lexer.rs:28-101](file://crates/aether-core/src/incremental_lexer.rs#L28-L101)
+- [crates/aether-render/src/gpu/lexer.rs:86-163](file://crates/aether-render/src/gpu/lexer.rs#L86-L163)
+- [crates/aether-render/src/theme.rs:261-278](file://crates/aether-render/src/theme.rs#L261-L278)
 
 ## 详细组件分析
 
 ### 语言检测机制
-- 扩展名匹配：Language::from_extension 将扩展名映射到内部 Language 枚举；未知扩展统一回退为 PlainText。
-- 路径检测：Language::from_path 从路径提取扩展名并调用 from_extension。
-- 优先级策略：按扩展名精确匹配，无匹配则回退 PlainText；HTML/CSS 等使用专用 lexer 或复用通用逻辑。
+- **扩展名匹配**: `Language::from_extension` 将扩展名映射到内部 Language 枚举
+- **路径检测**: `Language::from_path` 从路径提取扩展名并调用 from_extension
+- **优先级策略**: 按扩展名精确匹配，无匹配则回退 PlainText；HTML/CSS 等使用专用 lexer
 
 ```mermaid
 flowchart TD
@@ -143,244 +135,237 @@ Fallback --> End
 ```
 
 **图表来源**
-- [crates/aether-core/src/lexer/mod.rs:98-142](file://crates/aether-core/src/lexer/mod.rs#L98-L142)
+- [crates/aether-core/src/lexer/mod.rs:113-157](file://crates/aether-core/src/lexer/mod.rs#L113-L157)
 
 **章节来源**
-- [crates/aether-core/src/lexer/mod.rs:98-142](file://crates/aether-core/src/lexer/mod.rs#L98-L142)
+- [crates/aether-core/src/lexer/mod.rs:113-157](file://crates/aether-core/src/lexer/mod.rs#L113-L157)
 
-### 语法解析器初始化与语言定义加载
-- 语言定义加载：language.rs 中 get_language 将语言 ID 映射到 tree-sitter Language。
-- 高亮配置初始化：TreeSitterHighlighter::init_configs 为每种语言创建 HighlightConfiguration，并使用固定 capture 名称顺序进行 configure，确保 capture_name_to_token_kind 映射稳定。
-- 解析器实例化：parse_document 中按需创建 Parser 并设置 Language，同时维护 parser_cache 与 tree_cache。
-
-**已更新** 新增对 Go 和 Java 语言的完整支持，包括语言定义加载和高亮配置初始化。
+### 自定义词法分析器架构
+- **统一接口**: `Lexer` trait 定义了 `lex_full` 方法，所有语言实现统一接口
+- **DFA 算法**: 基于确定性有限自动机的高效词法分析
+- **语言特定实现**: C/C++、Rust、Python、JavaScript 等都有专门优化
+- **Token 分类**: 统一的 `TokenKind` 枚举，支持关键字、字符串、注释、运算符等
 
 ```mermaid
 classDiagram
-class TreeSitterHighlighter {
-+new() Self
--init_configs() void
-+parse_document(doc_id, language, text) Option<&Tree>
-+get_tree(doc_id) Option<&Tree>
-+remove_document(doc_id) void
-+supports_language(language) bool
-+highlight_line(text, language) Vec<LexemeSpan>
-+highlight_document(doc_id, language, full_text) Vec<Vec<LexemeSpan>>
--tree_cache HashMap<String,(String,Tree)>
--parser_cache HashMap<String,Parser>
-+go_config Option<HighlightConfiguration>
-+java_config Option<HighlightConfiguration>
+class Lexer {
+<<interface>>
++lex_full(text : &str) Vec~LexemeSpan~
 }
-class BackgroundHighlighter {
+class CLexer {
 +new() Self
-+request(doc_id, language, full_text) void
-+poll_result() Option<HighlightResult>
-+has_pending() bool
++lex_next(bytes : &[u8], pos : usize) (LexemeSpan, usize)
 }
-BackgroundHighlighter --> TreeSitterHighlighter : "后台线程持有"
+class RustLexer {
++new() Self
++lex_next(bytes : &[u8], pos : usize) (LexemeSpan, usize)
+}
+class LexemeSpan {
++start : u32
++len : u32
++kind : TokenKind
++flags : u8
+}
+Lexer <|.. CLexer
+Lexer <|.. RustLexer
+LexemeSpan --> TokenKind
 ```
 
 **图表来源**
-- [crates/aether-tree-sitter/src/highlighter.rs:1-120](file://crates/aether-tree-sitter/src/highlighter.rs#L1-L120)
-- [crates/aether-tree-sitter/src/background.rs:31-77](file://crates/aether-tree-sitter/src/background.rs#L31-L77)
+- [crates/aether-core/src/lexer/mod.rs:1-68](file://crates/aether-core/src/lexer/mod.rs#L1-L68)
+- [crates/aether-core/src/lexer/c_lexer.rs:4-113](file://crates/aether-core/src/lexer/c_lexer.rs#L4-L113)
+- [crates/aether-core/src/lexer/rust_lexer.rs:4-167](file://crates/aether-core/src/lexer/rust_lexer.rs#L4-L167)
 
 **章节来源**
-- [crates/aether-tree-sitter/src/language.rs:1-22](file://crates/aether-tree-sitter/src/language.rs#L1-L22)
-- [crates/aether-tree-sitter/src/highlighter.rs:47-178](file://crates/aether-tree-sitter/src/highlighter.rs#L47-L178)
-- [crates/aether-tree-sitter/src/highlighter.rs:285-327](file://crates/aether-tree-sitter/src/highlighter.rs#L285-L327)
+- [crates/aether-core/src/lexer/mod.rs:1-68](file://crates/aether-core/src/lexer/mod.rs#L1-L68)
+- [crates/aether-core/src/lexer/c_lexer.rs:4-113](file://crates/aether-core/src/lexer/c_lexer.rs#L4-L113)
+- [crates/aether-core/src/lexer/rust_lexer.rs:4-167](file://crates/aether-core/src/lexer/rust_lexer.rs#L4-L167)
 
-### 高亮系统实现
-- 单行高亮：highlight_line 基于 HighlightEvent 流，按 Source/HightlightStart/HighlightEnd 事件合并区间，生成 LexemeSpan 列表。
-- 全文高亮：highlight_document 先更新语法树缓存，再对全文进行高亮，并将跨行片段分配到对应行，返回每行的 token 列表。
-- Token 提取：capture_name_to_token_kind 依据 capture 名称而非索引映射到 TokenKind，兼容不同语言的 highlight query。
-- 样式应用：上层通过 Theme::color_for_token 将 TokenKind 映射为 D2D1_COLOR_F 用于渲染。
-
-**已更新** 新增对 Go 和 Java 语言的高亮支持，包括相应的配置处理和测试用例。
+### 增量词法分析器
+- **行级缓存**: 使用 `Vec<Vec<LexemeSpan>>` 存储每行的 token 结果
+- **智能失效**: 编辑后只重新分析受影响的行，避免全量重分析
+- **版本控制**: 通过版本号跟踪缓存有效性
+- **管理器**: `IncrementalLexerManager` 管理多个文件的 lexer 实例
 
 ```mermaid
 sequenceDiagram
-participant Caller as "调用方"
-participant HS as "TreeSitterHighlighter"
-participant HL as "tree-sitter-highlight"
-participant TM as "capture→TokenKind"
-participant TH as "Theme"
-Caller->>HS : highlight_document(doc_id, language, full_text)
-HS->>HL : highlight(config, bytes, cancel_flag, callback)
-HL-->>HS : HighlightEvent 流
-loop 遍历事件
-HS->>TM : capture_name_to_token_kind(name)
-TM-->>HS : TokenKind
-HS->>HS : assign_segment_to_lines(...)
-end
-HS-->>Caller : Vec<Vec<LexemeSpan>>
-Caller->>TH : color_for_token(kind)
-TH-->>Caller : D2D1_COLOR_F
+participant Edit as "编辑操作"
+participant IL as "IncrementalLexer"
+participant Cache as "行级缓存"
+Edit->>IL : update_for_edit(edit_result, lines)
+IL->>Cache : 计算受影响行范围
+IL->>Cache : 重新分析 dirty_start..dirty_end
+Cache-->>IL : 更新的token结果
+IL-->>Edit : 增量更新完成
 ```
 
 **图表来源**
-- [crates/aether-tree-sitter/src/highlighter.rs:431-495](file://crates/aether-tree-sitter/src/highlighter.rs#L431-L495)
-- [crates/aether-tree-sitter/src/highlighter.rs:559-583](file://crates/aether-tree-sitter/src/highlighter.rs#L559-L583)
-- [crates/aether-render/src/theme.rs:244-276](file://crates/aether-render/src/theme.rs#L244-L276)
+- [crates/aether-core/src/incremental_lexer.rs:36-101](file://crates/aether-core/src/incremental_lexer.rs#L36-L101)
 
 **章节来源**
-- [crates/aether-tree-sitter/src/highlighter.rs:180-283](file://crates/aether-tree-sitter/src/highlighter.rs#L180-L283)
-- [crates/aether-tree-sitter/src/highlighter.rs:431-495](file://crates/aether-tree-sitter/src/highlighter.rs#L431-L495)
-- [crates/aether-tree-sitter/src/highlighter.rs:498-533](file://crates/aether-tree-sitter/src/highlighter.rs#L498-L533)
-- [crates/aether-tree-sitter/src/highlighter.rs:559-583](file://crates/aether-tree-sitter/src/highlighter.rs#L559-L583)
-- [crates/aether-render/src/theme.rs:244-276](file://crates/aether-render/src/theme.rs#L244-L276)
+- [crates/aether-core/src/incremental_lexer.rs:36-101](file://crates/aether-core/src/incremental_lexer.rs#L36-L101)
 
-### 主题映射系统
-- capture_to_textmate_scope：将 Tree-sitter capture 名称映射为 TextMate scope，覆盖变量、常量、类型、函数、关键字、运算符、注释、字符串、数字、标签、标点等广泛类别。
-- build_theme_mapping：构建完整映射表，供上层工具链或调试使用。
-- VS Code 主题适配：vscode_theme.rs 解析 tokenColors 中的 scope 到 SyntaxColors，从而驱动 Theme 的颜色字段。
+## GPU 加速实现
+
+### GPU 词法分析器架构
+- **Compute Shader**: 使用 D3D11 Compute Shader 进行并行词法分析
+- **DFA 表**: 预编译的 DFA 状态转换表存储在 GPU 内存中
+- **关键字哈希表**: 完美哈希表用于快速关键字识别
+- **工作缓冲区**: 字符分类、token 扫描、关键字查找的中间结果
 
 ```mermaid
 flowchart LR
-A["Tree-sitter capture"] --> B["capture_to_textmate_scope"]
-B --> C["TextMate scope"]
-C --> D["VS Code tokenColors 规则"]
-D --> E["SyntaxColors"]
-E --> F["Theme.color_for_token"]
+A["输入文本"] --> B["字符分类Shader"]
+B --> C["Token扫描Shader"]
+C --> D["关键字查找Shader"]
+D --> E["GPU Token结果"]
+E --> F["CPU回读"]
+F --> G["LexemeSpan转换"]
 ```
 
 **图表来源**
-- [crates/aether-tree-sitter/src/theme_mapping.rs:6-120](file://crates/aether-tree-sitter/src/theme_mapping.rs#L6-L120)
-- [crates/aether-render/src/vscode_theme.rs:179-234](file://crates/aether-render/src/vscode_theme.rs#L179-L234)
-- [crates/aether-render/src/theme.rs:244-276](file://crates/aether-render/src/theme.rs#L244-L276)
+- [crates/aether-render/src/gpu/lexer.rs:86-163](file://crates/aether-render/src/gpu/lexer.rs#L86-L163)
+- [crates/aether-render/src/gpu/lexer.rs:349-389](file://crates/aether-render/src/gpu/lexer.rs#L349-L389)
 
 **章节来源**
-- [crates/aether-tree-sitter/src/theme_mapping.rs:1-210](file://crates/aether-tree-sitter/src/theme_mapping.rs#L1-L210)
-- [crates/aether-render/src/vscode_theme.rs:103-176](file://crates/aether-render/src/vscode_theme.rs#L103-L176)
-- [crates/aether-render/src/vscode_theme.rs:179-234](file://crates/aether-render/src/vscode_theme.rs#L179-L234)
+- [crates/aether-render/src/gpu/lexer.rs:86-163](file://crates/aether-render/src/gpu/lexer.rs#L86-L163)
+- [crates/aether-render/src/gpu/lexer.rs:349-389](file://crates/aether-render/src/gpu/lexer.rs#L349-L389)
 
-### 后台高亮与 UI 解耦
-- BackgroundHighlighter 在独立线程内持有专属 TreeSitterHighlighter，主线程通过 request 发送高亮请求，poll_result 非阻塞获取最新结果。
-- pending 标志避免重复排队堆积，确保只处理最近一次请求。
+### 语言特定表生成
+- **DFA 表生成**: 为每种语言生成优化的状态转换表
+- **关键字表构建**: 使用完美哈希算法提高查找效率
+- **多语言支持**: Rust、C/C++、JavaScript、Python、Go、Java 等
 
 ```mermaid
-sequenceDiagram
-participant Main as "主线程"
-participant BG as "BackgroundHighlighter"
-participant Worker as "后台线程"
-participant HS as "TreeSitterHighlighter"
-Main->>BG : request(doc_id, language, full_text)
-BG->>Worker : 发送请求
-Worker->>HS : highlight_document(...)
-HS-->>Worker : 结果
-Worker-->>Main : 发送 HighlightResult
-Main->>BG : poll_result()
-BG-->>Main : Some(HighlightResult)
+classDiagram
+class LanguageLexerTables {
++for_language(language : &str) (DfaTable, KeywordTable)
++rust_tables() (DfaTable, KeywordTable)
++c_family_tables() (DfaTable, KeywordTable)
++js_tables() (DfaTable, KeywordTable)
+}
+class DfaTable {
++data : Vec~u8~
++num_states : u32
+}
+class KeywordTable {
++data : Vec~u32~
++keywords : Vec~String~
+}
+LanguageLexerTables --> DfaTable
+LanguageLexerTables --> KeywordTable
 ```
 
 **图表来源**
-- [crates/aether-tree-sitter/src/background.rs:46-113](file://crates/aether-tree-sitter/src/background.rs#L46-L113)
-- [crates/aether-tree-sitter/src/highlighter.rs:431-495](file://crates/aether-tree-sitter/src/highlighter.rs#L431-L495)
+- [crates/aether-render/src/gpu/language_tables.rs:18-35](file://crates/aether-render/src/gpu/language_tables.rs#L18-L35)
+- [crates/aether-render/src/gpu/language_tables.rs:6-16](file://crates/aether-render/src/gpu/language_tables.rs#L6-L16)
 
 **章节来源**
-- [crates/aether-tree-sitter/src/background.rs:1-126](file://crates/aether-tree-sitter/src/background.rs#L1-L126)
+- [crates/aether-render/src/gpu/language_tables.rs:18-35](file://crates/aether-render/src/gpu/language_tables.rs#L18-L35)
 
-## 依赖关系分析
-- 版本锁定：Cargo.toml 将所有 tree-sitter 相关库锁定至 0.20 系列，避免 HTML grammar 的版本冲突问题。
-- 模块耦合：
-  - highlighter 依赖 aether-core 的 LexemeSpan/TokenKind
-  - theme_mapping 提供 capture→scope 映射，供上层主题系统使用
-  - background 仅依赖 highlighter，保持 UI 与解析解耦
+## 多语言支持
 
-**已更新** 新增 tree-sitter-go 和 tree-sitter-java 依赖，版本均为 0.20，与现有依赖保持一致。
+### 支持的编程语言
+- **C/C++**: 完整的语法支持，包括预处理指令、模板、异常处理
+- **Rust**: 生命周期、所有权、宏、泛型等特性
+- **JavaScript/TypeScript**: ES6+ 语法、类型注解、模块系统
+- **Python**: 动态类型、装饰器、异步语法
+- **Go**: 并发原语、接口、包管理
+- **Java**: 面向对象特性、泛型、注解
+- **JSON/TOML**: 配置文件格式
+- **Markdown/HTML/CSS**: 标记语言和样式
 
-```mermaid
-graph LR
-TS["tree-sitter(0.20)"] --> H["highlighter.rs"]
-TSH["tree-sitter-highlight(0.20)"] --> H
-LANG["language.rs"] --> H
-THEME_MAP["theme_mapping.rs"] --> H
-CORE["aether-core(LexemeSpan/TokenKind)"] --> H
-BG["background.rs"] --> H
-GO["tree-sitter-go(0.20)"] --> H
-JAVA["tree-sitter-java(0.20)"] --> H
-```
-
-**图表来源**
-- [crates/aether-tree-sitter/Cargo.toml:6-25](file://crates/aether-tree-sitter/Cargo.toml#L6-L25)
-- [crates/aether-tree-sitter/src/highlighter.rs:1-10](file://crates/aether-tree-sitter/src/highlighter.rs#L1-L10)
-- [crates/aether-tree-sitter/src/theme_mapping.rs:1-10](file://crates/aether-tree-sitter/src/theme_mapping.rs#L1-L10)
-- [crates/aether-tree-sitter/src/background.rs:1-20](file://crates/aether-tree-sitter/src/background.rs#L1-L20)
+### 语言特定优化
+- **关键字识别**: 每种语言都有优化的关键字表
+- **语法模式**: 针对语言特性的特殊处理逻辑
+- **性能调优**: 针对不同语言的 DFA 状态机优化
 
 **章节来源**
-- [crates/aether-tree-sitter/Cargo.toml:1-25](file://crates/aether-tree-sitter/Cargo.toml#L1-L25)
+- [crates/aether-core/src/lexer/mod.rs:94-111](file://crates/aether-core/src/lexer/mod.rs#L94-L111)
+- [crates/aether-render/src/gpu/language_tables.rs:20-35](file://crates/aether-render/src/gpu/language_tables.rs#L20-L35)
 
 ## 性能与内存管理
-- 增量解析：parse_document 使用旧语法树作为输入，减少重解析开销；tree_cache 保存每文档的 (language, Tree)，parser_cache 复用 Parser。
-- 缓存上限：MAX_HIGHLIGHTER_DOCS 限制 tree_cache 条目数，达到上限且新文档不在缓存时触发全量淘汰，防止长时间运行后无限增长。
-- 事件流处理：highlight_document 一次性解析全文，避免逐行重复初始化解析器；assign_segment_to_lines 使用二分查找定位行起始偏移，高效分配跨行片段。
-- 后台执行：BackgroundHighlighter 将耗时操作移出 UI 线程，主线程仅做非阻塞轮询，提升交互流畅度。
-- 建议优化：
-  - 针对超大文件可考虑分块解析或延迟解析可见区域
-  - 结合用户编辑频率动态调整缓存淘汰策略（如 LRU）
-  - 在高并发场景下评估多 worker 线程并行解析不同文档
+
+### 性能优化策略
+- **增量分析**: 编辑时只重新分析受影响行，避免全量重分析
+- **GPU 加速**: 大文件使用 GPU 并行处理，提升解析速度
+- **缓存策略**: 行级 token 缓存，减少重复计算
+- **内存池**: 预分配缓冲区，减少内存分配开销
+
+### 内存管理
+- **缓冲区复用**: GPU 缓冲区在对象生命周期内保持活跃
+- **缓存限制**: 最多缓存 32 个文件的 lexer 实例
+- **资源释放**: 文件关闭时及时释放相关资源
+- **内存监控**: 提供缓存统计信息用于调试
+
+```mermaid
+flowchart TD
+A["编辑操作"] --> B{"文件大小"}
+B --> |小文件| C["CPU增量分析"]
+B --> |大文件| D["GPU并行处理"]
+C --> E["行级缓存更新"]
+D --> F["GPU缓冲区处理"]
+E --> G["渲染优化"]
+F --> G
+G --> H["内存回收"]
+```
+
+**图表来源**
+- [crates/aether-core/src/incremental_lexer.rs:139-141](file://crates/aether-core/src/incremental_lexer.rs#L139-L141)
+- [crates/aether-render/src/gpu/viewport.rs:297-323](file://crates/aether-render/src/gpu/viewport.rs#L297-L323)
 
 **章节来源**
-- [crates/aether-tree-sitter/src/highlighter.rs:285-327](file://crates/aether-tree-sitter/src/highlighter.rs#L285-L327)
-- [crates/aether-tree-sitter/src/highlighter.rs:431-495](file://crates/aether-tree-sitter/src/highlighter.rs#L431-L495)
-- [crates/aether-tree-sitter/src/highlighter.rs:498-533](file://crates/aether-tree-sitter/src/highlighter.rs#L498-L533)
-- [crates/aether-tree-sitter/src/background.rs:79-113](file://crates/aether-tree-sitter/src/background.rs#L79-L113)
+- [crates/aether-core/src/incremental_lexer.rs:139-141](file://crates/aether-core/src/incremental_lexer.rs#L139-L141)
+- [crates/aether-render/src/gpu/viewport.rs:297-323](file://crates/aether-render/src/gpu/viewport.rs#L297-L323)
 
 ## 故障排查指南
-- 不支持的语言：当语言未注册或 highlight_config 缺失时，highlight_line/highlight_document 返回空结果。检查语言 ID 是否在 get_language 与 get_config 中注册。
-- 解析失败：parse_document 返回 None 表示解析失败，确认语言与语法树可用，以及文本是否为有效 UTF-8。
-- 主题映射异常：若 capture 名称不在映射表中，默认回退为 source 或 Unknown，需补充 theme_mapping 或 highlight query 定义。
-- 后台线程状态：poll_result 返回 None 表示仍在处理或通道断开，检查 has_pending 与 channel 生命周期。
 
-**已更新** 新增对 Go 和 Java 语言的支持，如果这两种语言出现高亮问题，请检查相应的配置是否正确初始化。
+### 常见问题诊断
+- **语言检测失败**: 检查文件扩展名是否在支持列表中
+- **GPU 初始化失败**: 确认 DirectX 11 环境正确配置
+- **内存溢出**: 检查缓存限制和缓冲区大小设置
+- **性能问题**: 分析增量分析命中率和 GPU 使用率
+
+### 调试工具
+- **性能基准测试**: 内置 benchmark 套件评估性能
+- **缓存统计**: 查看增量分析的命中率
+- **GPU 监控**: 监控 GPU 资源使用情况
+- **日志输出**: 详细的错误信息和性能指标
 
 **章节来源**
-- [crates/aether-tree-sitter/src/highlighter.rs:329-363](file://crates/aether-tree-sitter/src/highlighter.rs#L329-L363)
-- [crates/aether-tree-sitter/src/highlighter.rs:285-327](file://crates/aether-tree-sitter/src/highlighter.rs#L285-L327)
-- [crates/aether-tree-sitter/src/theme_mapping.rs:6-120](file://crates/aether-tree-sitter/src/theme_mapping.rs#L6-L120)
-- [crates/aether-tree-sitter/src/background.rs:95-113](file://crates/aether-tree-sitter/src/background.rs#L95-L113)
+- [crates/aether-core/src/benchmarks.rs:271-334](file://crates/aether-core/src/benchmarks.rs#L271-L334)
+- [crates/aether-core/src/incremental_lexer.rs:125-128](file://crates/aether-core/src/incremental_lexer.rs#L125-L128)
 
 ## 结论
-该 Tree-sitter 集成模块以清晰的分层设计实现了高性能、可扩展的语法高亮能力：语言检测与解析分离、后台异步高亮、稳定的 capture→TokenKind 映射以及与 VS Code 主题生态的无缝衔接。通过合理的缓存与增量解析策略，系统在交互响应与资源占用之间取得良好平衡。
+牧羊人编辑器已成功从 Tree-sitter 迁移到自定义词法分析器和 GPU 加速方案，实现了：
+- **高性能**: GPU 并行处理大幅提升大文件解析速度
+- **低延迟**: 增量分析确保编辑响应性
+- **多语言**: 支持主流编程语言的完整语法高亮
+- **可扩展**: 模块化设计便于添加新语言支持
+- **资源友好**: 智能缓存和内存管理优化资源使用
 
-**已更新** 新增的 Go 和 Java 语言支持进一步增强了系统的多语言处理能力，为开发者提供了更完整的编程体验。
+该架构为未来的功能扩展奠定了坚实基础，同时保持了优秀的性能和用户体验。
 
 ## 附录：扩展指南
 
-### 新增语言支持步骤
-- 在 language.rs 的 get_language 中添加语言 ID 到 tree-sitter Language 的映射。
-- 在 highlighter.rs 的 init_configs 中为该语言创建 HighlightConfiguration，并确保 capture 名称顺序与 HIGHLIGHT_NAMES 一致。
-- 在 get_config/get_config_ptr 中增加语言分支，使 highlight_line/highlight_document 能识别新语言。
-- 在 Cargo.toml 中引入对应 tree-sitter-* 库并锁定版本。
-
-**已更新** 参考 Go 和 Java 的实现示例，它们展示了如何正确添加新语言支持的完整流程。
-
-**章节来源**
-- [crates/aether-tree-sitter/src/language.rs:1-22](file://crates/aether-tree-sitter/src/language.rs#L1-L22)
-- [crates/aether-tree-sitter/src/highlighter.rs:68-178](file://crates/aether-tree-sitter/src/highlighter.rs#L68-L178)
-- [crates/aether-tree-sitter/src/highlighter.rs:345-363](file://crates/aether-tree-sitter/src/highlighter.rs#L345-L363)
-- [crates/aether-tree-sitter/Cargo.toml:11-21](file://crates/aether-tree-sitter/Cargo.toml#L11-L21)
+### 添加新语言支持步骤
+1. **实现 Lexer**: 创建新的词法分析器类，实现 `Lexer` trait
+2. **注册语言**: 在 `Language` 枚举中添加新语言变体
+3. **扩展名映射**: 在 `from_extension` 中添加扩展名到语言的映射
+4. **GPU 表生成**: 在 `LanguageLexerTables` 中添加语言特定的 DFA 和关键字表
+5. **主题映射**: 在主题系统中添加新语言的 Token 颜色映射
 
 ### 自定义高亮规则
-- 修改 highlighter.rs 中的 HIGHLIGHT_NAMES 以固定 capture 索引顺序（当前已改为按名称映射，但保留兼容性）。
-- 在 theme_mapping.rs 中补充新的 capture 名称到 TextMate scope 的映射，确保主题系统能正确着色。
-- 如需更细粒度控制，可在 highlighter.rs 的 capture_name_to_token_kind 中扩展映射逻辑。
+- **Token 类型扩展**: 在 `TokenKind` 中添加新的 token 类型
+- **颜色映射**: 在 `SyntaxColors` 中添加对应的颜色字段
+- **主题适配**: 更新 VS Code 主题解析以支持新 token 类型
+
+### 性能调优建议
+- **调整 GPU 阈值**: 根据文件大小调整 GPU 使用的最小阈值
+- **优化缓存策略**: 根据使用模式调整缓存大小和淘汰策略
+- **并行度调优**: 调整 GPU 线程组大小以获得最佳性能
 
 **章节来源**
-- [crates/aether-tree-sitter/src/highlighter.rs:31-45](file://crates/aether-tree-sitter/src/highlighter.rs#L31-L45)
-- [crates/aether-tree-sitter/src/highlighter.rs:559-583](file://crates/aether-tree-sitter/src/highlighter.rs#L559-L583)
-- [crates/aether-tree-sitter/src/theme_mapping.rs:6-120](file://crates/aether-tree-sitter/src/theme_mapping.rs#L6-L120)
-
-### 扩展语法定义
-- 在 Cargo.toml 中引入新的 tree-sitter-* 库并锁定版本。
-- 在 language.rs 和 highlighter.rs 中注册新语言 ID 与 HighlightConfiguration。
-- 在 theme_mapping.rs 中为新语言的 capture 名称添加映射。
-- 在 vscode_theme.rs 中确保 tokenColors 的 scope 能映射到 SyntaxColors 字段。
-
-**已更新** 新增的 Go 和 Java 语言支持展示了如何正确集成新的语法定义，包括依赖管理和配置初始化。
-
-**章节来源**
-- [crates/aether-tree-sitter/Cargo.toml:6-25](file://crates/aether-tree-sitter/Cargo.toml#L6-L25)
-- [crates/aether-tree-sitter/src/language.rs:1-22](file://crates/aether-tree-sitter/src/language.rs#L1-L22)
-- [crates/aether-tree-sitter/src/highlighter.rs:68-178](file://crates/aether-tree-sitter/src/highlighter.rs#L68-L178)
-- [crates/aether-tree-sitter/src/theme_mapping.rs:122-210](file://crates/aether-tree-sitter/src/theme_mapping.rs#L122-L210)
-- [crates/aether-render/src/vscode_theme.rs:179-234](file://crates/aether-render/src/vscode_theme.rs#L179-L234)
+- [crates/aether-core/src/lexer/mod.rs:94-196](file://crates/aether-core/src/lexer/mod.rs#L94-L196)
+- [crates/aether-render/src/gpu/language_tables.rs:18-35](file://crates/aether-render/src/gpu/language_tables.rs#L18-L35)
+- [crates/aether-render/src/theme.rs:33-86](file://crates/aether-render/src/theme.rs#L33-L86)

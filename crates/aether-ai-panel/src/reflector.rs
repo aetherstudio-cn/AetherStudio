@@ -173,8 +173,8 @@ pub fn format_bullets(hits: &[(PlaybookBullet, f32)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aether_db_store::AetherDbMemoryStore;
     use crate::ai_panel::{AiConversation, AiMessage, AiRole};
-    use crate::memory_store::SqliteMemoryStore;
 
     #[test]
     fn test_parse_bullets_clean_json() {
@@ -217,7 +217,7 @@ mod tests {
             "aether_reflect_test_{}",
             crate::memory_store::new_id("d")
         ));
-        let store = SqliteMemoryStore::open(&dir, crate::embedding::EmbeddingModel::DIM).unwrap();
+        let store = AetherDbMemoryStore::open(&dir, crate::embedding::EmbeddingModel::DIM).unwrap();
 
         // 第一次：插入新条目
         let n = curate_bullets(

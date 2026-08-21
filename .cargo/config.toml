@@ -2,11 +2,8 @@
 timeout = 120
 low-speed-limit = 10
 
-[source.crates-io]
-replace-with = 'tuna'
-
-[source.tuna]
-registry = "sparse+https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
+#  crates.io 镜像源统一由用户级 ~/.cargo/config.toml 配置（rsproxy-sparse），
+#  项目级不再重复定义，避免同名 sparse 源冲突。
 
 [build]
 target = "x86_64-pc-windows-msvc"

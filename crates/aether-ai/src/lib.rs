@@ -4,8 +4,6 @@ use std::io::{BufRead, BufReader, Read};
 use std::sync::mpsc;
 use url::Url;
 
-pub mod tokenizer;
-
 // H-01: SSRF DNS 重绑定限制说明
 //
 // 当前实现对 DNS 解析返回的所有 IP 做私有地址校验（resolve_and_lock），
@@ -733,17 +731,6 @@ impl AiClient {
     ) -> Result<mpsc::Receiver<AiStreamEvent>, AiError> {
         // DeepSeek / Kimi / Custom 均走 OpenAI 兼容的 SSE 流式接口
         self.stream_openai_compatible(messages)
-    }
-
-    /// 计算消息列表的 token 数量
-    pub fn count_messages_tokens(&self, messages: &[ChatMessage]) -> Result<usize, AiError> {
-        tokenizer::count_messages_tokens(messages)
-            .map_err(|e| AiError::Config(format!("Token 计算失败: {}", e)))
-    }
-
-    /// 计算文本的 token 数量
-    pub fn count_tokens(&self, text: &str) -> Result<usize, AiError> {
-        tokenizer::count_tokens(text).map_err(|e| AiError::Config(format!("Token 计算失败: {}", e)))
     }
 
     /// 为 DeepSeek 请求体注入 thinking 参数（深度思考开关）。

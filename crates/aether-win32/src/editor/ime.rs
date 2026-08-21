@@ -1,5 +1,47 @@
 use super::*;
 
+/// AI 面板区域脏标记：智能体模式下 AI 面板在中间列（编辑器内容区域），
+/// 经典模式下在右面板。标错区域会导致脏矩形裁剪时输入框所在列不重绘，
+/// 合成串/提交文本视觉上“没有显示上去”。
+fn mark_ai_panel_dirty(state: &mut EditorState) {
+    if state.editor_mode.is_agent() {
+        let region = state.ui.layout.editor_content_region(false);
+        state.win.dirty_tracker.mark_region(
+            region.x,
+            region.y,
+            region.width,
+            region.height,
+            crate::dirty_rect::DirtyRegionType::EditorContent,
+        );
+    } else {
+        let region = state.ui.layout.right_panel_region().clone();
+        state.win.dirty_tracker.mark_region(
+            region.x,
+            region.y,
+            region.width,
+            region.height,
+            crate::dirty_rect::DirtyRegionType::RightPanel,
+        );
+    }
+}
+
+/// 新标签页快捷搜索框脏区：智能体模式标右面板，经典模式标编辑器内容区
+fn mark_new_tab_page_dirty(state: &mut EditorState) {
+    let region = state.new_tab_page_region(&state.ui.layout).clone();
+    let region_type = if state.editor_mode.is_agent() {
+        crate::dirty_rect::DirtyRegionType::RightPanel
+    } else {
+        crate::dirty_rect::DirtyRegionType::EditorContent
+    };
+    state.win.dirty_tracker.mark_region(
+        region.x,
+        region.y,
+        region.width,
+        region.height,
+        region_type,
+    );
+}
+
 /// P0-2: 设置 IME 合成串（pre-edit text）。
 /// 在 WM_IME_COMPOSITION 收到 GCS_COMPSTR 时调用，
 /// 清空已存在的合成串后写入新值，并触发重绘。
@@ -24,15 +66,18 @@ pub fn set_composition(state: &mut EditorState, text: String) {
     if state.ai.ai_panel.input_focused {
         state.ai.ai_panel.composition = Some(text);
         state.ai.ai_panel.caret_visible = true;
-        let region = state.ui.layout.right_panel_region().clone();
-        state.win.dirty_tracker.mark_region(
-            region.x,
-            region.y,
-            region.width,
-            region.height,
-            crate::dirty_rect::DirtyRegionType::RightPanel,
-        );
+        mark_ai_panel_dirty(state);
         return;
+    }
+    // 新标签页快捷搜索框聚焦时，合成串存到搜索框（搜索框仅在新标签页可见）
+    if state.browser.empty_search_focused {
+        if state.ntp_active() {
+            state.browser.empty_search_composition = Some(text);
+            state.browser.empty_search_caret_visible = true;
+            mark_new_tab_page_dirty(state);
+            return;
+        }
+        state.browser.reset_empty_search();
     }
     state.editor.composition = Some(text);
 }
@@ -111,15 +156,19 @@ pub fn commit_composition(state: &mut EditorState, text: String) {
         state.ai.ai_panel.insert_str(&text);
         state.ai.ai_panel.composition = None;
         state.ai.ai_panel.caret_visible = true;
-        let region = state.ui.layout.right_panel_region().clone();
-        state.win.dirty_tracker.mark_region(
-            region.x,
-            region.y,
-            region.width,
-            region.height,
-            crate::dirty_rect::DirtyRegionType::RightPanel,
-        );
+        mark_ai_panel_dirty(state);
         return;
+    }
+    // 新标签页快捷搜索框聚焦时，IME 提交文本进入搜索框（搜索框仅在新标签页可见）
+    if state.browser.empty_search_focused {
+        if state.ntp_active() {
+            state.browser.empty_search_text.push_str(&text);
+            state.browser.empty_search_composition = None;
+            state.browser.empty_search_caret_visible = true;
+            mark_new_tab_page_dirty(state);
+            return;
+        }
+        state.browser.reset_empty_search();
     }
     // 沙盒评测页输入框聚焦时，IME 提交文本进入对应字段
     if state.ui.sandbox_eval.active_field.is_some() {
@@ -160,20 +209,28 @@ pub fn clear_composition(state: &mut EditorState) {
     // AI 面板输入框聚焦时，清除 AI 面板的合成串
     if state.ai.ai_panel.input_focused {
         state.ai.ai_panel.composition = None;
-        let region = state.ui.layout.right_panel_region().clone();
-        state.win.dirty_tracker.mark_region(
-            region.x,
-            region.y,
-            region.width,
-            region.height,
-            crate::dirty_rect::DirtyRegionType::RightPanel,
-        );
+        mark_ai_panel_dirty(state);
         return;
+    }
+    // 新标签页快捷搜索框聚焦时，清除搜索框的合成串（搜索框仅在新标签页可见）
+    if state.browser.empty_search_focused {
+        if state.ntp_active() {
+            state.browser.empty_search_composition = None;
+            mark_new_tab_page_dirty(state);
+            return;
+        }
+        state.browser.reset_empty_search();
     }
     state.editor.composition = None;
 }
 
 impl EditorState {
+    /// AI 面板区域脏标记（模式感知：智能体模式中间列，经典模式右面板）。
+    /// 供光标闪烁/悬停/流式生成等路径复用，避免标错区域导致输入框不重绘。
+    pub(crate) fn mark_ai_panel_dirty(&mut self) {
+        mark_ai_panel_dirty(self)
+    }
+
     /// P0-2: 设置 IME 合成串（pre-edit text）。
     /// 在 WM_IME_COMPOSITION 收到 GCS_COMPSTR 时调用，
     /// 清空已存在的合成串后写入新值，并触发重绘。

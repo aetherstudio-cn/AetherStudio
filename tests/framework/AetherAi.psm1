@@ -68,11 +68,20 @@ function Invoke-AetherActionScript {
         try {
             switch ($a.type) {
                 'click' {
-                    Send-AetherClickMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y @(if ($a.right) { @{Right=$true} } else { @{} })
+                    # 参数组写法见 Invoke-AetherSmartClick 注释：空/非空哈希表展开都会破坏参数绑定
+                    if ($a.right) {
+                        Send-AetherClickMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y -Right
+                    } else {
+                        Send-AetherClickMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y
+                    }
                     $r.note = "click($($a.x),$($a.y))"
                 }
                 'dblclick' {
-                    Send-AetherDoubleClickMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y @(if ($a.right) { @{Right=$true} } else { @{} })
+                    if ($a.right) {
+                        Send-AetherDoubleClickMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y -Right
+                    } else {
+                        Send-AetherDoubleClickMsg -Hwnd $Window.Hwnd -X $a.x -Y $a.y
+                    }
                     $r.note = "dblclick($($a.x),$($a.y))"
                 }
                 'mclick' {
@@ -212,6 +221,68 @@ function Test-AetherPixelRegion {
     }
 }
 
+# ---------------------------------------------------------------- 截图差异对比（冻结回归检测）
+
+function Compare-AetherScreenshot {
+    <# 对比两张截图的像素差异（窗口冻结/无响应回归检测的基础能力）。
+       返回 @{ ChangedRatio; DiffCount; TotalCount; Width; Height }。
+       -ColorTolerance 每通道差异小于该值视为无变化（抗噪声/抗锯齿抖动，默认 12）。
+       尺寸不一致时抛异常（对比对象应为同一窗口同 DPI 下的截图）。 #>
+    param(
+        [Parameter(Mandatory)][string]$Before,
+        [Parameter(Mandatory)][string]$After,
+        [int]$ColorTolerance = 12
+    )
+    Assert-PathExists $Before
+    Assert-PathExists $After
+    $b1 = [System.Drawing.Bitmap]::new($Before)
+    $b2 = [System.Drawing.Bitmap]::new($After)
+    try {
+        if ($b1.Width -ne $b2.Width -or $b1.Height -ne $b2.Height) {
+            throw "截图尺寸不一致: $($b1.Width)x$($b1.Height) vs $($b2.Width)x$($b2.Height)，无法对比"
+        }
+        $diff = 0; $total = 0
+        # 隔 2 像素采样：全窗口对比开销可控，冻结检测对采样密度不敏感
+        for ($x = 0; $x -lt $b1.Width; $x += 2) {
+            for ($y = 0; $y -lt $b1.Height; $y += 2) {
+                $p1 = $b1.GetPixel($x, $y)
+                $p2 = $b2.GetPixel($x, $y)
+                if ([math]::Abs($p1.R - $p2.R) -gt $ColorTolerance -or
+                    [math]::Abs($p1.G - $p2.G) -gt $ColorTolerance -or
+                    [math]::Abs($p1.B - $p2.B) -gt $ColorTolerance) {
+                    $diff++
+                }
+                $total++
+            }
+        }
+        [pscustomobject]@{
+            ChangedRatio = if ($total -gt 0) { $diff / $total } else { 0.0 }
+            DiffCount    = $diff
+            TotalCount   = $total
+            Width        = $b1.Width
+            Height       = $b1.Height
+        }
+    } finally {
+        $b1.Dispose(); $b2.Dispose()
+    }
+}
+
+function Assert-AetherUiChanged {
+    <# 断言操作前后画面发生变化（"点击没反应/窗口冻结"类回归的通用检测）。
+       典型用法：点击前 Save-AetherScreenshot "1_before"，操作后再截 "2_after"，
+       然后本断言对比两张图。画面完全不动说明渲染管线冻结（如 D2D 状态毒化）。
+       -MinChangedRatio 最小变化像素占比（默认 0.5%；全屏内容切换通常远超此值）。 #>
+    param(
+        [Parameter(Mandatory)][string]$Before,
+        [Parameter(Mandatory)][string]$After,
+        [double]$MinChangedRatio = 0.005,
+        [string]$Message = "操作后画面发生变化（未冻结）"
+    )
+    $r = Compare-AetherScreenshot -Before $Before -After $After
+    $pct = [math]::Round($r.ChangedRatio * 100, 2)
+    Assert-Condition ($r.ChangedRatio -ge $MinChangedRatio) "$Message（变化像素 ${pct}%）"
+}
+
 # ---------------------------------------------------------------- UI 状态快照
 
 function Get-AetherUiState {
@@ -334,19 +405,22 @@ function New-AetherDiagBundle {
 # ---------------------------------------------------------------- AI 智能操作辅助
 
 function Find-AetherHitRegion {
-    <# 智能查找 hit region：按动作名称模糊匹配，返回最佳匹配区域。
+    <# 智能查找 hit region：按动作名称模糊匹配，返回最新一帧的区域（单个对象）。
        用于 AI 根据语义（如"新建文件按钮"）定位可点击区域。
        -ActionLike 动作名称模式（支持 * 通配符）。
-       -PreferCenter 优先返回靠近窗口中心的区域（当有多个匹配时）。 #>
+       注意：hit regions 文件按帧追加累计，同名区域每帧一条，
+       必须返回最后一条（最新帧）且用逗号运算符保持单对象，
+       否则 SmartClick 拿到数组做坐标运算会抛 op_Division 错误。 #>
     param(
         [Parameter(Mandatory)][string]$ActionLike,
         [switch]$PreferCenter
     )
+    # Read-AetherHitRegions 平铺返回区域对象流，@() 收集为平坦数组（.Count 语义正确）
     $regions = @(Read-AetherHitRegions -ActionLike $ActionLike)
     if ($regions.Count -eq 0) { return $null }
-    if ($regions.Count -eq 1) { return $regions[0] }
-    # 多个匹配时返回最新的（最后记录的）
-    return $regions[-1]
+    # 取最新帧（最后一条）；逗号包裹防止单对象被管道展开
+    $last = $regions[$regions.Count - 1]
+    return , $last
 }
 
 function Invoke-AetherSmartClick {
@@ -359,9 +433,17 @@ function Invoke-AetherSmartClick {
     )
     $region = Find-AetherHitRegion -ActionLike $ActionLike
     if (-not $region) { throw "未找到 hit region: $ActionLike" }
-    $cx = [int]($region.x + $region.width / 2)
-    $cy = [int]($region.y + $region.height / 2)
-    Send-AetherClickMsg -Hwnd $Window.Hwnd -X $cx -Y $cy @(if ($Right) { @{Right=$true} } else { @{} })
+    # hit region 坐标是"名义值×Scale"（布局常量已乘一次 DPI 比例），
+    # PostMessage 点击要物理坐标，需再乘一次 Scale（见 AI_TESTING.md §3）
+    $cx = [int](($region.x + $region.width / 2) * $Window.Scale)
+    $cy = [int](($region.y + $region.height / 2) * $Window.Scale)
+    # 勿在末尾追加 @{} / @{Right=$true} 参数组：空哈希表展开为零个实参、
+    # 非空则炸成多个命名实参，都会报"找不到接受 Object[] 的位置参数"
+    if ($Right) {
+        Send-AetherClickMsg -Hwnd $Window.Hwnd -X $cx -Y $cy -Right
+    } else {
+        Send-AetherClickMsg -Hwnd $Window.Hwnd -X $cx -Y $cy
+    }
     return $region
 }
 
@@ -376,7 +458,8 @@ function Wait-AetherHitRegion {
     $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
     while ((Get-Date) -lt $deadline) {
         $region = Find-AetherHitRegion -ActionLike $ActionLike
-        if ($region) { return $region }
+        # 逗号包裹保持单对象语义（与 Find-AetherHitRegion 返回约定一致）
+        if ($region) { return , $region }
         Start-Sleep -Milliseconds $PollMs
     }
     return $null
@@ -402,6 +485,7 @@ function Get-AetherEditorState {
 }
 
 Export-ModuleMember -Function Invoke-AetherActionScript, Test-AetherPixelRegion,
+    Compare-AetherScreenshot, Assert-AetherUiChanged,
     Get-AetherUiState, Assert-AetherLogEvent, New-AetherDiagBundle,
     Find-AetherHitRegion, Invoke-AetherSmartClick, Wait-AetherHitRegion,
     Get-AetherEditorState

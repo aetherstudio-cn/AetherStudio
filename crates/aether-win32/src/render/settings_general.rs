@@ -606,8 +606,12 @@ impl EditorState {
             };
             target.FillRectangle(&content_bg_rect, &content_bg_brush);
 
-            // 左侧导航栏布局（宽度可由用户拖拽调整）
-            let nav_w = self.ui.settings_panel.nav_width;
+            // 左侧导航栏布局：钳制宽度，防止窄面板下导航占满整区、内容区算出负宽
+            let nav_w = self
+                .ui
+                .settings_panel
+                .nav_width
+                .min((width - 160.0).max(96.0));
             let nav_x = x;
             let nav_y = y;
             let nav_h = height;
@@ -785,15 +789,23 @@ impl EditorState {
             // 右侧内容区域
             let content_x = nav_x + nav_w + 1.0;
             let content_y = nav_y;
-            let content_w = width - nav_w - 1.0;
+            let content_w = (width - nav_w - 1.0).max(0.0);
             let content_h = height;
+
+            // 内容列：限制最大宽度防止超宽窗口下无限拉伸，空间充裕时整体居中
+            let page_w = (content_w - 48.0).clamp(0.0, SETTINGS_CONTENT_MAX_W);
+            let page_x = content_x + (content_w - page_w) / 2.0;
 
             // 标题栏：页面标题 + 一行灰色描述
             let (page_title, page_desc) = match self.ui.settings_panel.active_tab {
                 crate::settings::SettingsTab::General => ("通用", "外观、字体与自动保存偏好"),
                 crate::settings::SettingsTab::Models => {
                     if self.ui.settings_panel.model_editing {
-                        ("编辑模型", "编辑模型连接与参数")
+                        if self.ui.settings_panel.is_adding_model() {
+                            ("添加模型", "配置新模型的连接与参数")
+                        } else {
+                            ("编辑模型", "编辑模型连接与参数")
+                        }
                     } else {
                         ("模型", "管理 AI 模型配置")
                     }
@@ -806,9 +818,9 @@ impl EditorState {
             };
             let page_title_wide: Vec<u16> = page_title.encode_utf16().chain(Some(0)).collect();
             let page_title_rect = D2D_RECT_F {
-                left: content_x + 24.0,
+                left: page_x,
                 top: content_y + 24.0,
-                right: content_x + content_w - 24.0,
+                right: page_x + page_w,
                 bottom: content_y + 48.0,
             };
             target.DrawText(
@@ -829,9 +841,9 @@ impl EditorState {
                 .get_brush(target, &color_f(0.52, 0.52, 0.55, 1.0))
                 .unwrap();
             let page_desc_rect = D2D_RECT_F {
-                left: content_x + 24.0,
+                left: page_x,
                 top: content_y + 48.0,
-                right: content_x + content_w - 24.0,
+                right: page_x + page_w,
                 bottom: content_y + 64.0,
             };
             target.DrawText(
@@ -845,17 +857,24 @@ impl EditorState {
 
             // 标题下方分隔线
             let title_sep_rect = D2D_RECT_F {
-                left: content_x + 24.0,
+                left: page_x,
                 top: content_y + 72.0,
-                right: content_x + content_w - 24.0,
+                right: page_x + page_w,
                 bottom: content_y + 73.0,
             };
             target.FillRectangle(&title_sep_rect, &sep_brush);
 
             // 渲染当前激活页面的内容（宽度约束到最大内容宽度）
-            let page_x = content_x + 24.0;
             let page_y = content_y + 96.0;
-            let page_w = (content_w - 48.0).min(SETTINGS_CONTENT_MAX_W);
+
+            // 兜底裁剪：保证子页面元素（固定宽按钮/卡片、超长列表等）不画到设置区外
+            let page_clip = D2D_RECT_F {
+                left: content_x,
+                top: content_y,
+                right: content_x + content_w,
+                bottom: content_y + content_h,
+            };
+            target.PushAxisAlignedClip(&page_clip, D2D1_ANTIALIAS_MODE_ALIASED);
 
             match self.ui.settings_panel.active_tab {
                 crate::settings::SettingsTab::General => {
@@ -935,6 +954,8 @@ impl EditorState {
                     self.render_playbook_settings(target, page_x, page_w, page_y);
                 }
             }
+
+            target.PopAxisAlignedClip();
         }
     }
 
@@ -1051,7 +1072,8 @@ impl EditorState {
         }
     }
 
-    /// 渲染"通用"标签页内容（主题 / 字体大小 / 自动保存等只读概览）
+    /// 渲染"通用"标签页内容（主题 / 字体大小 / 自动保存等概览；
+    /// 「默认启动模式」行可点击切换 开发者/智能体，持久化后重启生效）
     pub(super) fn render_general_settings(
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
@@ -1078,6 +1100,42 @@ impl EditorState {
                 ("编辑器字体大小", format!("{} px", font_size), None),
             ];
             cy = self.draw_settings_group(target, "外观与字体", x, width, cy, &appearance_rows);
+            cy += 20.0;
+
+            // 分组「编辑器模式」
+            let mode_label = if self.editor_mode.is_agent() {
+                "智能体模式"
+            } else {
+                "开发者模式"
+            };
+            let default_is_agent = self.ui.app_settings.ui.editor_mode == "agent";
+            let mode_rows = [
+                ("当前模式", mode_label.to_string(), None),
+                (
+                    "默认启动模式",
+                    format!(
+                        "{}（点击切换）",
+                        if default_is_agent {
+                            "智能体模式"
+                        } else {
+                            "开发者模式"
+                        }
+                    ),
+                    None,
+                ),
+            ];
+            // 「默认启动模式」是第 2 行：卡片顶 = 分组 y + 24，行高 SETTINGS_ROW_H。
+            // 注册命中区供点击切换（与外观页任务栏开关同一交互模式）
+            self.ui.settings_panel.default_mode_toggle_region =
+                Some((x, cy + 24.0 + SETTINGS_ROW_H, width, SETTINGS_ROW_H));
+            crate::hit_test::register_hit_region(
+                "settings:default_mode",
+                x,
+                cy + 24.0 + SETTINGS_ROW_H,
+                width,
+                SETTINGS_ROW_H,
+            );
+            cy = self.draw_settings_group(target, "编辑器模式", x, width, cy, &mode_rows);
             cy += 20.0;
 
             // 分组「自动保存」

@@ -14,6 +14,7 @@ pub mod activity_bar_context_menu;
 pub mod ai_panel;
 pub mod auto_save;
 pub mod bitmap_loader;
+pub mod browser;
 pub mod command_palette;
 pub mod context_menu;
 pub mod crash_guard;

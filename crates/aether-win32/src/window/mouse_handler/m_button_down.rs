@@ -47,8 +47,9 @@ pub(crate) unsafe fn on_m_button_down(
         }
     }
 
+    // 智能体模式下标签栏在右侧面板顶部，使用实际区域
     let show_tab_bar = st.show_tab_bar();
-    let tab_region = layout.tab_bar_region(show_tab_bar);
+    let tab_region = st.effective_tab_bar_region();
     if !show_tab_bar || !tab_region.contains(mouse_x, mouse_y) {
         return LRESULT(0);
     }

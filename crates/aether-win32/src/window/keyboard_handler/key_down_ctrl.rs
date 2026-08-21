@@ -268,7 +268,7 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                     }
                     st.ui.sidebar_content =
                         crate::layout::SidebarContent::from_view(st.ui.activity_view);
-                    st.ui.status_message = "已切换到资源管理器".to_string();
+                    st.ui.status_message = "已切换到工作区".to_string();
                     invalidate_window(hwnd);
                 }
             });

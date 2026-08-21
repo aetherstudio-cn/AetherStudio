@@ -1,18 +1,19 @@
-//! AI 对话温数据阶段 — 异步归档到 MemoryStore（SQLite + sqlite-vec）
+//! AI 对话温数据阶段 — 异步归档到 MemoryStore（AetherDB 纯 Rust 存储）
 //!
 //! 触发时机：用户关闭当前聊天窗口、切换到其他会话、软件进入空闲状态（30秒无操作）
 //! 后台线程把整段完整对话一次性批量写入 [`MemoryStore`]，建立向量索引。
 //! 写入成功后删除对应的热数据日志文件，完成「热→温」的状态切换。
 //!
 //! 底层存储通过 [`MemoryStore`] trait 抽象（见 memory_store.rs），
-//! 当前实现为 SqliteMemoryStore，后续可整体替换为 Qdrant Edge / LanceDB 等。
+//! 当前实现为 AetherDbMemoryStore（自研 AetherDB）。
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::aether_db_store::AetherDbMemoryStore;
 use crate::ai_panel::{AiConversation, AiRole, ConversationMeta};
-use crate::memory_store::{ChatMessage, Conversation, MemoryStore, SqliteMemoryStore};
+use crate::memory_store::{ChatMessage, Conversation, MemoryStore};
 
 /// 向量维度（与当前 ONNX 嵌入模型一致；换 bge-small-zh 时改为 512）
 const EMBEDDING_DIM: usize = crate::embedding::EmbeddingModel::DIM;
@@ -52,7 +53,7 @@ pub enum ArchiveResult {
 ///
 /// 所有写操作通过后台线程异步执行，不阻塞 UI 线程。
 pub struct WarmDataStore {
-    /// 数据根目录（热日志目录、SQLite 库均在其下）
+    /// 数据根目录（热日志目录、AetherDB 库均在其下）
     base_dir: PathBuf,
     /// 存储适配器（Arc 共享给后台线程；类型擦除便于替换实现）
     store: Arc<dyn MemoryStore>,
@@ -69,12 +70,12 @@ pub struct WarmDataStore {
 }
 
 impl WarmDataStore {
-    /// 创建温数据存储（自动初始化 SQLite 数据库）
+    /// 创建温数据存储（自动初始化 AetherDB）
     pub fn new(base_dir: PathBuf) -> Result<Self, String> {
         std::fs::create_dir_all(&base_dir).map_err(|e| format!("无法创建温数据目录: {}", e))?;
 
         let store: Arc<dyn MemoryStore> =
-            Arc::new(SqliteMemoryStore::open(&base_dir, EMBEDDING_DIM)?);
+            Arc::new(AetherDbMemoryStore::open(&base_dir, EMBEDDING_DIM)?);
 
         let (request_tx, request_rx) = channel::<ArchiveRequest>();
         let (result_tx, result_rx) = channel::<ArchiveResult>();
@@ -114,10 +115,10 @@ impl WarmDataStore {
         }
     }
 
-    /// 冰冻态：收缩底层 SQLite 页缓存，释放可回收内存
+    /// 冰冻态：回收底层存储可回收空间，释放内存
     pub fn shrink_memory(&self) {
         if let Err(e) = self.store.shrink_memory() {
-            tracing::warn!("SQLite shrink_memory 失败: {}", e);
+            tracing::warn!("shrink_memory 失败: {}", e);
         }
     }
 
@@ -180,7 +181,7 @@ impl WarmDataStore {
             .search_conversations(keyword, ws.as_deref(), limit)
     }
 
-    /// 重命名会话标题（直接走 SQLite UPDATE，不经后台线程，保证立即生效）
+    /// 重命名会话标题（直接写 AetherDB，不经后台线程，保证立即生效）
     pub fn rename_conversation(&self, conv_id: &str, new_title: &str) -> Result<(), String> {
         self.store.rename_conversation(conv_id, new_title)
     }
@@ -451,7 +452,7 @@ impl WarmDataStore {
         Ok(conv)
     }
 
-    /// 语义搜索历史对话（sqlite-vec 向量检索，按会话去重）
+    /// 语义搜索历史对话（HNSW 向量检索，按会话去重）
     pub fn semantic_search(
         &self,
         query_text: &str,
@@ -567,7 +568,7 @@ mod tests {
             "aether_warm_test_{}",
             crate::memory_store::new_id("d")
         ));
-        let store = SqliteMemoryStore::open(&dir, EMBEDDING_DIM).unwrap();
+        let store = AetherDbMemoryStore::open(&dir, EMBEDDING_DIM).unwrap();
 
         let mut conv = AiConversation::new("c1".to_string(), "测试会话".to_string());
         conv.messages

@@ -415,6 +415,8 @@ pub struct SettingsPanel {
     pub baseline_ai: Option<AiSettings>,
     /// 外观页：最大化时显示任务栏开关命中区
     pub taskbar_toggle_region: Option<(f32, f32, f32, f32)>,
+    /// 通用页：默认启动模式行命中区（点击切换 开发者/智能体，持久化后重启生效）
+    pub default_mode_toggle_region: Option<(f32, f32, f32, f32)>,
 }
 
 impl SettingsPanel {
@@ -498,6 +500,7 @@ impl SettingsPanel {
             user_id: String::new(),
             baseline_ai: None,
             taskbar_toggle_region: None,
+            default_mode_toggle_region: None,
         }
     }
 
@@ -622,6 +625,7 @@ impl SettingsPanel {
             user_id: settings.ai.user_id.clone().unwrap_or_default(),
             baseline_ai: None,
             taskbar_toggle_region: None,
+            default_mode_toggle_region: None,
         }
     }
 
@@ -984,6 +988,12 @@ impl SettingsPanel {
         "新模型".to_string()
     }
 
+    /// 内嵌表单是否处于「添加模型」模式（草稿态，未关联已有模型）；
+    /// false 表示编辑已有模型（active_model_id 指向列表中的模型）
+    pub fn is_adding_model(&self) -> bool {
+        self.active_model_id.is_none()
+    }
+
     pub fn clear_regions(&mut self) {
         self.field_regions.clear();
         self.button_regions.clear();
@@ -1014,6 +1024,17 @@ impl SettingsPanel {
 
     pub fn add_tab_region(&mut self, tab: SettingsTab, x: f32, y: f32, w: f32, h: f32) {
         self.tab_regions.push((tab, x, y, w, h));
+        // 同步注册语义命中区，供测试框架/辅助点击按名称定位（如 settings_tab:general）
+        let name = match tab {
+            SettingsTab::General => "general",
+            SettingsTab::Ai => "ai",
+            SettingsTab::Appearance => "appearance",
+            SettingsTab::Remote => "remote",
+            SettingsTab::Models => "models",
+            SettingsTab::Playbook => "playbook",
+            SettingsTab::Update => "update",
+        };
+        crate::hit_test::register_hit_region(format!("settings_tab:{}", name), x, y, w, h);
     }
 
     /// 命中检测：标签页

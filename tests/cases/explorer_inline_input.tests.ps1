@@ -29,6 +29,11 @@ $proc = $null
 try {
     if (-not $SkipBuild) { Build-AetherApp }
 
+    # hit regions 文件按帧累积：清空旧帧，避免历史会话的 sidebar:new_file
+    # 坐标让 Wait-AetherHitRegion 提前返回（本进程文件树尚未就绪时点击落空）
+    $hitFile = Join-Path (Resolve-Path "$PSScriptRoot\..\..").Path "tests\gui_hit_regions.jsonl"
+    if (Test-Path $hitFile) { Remove-Item $hitFile -Force }
+
     $ws = New-AetherTestWorkspace -Files @{
         "main.rs"      = "fn main() {}"
         "zz_readme.md" = "# test"
@@ -39,15 +44,15 @@ try {
 
     # 名义坐标 → 窗口内物理像素
     function NX([double]$v) { [int]($v * $k) }
-    $sidebarRight = $L.ACTIVITY_W + $L.SIDEBAR_W
-    $newFileBtn = @{ X = NX ($sidebarRight - 29); Y = NX ($L.TITLE_BAR + $L.HEADER_H / 2) }
-    $newFolderBtn = @{ X = NX ($sidebarRight - 11); Y = NX ($L.TITLE_BAR + $L.HEADER_H / 2) }
+    # 侧栏头部按钮锚定侧栏右缘，侧栏宽度用户可调且持久化，手算坐标必偏，
+    # 一律走语义点击（hit region sidebar:new_file / sidebar:new_folder）
     # 树行：根行 top = 标题栏 + 表头 24 + 间距 6；第 i 个节点行中心
     function RowCenterY([int]$i) { NX ($L.TITLE_BAR + $L.HEADER_H + 6 + $L.ROW_H * ($i + 1) + $L.ROW_H / 2) }
     $rowLabelX = NX ($L.ACTIVITY_W + 10 + 12 + 30)   # base 10 + 一级缩进 12 + 深入 label 区
 
     Invoke-TestStep "点击新建文件按钮出现空输入行" {
-        Send-AetherClickMsg -Hwnd $win.Hwnd -X $newFileBtn.X -Y $newFileBtn.Y
+        Wait-AetherHitRegion -ActionLike "sidebar:new_file" -TimeoutMs 8000 | Out-Null
+        Invoke-AetherSmartClick -Window $win -ActionLike "sidebar:new_file" | Out-Null
         Save-AetherScreenshot -Window $win -Name "1_newfile_empty_input" | Out-Null
     }
 
@@ -60,7 +65,7 @@ try {
     }
 
     Invoke-TestStep "新建文件夹并 Enter 创建" {
-        Send-AetherClickMsg -Hwnd $win.Hwnd -X $newFolderBtn.X -Y $newFolderBtn.Y
+        Invoke-AetherSmartClick -Window $win -ActionLike "sidebar:new_folder" | Out-Null
         Send-AetherTextMsg -Hwnd $win.Hwnd -Text "demo_dir"
         Send-AetherKeyMsg -Hwnd $win.Hwnd -Key "{ENTER}" -DelayMs 800
         Assert-PathExists (Join-Path $ws "demo_dir")
@@ -78,7 +83,7 @@ try {
 
     Invoke-TestStep "空名 Enter 等效取消" {
         $before = (Get-ChildItem $ws).Count
-        Send-AetherClickMsg -Hwnd $win.Hwnd -X $newFileBtn.X -Y $newFileBtn.Y
+        Invoke-AetherSmartClick -Window $win -ActionLike "sidebar:new_file" | Out-Null
         Send-AetherKeyMsg -Hwnd $win.Hwnd -Key "{ENTER}" -DelayMs 600
         $after = (Get-ChildItem $ws).Count
         Assert-Condition ($before -eq $after) "空名提交未创建任何文件（$before → $after）"

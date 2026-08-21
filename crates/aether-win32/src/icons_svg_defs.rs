@@ -987,6 +987,17 @@ const UI_PENCIL: SvgDef = SvgDef {
     )],
 };
 
+/// Lucide "refresh-cw" - 刷新（内置浏览器工具栏）
+const UI_REFRESH: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 24.0, 24.0),
+    shapes: &[
+        SvgShape::Path("M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", None),
+        SvgShape::Path("M21 3v5h-5", None),
+        SvgShape::Path("M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16", None),
+        SvgShape::Path("M8 16H3v5", None),
+    ],
+};
+
 /// Lucide "trash-2" - 垃圾桶（删除）
 const UI_TRASH: SvgDef = SvgDef {
     viewbox: (0.0, 0.0, 24.0, 24.0),
@@ -1091,4 +1102,5 @@ pub(crate) const SVG_DEFS: &[SvgDef] = &[
     /* 83 Trash         */ UI_TRASH,
     /* 84 Eye           */ UI_EYE,
     /* 85 Pencil        */ UI_PENCIL,
+    /* 86 Refresh       */ UI_REFRESH,
 ];

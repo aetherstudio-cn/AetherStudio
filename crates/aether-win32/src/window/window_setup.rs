@@ -262,7 +262,7 @@ pub(crate) fn persist_window_state(state: &EditorState, hwnd: HWND) {
     if let Err(e) = settings.save() {
         eprintln!("警告: 持久化窗口状态失败: {}", e);
     }
-    // AI 对话历史由温数据层（SQLite）实时归档，退出时 WarmDataStore Drop 自动 flush，无需额外处理
+    // AI 对话历史由温数据层（AetherDB）实时归档，退出时 WarmDataStore Drop 自动 flush，无需额外处理
 }
 
 /// 应用 CLI 传入的启动参数到指定编辑器状态
@@ -351,7 +351,7 @@ pub(crate) unsafe fn on_destroy(
         }
         {
             let mut state = rc.borrow_mut();
-            // 退出前同步归档 AI 会话到 SQLite（等待落盘完成），
+            // 退出前同步归档 AI 会话到 AetherDB（等待落盘完成），
             // 保证聊完不足 30 秒就退出的场景对话不丢失
             state.ai.ai_panel.archive_all_on_exit();
             if state.win.is_main_window {

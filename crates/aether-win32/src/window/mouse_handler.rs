@@ -127,8 +127,8 @@ pub(crate) unsafe fn on_l_button_up(
                 let dpi_scale = st.win.dpi_scale;
                 let mouse_x = raw_x / dpi_scale;
                 let mouse_y = raw_y / dpi_scale;
-                let show_tab_bar = st.show_tab_bar();
-                let tab_region = st.ui.layout.tab_bar_region(show_tab_bar);
+                // 智能体模式下标签栏在右侧面板顶部，使用实际区域
+                let tab_region = st.effective_tab_bar_region();
                 if let Some(tab_idx) =
                     st.tab_body_hit_test(mouse_x, mouse_y, tab_region.x, tab_region.y)
                 {
@@ -231,8 +231,9 @@ pub(crate) unsafe fn on_mouse_wheel(
             }
 
             // SubTask 7.5: 光标在标签栏区域时 → 横向滚动标签栏（平滑滚动）
+            // 智能体模式下标签栏在右侧面板顶部，使用实际区域
             let show_tab_bar = state.show_tab_bar();
-            let tab_region = state.ui.layout.tab_bar_region(show_tab_bar);
+            let tab_region = state.effective_tab_bar_region();
             if show_tab_bar && tab_region.contains(cursor_x, cursor_y) {
                 if state.scroll_tab_bar(delta, tab_region.width) {
                     // 只标记标签栏区域为脏，避免全窗口重绘
@@ -275,6 +276,14 @@ pub(crate) unsafe fn on_mouse_wheel(
                     } else {
                         state.terminal.terminal_panel.scroll_down(lines * 3);
                     }
+                    // 只标脏底部面板局部重绘；依赖 WM_PAINT 全窗口兕底会导致滚轮卡顿
+                    state.win.dirty_tracker.mark_region(
+                        bottom.x,
+                        bottom.y,
+                        bottom.width,
+                        bottom.height,
+                        crate::dirty_rect::DirtyRegionType::BottomPanel,
+                    );
                     invalidate_window(hwnd);
                     return;
                 }
