@@ -20,13 +20,21 @@
 - [account.rs](file://crates/aether-win32/src/render/account.rs)
 - [welcome.rs](file://crates/aether-win32/src/welcome.rs)
 - [bitmap_loader.rs](file://crates/aether-win32/src/bitmap_loader.rs)
+- [browser.rs](file://crates/aether-win32/src/browser.rs)
+- [agent_right_panel.rs](file://crates/aether-win32/src/render/agent_right_panel.rs)
+- [agent_sidebar.rs](file://crates/aether-win32/src/render/agent_sidebar.rs)
+- [chrome.rs](file://crates/aether-win32/src/render/chrome.rs)
+- [layout.rs](file://crates/aether-win32/src/layout.rs)
+- [ai_agent.rs](file://crates/aether-ai-panel/src/ai_agent.rs)
 </cite>
 
 ## 更新摘要
 **变更内容**   
-- 改进了Windows编辑器欢迎屏幕吉祥物图像的处理方式，使用嵌入的PNG资源确保在不同构建环境中的一致视觉呈现
-- 优化了图像加载机制，从文件系统加载改为二进制内嵌资源
-- 提升了CI构建环境中的视觉一致性，避免了外部资源依赖问题
+- 新增嵌入式浏览器功能，基于 WebView2 实现智能体模式下的网页浏览能力
+- 新增 Agent 右侧面板组件，支持标签页管理、新标签页快捷操作和浏览器工具栏
+- 新增 Agent 侧边栏组件，提供对话历史管理和工作区文件列表
+- 增强布局系统以支持智能体模式和开发者模式的动态切换
+- 集成 AI Agent 工具标记协议，支持文件编辑、命令执行等高级功能
 
 ## 目录
 1. [简介](#简介)
@@ -46,12 +54,14 @@
 - Direct2D/DirectWrite 渲染集成：绘制上下文管理、脏矩形优化与动画效果
 - 输入事件处理：键盘映射、鼠标交互与输入法（IME）支持
 - 主题系统：颜色管理、样式继承与动态切换
+- **新增** 嵌入式浏览器功能：基于 WebView2 的智能体模式网页浏览
+- **新增** Agent 模式支持：右侧面板和侧边栏组件的完整实现
 - UI 组件开发最佳实践与性能优化技巧
 
-**更新** 已改进Windows编辑器欢迎屏幕吉祥物图像的处理方式，通过嵌入PNG资源确保在不同构建环境中的一致视觉呈现。
+**更新** 已新增完整的浏览器功能和Agent模式支持，包括嵌入式WebView2浏览器、Agent右侧面板和Agent侧边栏组件，显著增强了编辑器的智能化能力。
 
 ## 项目结构
-UI 子系统主要位于 aether-win32 crate 中，围绕 window 模块组织；渲染相关能力由 aether-render crate 提供。关键入口与职责如下：
+UI 子系统主要位于 aether-win32 crate 中，围绕 window 模块组织；渲染相关能力由 aether-render crate 提供。**新增** 的浏览器和Agent模式功能分布在专门的模块中。关键入口与职责如下：
 - main.rs：进程启动、单实例控制、调用 run(args)
 - window.rs：注册窗口类、创建主窗口、消息循环、WndProc 分发
 - window/window_setup.rs：DPI 感知、DWM 背景效果、窗口持久化、COPYDATA 处理
@@ -67,7 +77,12 @@ UI 子系统主要位于 aether-win32 crate 中，围绕 window 模块组织；�
 - render/account.rs：账户相关的渲染逻辑（简化版）
 - welcome.rs：欢迎屏幕界面，包含吉祥物图像显示
 - bitmap_loader.rs：位图加载器，支持嵌入式PNG资源
-- aether-render/src/theme.rs：Theme/SyntaxColors 定义与颜色映射
+- **新增** browser.rs：嵌入式浏览器管理器，基于 WebView2 实现
+- **新增** agent_right_panel.rs：Agent模式右侧面板渲染
+- **新增** agent_sidebar.rs：Agent模式左侧边栏渲染
+- **新增** chrome.rs：状态栏、菜单栏、标题栏渲染增强
+- **新增** layout.rs：布局管理器，支持智能体模式切换
+- **新增** ai_agent.rs：AI Agent工具标记协议解析
 
 ```mermaid
 graph TB
@@ -86,6 +101,14 @@ F --> M["user_menu.rs<br/>用户菜单/头像下拉"]
 F --> N["render/account.rs<br/>账户渲染(简化)"]
 F --> O["welcome.rs<br/>欢迎屏幕/吉祥物图像"]
 O --> P["bitmap_loader.rs<br/>嵌入式PNG资源加载"]
+F --> Q["browser.rs<br/>嵌入式浏览器"]
+F --> R["agent_right_panel.rs<br/>Agent右侧面板"]
+F --> S["agent_sidebar.rs<br/>Agent侧边栏"]
+F --> T["chrome.rs<br/>状态栏/菜单栏/标题栏"]
+R --> U["layout.rs<br/>布局管理"]
+S --> U
+Q --> U
+U --> V["ai_agent.rs<br/>AI Agent工具协议"]
 ```
 
 **图表来源** 
@@ -104,6 +127,12 @@ O --> P["bitmap_loader.rs<br/>嵌入式PNG资源加载"]
 - [account.rs:1-50](file://crates/aether-win32/src/render/account.rs#L1-L50)
 - [welcome.rs:1-100](file://crates/aether-win32/src/welcome.rs#L1-L100)
 - [bitmap_loader.rs:1-100](file://crates/aether-win32/src/bitmap_loader.rs#L1-L100)
+- [browser.rs:1-651](file://crates/aether-win32/src/browser.rs#L1-L651)
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
+- [chrome.rs:1-800](file://crates/aether-win32/src/render/chrome.rs#L1-L800)
+- [layout.rs:1-400](file://crates/aether-win32/src/layout.rs#L1-L400)
+- [ai_agent.rs:1-800](file://crates/aether-ai-panel/src/ai_agent.rs#L1-L800)
 
 **章节来源**
 - [main.rs:1-52](file://crates/aether-win32/src/main.rs#L1-L52)
@@ -129,8 +158,16 @@ O --> P["bitmap_loader.rs<br/>嵌入式PNG资源加载"]
   - 简化的用户菜单系统，仅包含头像下拉菜单功能
   - 移除了复杂的账户设置页面，降低了UI架构复杂度
   - **新增** 欢迎屏幕吉祥物图像采用嵌入式PNG资源，确保跨平台一致性
+- **新增** 嵌入式浏览器系统
+  - 基于 WebView2 的嵌入式浏览器，支持标签页管理
+  - 异步环境初始化，避免阻塞主线程
+  - 智能体模式下叠于右面板，经典模式下叠于编辑器区域
+- **新增** Agent 模式组件
+  - 右侧面板：标签页管理、新标签页快捷操作、浏览器工具栏
+  - 左侧边栏：对话历史管理、工作区文件列表
+  - 支持智能体模式与开发者模式的动态切换
 
-**更新** 用户界面组件已简化，移除了账户设置页面功能，仅保留基本的头像下拉菜单。欢迎屏幕吉祥物图像处理得到改进，使用嵌入式PNG资源确保一致视觉呈现。
+**更新** 新增了完整的浏览器功能和Agent模式支持，包括嵌入式WebView2浏览器、Agent右侧面板和Agent侧边栏组件，显著增强了编辑器的智能化能力。
 
 **章节来源**
 - [window.rs:175-297](file://crates/aether-win32/src/window.rs#L175-L297)
@@ -145,9 +182,12 @@ O --> P["bitmap_loader.rs<br/>嵌入式PNG资源加载"]
 - [account.rs:1-50](file://crates/aether-win32/src/render/account.rs#L1-L50)
 - [welcome.rs:1-100](file://crates/aether-win32/src/welcome.rs#L1-L100)
 - [bitmap_loader.rs:1-100](file://crates/aether-win32/src/bitmap_loader.rs#L1-L100)
+- [browser.rs:1-651](file://crates/aether-win32/src/browser.rs#L1-L651)
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
 
 ## 架构总览
-下图展示从进程启动到渲染输出的关键路径，以及输入事件如何驱动状态变更与重绘。
+下图展示从进程启动到渲染输出的关键路径，以及输入事件如何驱动状态变更与重绘。**新增** 了浏览器和Agent模式的完整集成路径。
 
 ```mermaid
 sequenceDiagram
@@ -157,6 +197,8 @@ participant Setup as "window_setup.rs"
 participant Proc as "WndProc"
 participant Input as "键盘/鼠标/IME"
 participant State as "EditorState"
+participant Browser as "BrowserState"
+participant Agent as "Agent面板"
 participant Render as "render.rs"
 participant RCtx as "render_context.rs"
 participant Dirty as "dirty_rect.rs"
@@ -174,13 +216,19 @@ Proc->>Input : 分发 WM_* 事件
 Input->>State : 更新状态(光标/滚动/面板可见性等)
 Input->>UserMenu : 处理用户菜单交互
 Input->>Welcome : 处理欢迎屏幕交互
+Input->>Browser : 处理浏览器事件
+Input->>Agent : 处理Agent模式交互
 Welcome->>Bitmap : 加载嵌入式PNG资源
 Bitmap->>Welcome : 返回位图数据
+Browser->>State : 同步浏览器状态
+Agent->>State : 更新Agent面板状态
 Input->>Win : invalidate_window(hwnd)
 Win->>Render : WM_PAINT -> render()
 Render->>Dirty : 推断/标记脏矩形
 Render->>RCtx : begin_draw()/push_multi_clip()/clear()
 Render->>RCtx : 绘制标题栏/菜单/侧边栏/编辑器/欢迎页→右侧面板→底部面板→状态栏→弹出菜单/对话框
+Render->>Browser : 同步WebView2边界和可见性
+Render->>Agent : 渲染Agent面板内容
 Render->>RCtx : end_draw()
 Render->>Dirty : clear()
 end
@@ -196,6 +244,9 @@ end
 - [user_menu.rs:1-100](file://crates/aether-win32/src/user_menu.rs#L1-L100)
 - [welcome.rs:1-100](file://crates/aether-win32/src/welcome.rs#L1-L100)
 - [bitmap_loader.rs:1-100](file://crates/aether-win32/src/bitmap_loader.rs#L1-L100)
+- [browser.rs:1-651](file://crates/aether-win32/src/browser.rs#L1-L651)
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
 
 ## 详细组件分析
 
@@ -262,7 +313,7 @@ Persist --> Exit["关闭窗口计数归零则 PostQuitMessage"]
   - 按层级绘制：标题栏→菜单栏→活动栏→侧边栏→标签栏→编辑器/欢迎页→右侧面板→底部面板→状态栏→弹出菜单/对话框
   - 最后清除脏标记并输出命中区域（调试）
 
-**更新** 渲染流程已简化，移除了账户设置页面的渲染逻辑，减少了渲染复杂度。欢迎屏幕吉祥物图像现在使用嵌入式PNG资源进行渲染。
+**更新** 渲染流程已增强，新增了对嵌入式浏览器和Agent模式的支持。在智能体模式下，WebView2 子窗口会叠于右面板内容区域之上，提供更好的用户体验。
 
 ```mermaid
 classDiagram
@@ -293,6 +344,9 @@ class EditorState {
 +render()
 +init_render_target()
 +flush_events_to_dirty_tracker()
++sync_browser_webviews()
++render_agent_right_panel()
++render_agent_sidebar()
 }
 EditorState --> RenderContext : "使用"
 EditorState --> DirtyRectTracker : "使用"
@@ -302,6 +356,9 @@ EditorState --> DirtyRectTracker : "使用"
 - [render_context.rs:1-226](file://crates/aether-win32/src/render_context.rs#L1-L226)
 - [dirty_rect.rs:1-707](file://crates/aether-win32/src/dirty_rect.rs#L1-L707)
 - [render.rs:62-780](file://crates/aether-win32/src/render.rs#L62-L780)
+- [browser.rs:608-651](file://crates/aether-win32/src/browser.rs#L608-L651)
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
 
 **章节来源**
 - [render.rs:62-780](file://crates/aether-win32/src/render.rs#L62-L780)
@@ -321,6 +378,8 @@ EditorState --> DirtyRectTracker : "使用"
   - 候选/合成窗口尺寸随 DPI 缩放，跟随光标定位
   - 支持临时解除 IME 关联以旁路系统级拦截（如终端删除汉字问题）
 
+**更新** 输入系统已增强以支持新的浏览器和Agent模式功能。现在可以处理浏览器标签页的点击事件、Agent面板的交互操作，以及智能体模式下的特殊键盘快捷键。
+
 ```mermaid
 sequenceDiagram
 participant User as "用户"
@@ -330,6 +389,8 @@ participant Key as "keyboard_handler.rs"
 participant IME as "ime.rs"
 participant UserMenu as "user_menu.rs"
 participant Welcome as "welcome.rs"
+participant Browser as "browser.rs"
+participant Agent as "Agent面板"
 participant State as "EditorState"
 participant WinAPI as "invalidate_window()"
 User->>Win : 鼠标/键盘/IME 事件
@@ -338,10 +399,14 @@ Win->>Mouse : on_l_button_down/up/dblclk/wheel/hwheel
 Mouse->>State : 更新选择/滚动/面板拖拽/标签重排
 Mouse->>UserMenu : 处理用户菜单点击
 Mouse->>Welcome : 处理欢迎屏幕交互
+Mouse->>Browser : 处理浏览器工具栏点击
+Mouse->>Agent : 处理Agent面板交互
 Mouse->>WinAPI : invalidate_window(hwnd)
 else 键盘事件
 Win->>Key : on_key_down/on_char
 Key->>State : 执行动作(编辑/视图/多光标/AI)
+Key->>Browser : 处理浏览器快捷键
+Key->>Agent : 处理Agent模式快捷键
 Key->>WinAPI : invalidate_window(hwnd)
 else IME 事件
 Win->>IME : 更新候选/合成窗口位置
@@ -358,6 +423,9 @@ end
 - [input.rs:1-355](file://crates/aether-win32/src/input.rs#L1-L355)
 - [user_menu.rs:1-100](file://crates/aether-win32/src/user_menu.rs#L1-L100)
 - [welcome.rs:1-100](file://crates/aether-win32/src/welcome.rs#L1-L100)
+- [browser.rs:1-651](file://crates/aether-win32/src/browser.rs#L1-L651)
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
 
 **章节来源**
 - [input.rs:1-355](file://crates/aether-win32/src/input.rs#L1-L355)
@@ -469,9 +537,109 @@ Theme --> SyntaxColors : "包含"
 - [theme.rs:1-26](file://crates/aether-win32/src/theme.rs#L1-L26)
 - [render_context.rs:189-217](file://crates/aether-win32/src/render_context.rs#L189-L217)
 
+### 嵌入式浏览器系统
+
+**新增** 基于 WebView2 的嵌入式浏览器系统，为智能体模式提供强大的网页浏览能力。
+
+- WebView2 集成
+  - 使用 Microsoft Edge Chromium 内核的 WebView2 控件
+  - 每个窗口共享一个 ICoreWebView2Environment，首次打开时惰性异步创建
+  - 每个浏览器标签持有一个 ICoreWebView2Controller，父窗口为主窗口
+  - 所有回调通过 PostMessage 安全地传递到 UI 线程处理
+- 浏览器实例管理
+  - BrowserState 管理多个浏览器实例的生命周期
+  - 支持标签页的创建、销毁、导航和历史记录管理
+  - 自动处理 WebView2 环境的初始化和错误恢复
+- 智能体模式集成
+  - 在智能体模式下，浏览器叠于右面板内容区域之上
+  - 在经典模式下，浏览器叠于中心编辑器内容区域
+  - 每帧同步 WebView2 子窗口的边界和可见性
+- 工具栏功能
+  - 后退/前进按钮，支持历史记录导航
+  - 刷新按钮，重新加载当前页面
+  - 地址栏，支持 URL 输入和搜索查询
+  - 自动 URL 规范化，支持域名补全和搜索查询转换
+
+```mermaid
+flowchart TD
+BrowserInit["浏览器初始化"] --> EnvCheck{"WebView2环境就绪?"}
+EnvCheck --> |否| CreateEnv["异步创建环境"]
+EnvCheck --> |是| Ready["环境就绪"]
+CreateEnv --> ControllerCheck{"控制器创建?"}
+ControllerCheck --> |否| Wait["等待环境就绪"]
+ControllerCheck --> |是| Active["浏览器实例激活"]
+Ready --> ControllerCheck
+Wait --> ControllerCheck
+Active --> Sync["同步边界和可见性"]
+Sync --> Navigate["导航到URL"]
+Navigate --> Display["显示网页内容"]
+```
+
+**图表来源** 
+- [browser.rs:237-651](file://crates/aether-win32/src/browser.rs#L237-L651)
+
+**章节来源**
+- [browser.rs:1-651](file://crates/aether-win32/src/browser.rs#L1-L651)
+
+### Agent 模式组件
+
+**新增** 完整的 Agent 模式支持，包括右侧面板和左侧边栏组件。
+
+- Agent 右侧面板
+  - 标签页管理：支持多个标签页的创建、切换和关闭
+  - 新标签页（NTP）：提供快捷搜索框和常用操作按钮
+  - 浏览器工具栏：集成嵌入式浏览器的导航功能
+  - 内容区域：根据活动标签页类型渲染不同的内容
+- Agent 左侧边栏
+  - 对话历史：显示和管理 AI 对话会话
+  - 工作区文件：集成文件树浏览功能
+  - 新会话按钮：快速创建新的 AI 对话
+  - 可折叠设计：支持对话历史和文件列表的展开/收起
+- 布局管理
+  - 支持智能体模式和开发者模式的动态切换
+  - 智能体模式下，AI 对话面板为主体，编辑器移至右侧
+  - 开发者模式下，传统 IDE 布局，AI 面板在右侧
+- AI Agent 工具协议
+  - 支持文件编辑、命令执行、只读探查等工具标记
+  - 解析 AI 回复中的结构化指令
+  - 提供精确的代码定位和编辑功能
+
+```mermaid
+graph LR
+subgraph "Agent 模式布局"
+LeftSidebar["左侧边栏<br/>对话历史 + 文件列表"]
+RightPanel["右侧面板<br/>标签页 + 内容区域"]
+Editor["编辑器区域<br/>代码编辑"]
+end
+subgraph "右侧面板内容"
+TabBar["标签栏"]
+ContentArea["内容区域"]
+BrowserToolbar["浏览器工具栏"]
+NewTabPage["新标签页"]
+end
+LeftSidebar --> |管理| RightPanel
+RightPanel --> |包含| TabBar
+RightPanel --> |包含| ContentArea
+ContentArea --> |渲染| BrowserToolbar
+ContentArea --> |渲染| NewTabPage
+RightPanel --> |嵌入| Editor
+```
+
+**图表来源** 
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
+- [layout.rs:137-171](file://crates/aether-win32/src/layout.rs#L137-L171)
+- [ai_agent.rs:1-800](file://crates/aether-ai-panel/src/ai_agent.rs#L1-L800)
+
+**章节来源**
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
+- [layout.rs:137-171](file://crates/aether-win32/src/layout.rs#L137-L171)
+- [ai_agent.rs:1-800](file://crates/aether-ai-panel/src/ai_agent.rs#L1-L800)
+
 ### 用户界面组件简化
 
-**新增** 用户界面组件已大幅简化，移除了复杂的账户设置页面功能。
+**更新** 用户界面组件已大幅简化，移除了复杂的账户设置页面功能。
 
 - 简化的用户菜单
   - 仅保留头像下拉菜单功能，提供更简洁的用户交互体验
@@ -502,7 +670,7 @@ AccountPage --> Removed
 
 ### 欢迎屏幕吉祥物图像处理改进
 
-**新增** Windows编辑器欢迎屏幕吉祥物图像处理得到显著改进，采用嵌入式PNG资源确保跨构建环境的一致性。
+**更新** Windows编辑器欢迎屏幕吉祥物图像处理得到显著改进，采用嵌入式PNG资源确保跨构建环境的一致性。
 
 - 嵌入式PNG资源管理
   - 吉祥物图像直接从二进制可执行文件中加载，不再依赖外部文件系统
@@ -545,8 +713,12 @@ ConsistentVisual --> CICompatible["CI构建兼容"]
   - Windows API：窗口、消息、DWM、GDI、HiDpi、IME、Direct2D、DirectWrite
   - aether-core：字符宽度、词法分析器语言枚举
   - aether-shared：AppSettings 持久化
+- **新增** 浏览器和Agent模式依赖
+  - webview2_com：WebView2 COM 接口
+  - windows：Windows API 绑定
+  - aether-ai-panel：AI Agent 功能模块
 
-**更新** 由于移除了账户设置页面，render.rs 对账户相关模块的依赖已显著减少。欢迎屏幕模块现在依赖bitmap_loader进行嵌入式PNG资源加载。
+**更新** 由于新增了浏览器和Agent模式功能，依赖关系变得更加复杂。现在需要额外的 WebView2 运行时支持和 AI 面板模块。
 
 ```mermaid
 graph LR
@@ -562,7 +734,15 @@ Rnd --> Theme["theme.rs / aether-render/src/theme.rs"]
 Rnd --> UserMenu["user_menu.rs"]
 Rnd --> Welcome["welcome.rs"]
 Welcome --> Bitmap["bitmap_loader.rs"]
+Rnd --> Browser["browser.rs"]
+Rnd --> AgentRight["agent_right_panel.rs"]
+Rnd --> AgentSide["agent_sidebar.rs"]
+AgentRight --> Layout["layout.rs"]
+AgentSide --> Layout
+Browser --> Layout
+Layout --> AIAgent["ai_agent.rs"]
 RCtx --> D2D["aether-render d2d"]
+Browser --> WebView2["webview2_com"]
 ```
 
 **图表来源** 
@@ -574,6 +754,11 @@ RCtx --> D2D["aether-render d2d"]
 - [user_menu.rs:1-100](file://crates/aether-win32/src/user_menu.rs#L1-L100)
 - [welcome.rs:1-100](file://crates/aether-win32/src/welcome.rs#L1-L100)
 - [bitmap_loader.rs:1-100](file://crates/aether-win32/src/bitmap_loader.rs#L1-L100)
+- [browser.rs:1-651](file://crates/aether-win32/src/browser.rs#L1-L651)
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
+- [layout.rs:1-400](file://crates/aether-win32/src/layout.rs#L1-L400)
+- [ai_agent.rs:1-800](file://crates/aether-ai-panel/src/ai_agent.rs#L1-L800)
 
 **章节来源**
 - [window.rs:1-373](file://crates/aether-win32/src/window.rs#L1-L373)
@@ -584,6 +769,11 @@ RCtx --> D2D["aether-render d2d"]
 - [user_menu.rs:1-100](file://crates/aether-win32/src/user_menu.rs#L1-L100)
 - [welcome.rs:1-100](file://crates/aether-win32/src/welcome.rs#L1-L100)
 - [bitmap_loader.rs:1-100](file://crates/aether-win32/src/bitmap_loader.rs#L1-L100)
+- [browser.rs:1-651](file://crates/aether-win32/src/browser.rs#L1-L651)
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
+- [layout.rs:1-400](file://crates/aether-win32/src/layout.rs#L1-L400)
+- [ai_agent.rs:1-800](file://crates/aether-ai-panel/src/ai_agent.rs#L1-L800)
 
 ## 性能考量
 - 脏矩形优化
@@ -604,6 +794,11 @@ RCtx --> D2D["aether-render d2d"]
   - 消除了文件系统I/O操作，提升了图像加载速度
   - 减少了运行时资源依赖，提高了应用程序的自包含性
   - 避免了CI构建环境中的资源路径解析问题
+- **新增** 浏览器和Agent模式性能优化
+  - WebView2 环境惰性初始化，避免启动时的性能开销
+  - 浏览器实例按需创建，减少内存占用
+  - Agent 面板组件采用增量渲染，只更新变化的部分
+  - 智能体模式下的布局计算经过优化，减少重绘范围
 
 [本节为通用指导，不直接分析具体文件]
 
@@ -619,13 +814,21 @@ RCtx --> D2D["aether-render d2d"]
   - 观察是否有过多不相交脏矩形导致阈值触发
 - 设备丢失导致崩溃
   - 捕获错误码并调用 handle_device_lost，重建渲染目标与缓存
-- **新增** 用户菜单相关问题
+- **更新** 用户菜单相关问题
   - 头像下拉菜单无法显示：检查用户菜单初始化逻辑
   - 菜单点击无响应：验证鼠标事件处理链路
-- **新增** 欢迎屏幕图像问题
+- **更新** 欢迎屏幕图像问题
   - 吉祥物图像无法显示：检查嵌入式PNG资源是否正确编译到二进制文件
   - 图像显示异常：验证bitmap_loader的资源加载逻辑
   - CI构建环境问题：确认构建脚本正确包含了嵌入式资源
+- **新增** 浏览器功能问题
+  - WebView2 环境初始化失败：检查系统是否安装了 WebView2 Runtime
+  - 浏览器标签页无法显示：验证控制器创建和边界同步逻辑
+  - 网页加载缓慢：检查网络连接和 WebView2 配置
+- **新增** Agent 模式问题
+  - 模式切换无效：检查布局管理器的模式切换逻辑
+  - Agent 面板渲染异常：验证右侧面板和侧边栏的渲染流程
+  - AI 工具标记解析失败：检查 ai_agent.rs 中的解析逻辑
 
 **章节来源**
 - [window_setup.rs:18-86](file://crates/aether-win32/src/window/window_setup.rs#L18-L86)
@@ -636,9 +839,14 @@ RCtx --> D2D["aether-render d2d"]
 - [user_menu.rs:1-100](file://crates/aether-win32/src/user_menu.rs#L1-L100)
 - [welcome.rs:1-100](file://crates/aether-win32/src/welcome.rs#L1-L100)
 - [bitmap_loader.rs:1-100](file://crates/aether-win32/src/bitmap_loader.rs#L1-L100)
+- [browser.rs:324-350](file://crates/aether-win32/src/browser.rs#L324-L350)
+- [agent_right_panel.rs:1-568](file://crates/aether-win32/src/render/agent_right_panel.rs#L1-L568)
+- [agent_sidebar.rs:1-284](file://crates/aether-win32/src/render/agent_sidebar.rs#L1-L284)
+- [layout.rs:137-171](file://crates/aether-win32/src/layout.rs#L137-L171)
+- [ai_agent.rs:1-800](file://crates/aether-ai-panel/src/ai_agent.rs#L1-L800)
 
 ## 结论
-牧羊人编辑器的 UI 系统采用清晰的 Win32 窗口管理与 Direct2D/DirectWrite 渲染分层设计，结合脏矩形与多矩形裁剪显著降低重绘成本。输入系统通过模块化键盘/鼠标/IME 处理提升可维护性，主题系统提供灵活的配色与语法着色方案。**最新更新** 通过移除账户设置页面功能和使用嵌入式PNG资源改进欢迎屏幕吉祥物图像处理，UI架构得到显著简化，进一步提升了系统的性能和跨构建环境的一致性。遵循本文的最佳实践与性能建议，可进一步提升 UI 响应性与稳定性。
+牧羊人编辑器的 UI 系统采用清晰的 Win32 窗口管理与 Direct2D/DirectWrite 渲染分层设计，结合脏矩形与多矩形裁剪显著降低重绘成本。输入系统通过模块化键盘/鼠标/IME 处理提升可维护性，主题系统提供灵活的配色与语法着色方案。**最新更新** 通过移除账户设置页面功能、使用嵌入式PNG资源改进欢迎屏幕吉祥物图像处理，以及新增完整的浏览器功能和Agent模式支持，UI架构得到显著优化，进一步提升了系统的性能和跨构建环境的一致性。新增的 WebView2 嵌入式浏览器和 Agent 模式组件为编辑器带来了智能化的工作能力，使其能够更好地支持现代开发工作流程。遵循本文的最佳实践与性能建议，可进一步提升 UI 响应性与稳定性。
 
 [本节为总结，不直接分析具体文件]
 
@@ -649,6 +857,9 @@ RCtx --> D2D["aether-render d2d"]
   - IMM32：输入法管理器，用于 IME 集成
   - D2D/DWrite：Direct2D/DirectWrite，GPU 加速图形与文本渲染
   - PNG：便携式网络图形格式，用于高质量图像存储
+  - WebView2：Microsoft Edge 内核的嵌入式浏览器控件
+  - Agent 模式：AI 驱动的编程助手模式
+  - 智能体模式：与 Agent 模式同义，强调 AI 代理的能力
 - 参考路径
   - 窗口创建与设置：[window_setup.rs](file://crates/aether-win32/src/window/window_setup.rs)
   - 渲染主流程：[render.rs](file://crates/aether-win32/src/render.rs)
@@ -658,5 +869,9 @@ RCtx --> D2D["aether-render d2d"]
   - 主题系统：[theme.rs](file://crates/aether-win32/src/theme.rs)、[aether-render/src/theme.rs](file://crates/aether-render/src/theme.rs)
   - **新增** 用户界面组件：[user_menu.rs](file://crates/aether-win32/src/user_menu.rs)、[account.rs](file://crates/aether-win32/src/render/account.rs)
   - **新增** 欢迎屏幕与图像处理：[welcome.rs](file://crates/aether-win32/src/welcome.rs)、[bitmap_loader.rs](file://crates/aether-win32/src/bitmap_loader.rs)
+  - **新增** 嵌入式浏览器：[browser.rs](file://crates/aether-win32/src/browser.rs)
+  - **新增** Agent 模式组件：[agent_right_panel.rs](file://crates/aether-win32/src/render/agent_right_panel.rs)、[agent_sidebar.rs](file://crates/aether-win32/src/render/agent_sidebar.rs)
+  - **新增** 布局管理：[layout.rs](file://crates/aether-win32/src/layout.rs)
+  - **新增** AI Agent 协议：[ai_agent.rs](file://crates/aether-ai-panel/src/ai_agent.rs)
 
 [本节为附录，不直接分析具体文件]
