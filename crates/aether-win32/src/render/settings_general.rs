@@ -1115,7 +1115,11 @@ impl EditorState {
                     "默认启动模式",
                     format!(
                         "{}（点击切换）",
-                        if default_is_agent { "智能体模式" } else { "开发者模式" }
+                        if default_is_agent {
+                            "智能体模式"
+                        } else {
+                            "开发者模式"
+                        }
                     ),
                     None,
                 ),

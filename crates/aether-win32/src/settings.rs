@@ -1034,13 +1034,7 @@ impl SettingsPanel {
             SettingsTab::Playbook => "playbook",
             SettingsTab::Update => "update",
         };
-        crate::hit_test::register_hit_region(
-            format!("settings_tab:{}", name),
-            x,
-            y,
-            w,
-            h,
-        );
+        crate::hit_test::register_hit_region(format!("settings_tab:{}", name), x, y, w, h);
     }
 
     /// 命中检测：标签页

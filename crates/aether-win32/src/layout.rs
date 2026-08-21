@@ -530,7 +530,8 @@ impl LayoutManager {
     /// 拖拽该拐角可同时调整侧边栏宽度（水平）与底部面板高度（垂直）。
     /// 仅当侧边栏与底部面板同时可见时存在，否则返回 None。
     pub fn corner_left_handle(&self) -> Option<Region> {
-        if !(self.sidebar_visible && self.bottom_panel_visible) || self.welcome_sidebar_suppressed() {
+        if !(self.sidebar_visible && self.bottom_panel_visible) || self.welcome_sidebar_suppressed()
+        {
             return None;
         }
         let editor = self.editor_region();
