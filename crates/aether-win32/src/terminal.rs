@@ -12,6 +12,56 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::conpty::{ConPtySession, PipeReader};
+use aether_core::char_width::char_width as unicode_cell_width;
+
+/// 字符的显示单元宽度（cell，至少 1）。
+///
+/// ConPTY 输出的光标定位/擦除序列全部按显示单元计数（中文占 2 cell），
+/// ANSI 解析器与渲染侧的前缀换算必须共用此定义，否则中文输入后
+/// 光标位置与实际显示错位，退格会残留删不掉的字符。
+#[inline]
+fn cell_w(c: char) -> usize {
+    unicode_cell_width(c).max(1)
+}
+
+/// 保留行内 [0, col) cell 的内容，截断其余部分。
+/// col 落在宽字符中间时，该宽字符整体丢弃（VT 擦除语义）。
+fn truncate_line_at_cell(line: &mut String, col: usize) {
+    let mut kept_cells = 0usize;
+    let kept: Vec<char> = line
+        .chars()
+        .take_while(|&ch| {
+            let cw = cell_w(ch);
+            let fits = kept_cells + cw <= col;
+            if fits {
+                kept_cells += cw;
+            }
+            fits
+        })
+        .collect();
+    line.clear();
+    line.extend(kept.iter());
+}
+
+/// 将行内 [0, col) cell 替换为空格（保持 cell 对齐，不清空行尾内容）
+fn blank_line_before_cell(line: &mut String, col: usize) {
+    let mut cells = 0usize;
+    let out: Vec<char> = line
+        .chars()
+        .flat_map(|ch| {
+            let cw = cell_w(ch);
+            let blank = cells < col;
+            cells += cw;
+            if blank {
+                vec![' '; cw]
+            } else {
+                vec![ch]
+            }
+        })
+        .collect();
+    line.clear();
+    line.extend(out.iter());
+}
 
 /// 终端启动结果（由后台线程产生，传回主线程）
 type TerminalStartupResult = Result<(ConPtySession, mpsc::Receiver<Vec<u8>>), String>;
@@ -155,11 +205,17 @@ impl TerminalPanel {
 
     /// 获取终端光标位置 (row, col)，均为 0-indexed。
     /// 用于渲染光标。row 已被 clamp 到 output_lines 范围内。
+    /// col 为显示单元（cell）计数：中文等宽字符占 2 cell。
     pub fn cursor_position(&self) -> (usize, usize) {
         // 假终端：光标固定在末行末尾（提示符 + 输入内容之后）
         if self.fake_prompt {
             let row = self.output_lines.len().saturating_sub(1);
-            let col = self.prompt_text().chars().count() + self.fake_input.chars().count();
+            let col: usize = self
+                .prompt_text()
+                .chars()
+                .chain(self.fake_input.chars())
+                .map(cell_w)
+                .sum();
             return (row, col);
         }
         let (row, col) = self.ansi_parser.cursor_position();
@@ -192,6 +248,11 @@ impl TerminalPanel {
         let cwd = self.cwd.clone();
         let cols = self.cols;
         let rows = self.rows;
+        // 解析器换行宽度必须与 ConPTY spawn 宽度一致：ConPTY 按自身缓冲区宽度
+        // 隐式换行（长行以连续字符流发出），客户端以同一宽度换行才能保证
+        // 模型行与控制台物理行对齐，否则渲染叠行产生重影
+        self.ansi_parser.set_cols(cols as usize);
+        self.ansi_parser.set_visible_rows(rows as usize);
         let (tx, rx) = mpsc::channel();
         self.startup_receiver = Some(rx);
         self.running = true;
@@ -563,6 +624,48 @@ impl TerminalPanel {
         format!("PS {}> ", self.cwd)
     }
 
+    /// 假终端提示符的字符数（真终端返回 None，由渲染侧启发式识别提示符边界）
+    pub fn fake_prompt_char_count(&self) -> Option<usize> {
+        if self.fake_prompt {
+            Some(self.prompt_text().chars().count())
+        } else {
+            None
+        }
+    }
+
+    /// 按显示列（cell 制）切分行，返回 (前缀字节长度, 前缀 UTF-16 长度, 剩余 cell 数)。
+    ///
+    /// 光标列是 cell 计数，渲染光标方块与 IME 锚点都需要把 cell 列
+    /// 换算成"前缀文本 + DirectWrite 像素宽度"，此函数是唯一换算源。
+    pub fn split_line_at_cell(line: &str, col: usize) -> (usize, usize, usize) {
+        let mut cells = 0usize;
+        let mut byte_len = 0usize;
+        let mut utf16_len = 0usize;
+        for ch in line.chars() {
+            let cw = cell_w(ch);
+            if cells + cw > col {
+                break;
+            }
+            cells += cw;
+            byte_len += ch.len_utf8();
+            utf16_len += ch.len_utf16();
+        }
+        (byte_len, utf16_len, col - cells)
+    }
+
+    /// 返回覆盖光标列（cell 制）的字符，用于计算光标方块宽度
+    pub fn char_at_cell(line: &str, col: usize) -> Option<char> {
+        let mut cells = 0usize;
+        for ch in line.chars() {
+            let cw = cell_w(ch);
+            if cells + cw > col {
+                return Some(ch);
+            }
+            cells += cw;
+        }
+        None
+    }
+
     /// 进入假终端模式：清空输出并显示模拟提示符
     fn enter_fake_prompt(&mut self) {
         self.fake_prompt = true;
@@ -805,7 +908,7 @@ pub enum ArrowKey {
 struct AnsiParser {
     /// 光标行位置（0-indexed，指向 lines 中的索引）
     cursor_row: usize,
-    /// 光标列位置（0-indexed，按字符计数）
+    /// 光标列位置（0-indexed，按显示单元 cell 计数，中文占 2）
     cursor_col: usize,
     /// 解析状态机
     state: ParseState,
@@ -813,7 +916,10 @@ struct AnsiParser {
     csi_buffer: String,
     /// 可见行数（用于 \x1b[2J 清屏时只清可见区域，保留滚动缓冲）
     visible_rows: usize,
-    /// 是否抑制清屏序列（ConPTY 启动初期设为 true，避免初始化清屏清空提示符）
+    /// 终端宽度（cell 数），用于右边界 VT 自动换行；须与 ConPTY spawn 宽度一致
+    cols: usize,
+    /// 是否抑制全屏清屏序列（ConPTY 启动初期设为 true，仅跳过 ESC[2J/3J，
+    /// 避免初始化清屏清空提示符；ESC[K 清行不受影响，退格重绘必须生效）
     pub suppress_clear: bool,
 }
 
@@ -837,6 +943,7 @@ impl AnsiParser {
             state: ParseState::Normal,
             csi_buffer: String::new(),
             visible_rows: 24,
+            cols: 80,
             suppress_clear: false,
         }
     }
@@ -844,6 +951,11 @@ impl AnsiParser {
     /// 设置可见行数（由 TerminalPanel::set_size 同步）
     fn set_visible_rows(&mut self, rows: usize) {
         self.visible_rows = rows.max(1);
+    }
+
+    /// 设置自动换行宽度（由 TerminalPanel::start 同步，与 ConPTY spawn 宽度一致）
+    fn set_cols(&mut self, cols: usize) {
+        self.cols = cols.max(1);
     }
 
     /// 返回当前光标位置 (row, col)，均为 0-indexed。
@@ -936,25 +1048,65 @@ impl AnsiParser {
         }
     }
 
-    /// 在光标位置写入一个字符，光标列右移
+    /// 在光标位置写入一个字符，光标列按该字符的显示宽度右移。
+    ///
+    /// 列位置为 cell 制：写入宽字符（中文）占 2 cell；光标落在宽字符
+    /// 中间时按 VT 语义丢弃该宽字符；覆盖区域内已有字符被替换。
     fn write_char(&mut self, c: char, lines: &mut VecDeque<String>) {
+        // VT 自动换行：ConPTY 把超出控制台宽度的长行作为连续字符流发出，
+        // 依赖客户端在右边距自动换行。此处不换行则模型产生超长行，
+        // 渲染侧 DrawText 视觉换行会叠到相邻行上形成重影。
+        let w = cell_w(c);
+        if self.cursor_col >= self.cols {
+            // 上一字符填满末列：延迟换行在写入下一字符时生效
+            self.cursor_row += 1;
+            self.cursor_col = 0;
+        } else if w > 1 && self.cursor_col + w > self.cols {
+            // 宽字符放不下剩余边距：整体换行（行尾留空）
+            self.cursor_row += 1;
+            self.cursor_col = 0;
+        }
         self.ensure_line_exists(lines);
         if let Some(line) = lines.get_mut(self.cursor_row) {
-            let char_count = line.chars().count();
-            if self.cursor_col >= char_count {
-                // 追加模式：用空格填充间隙后追加
-                for _ in char_count..self.cursor_col {
-                    line.push(' ');
+            let col = self.cursor_col;
+            let mut chars: Vec<char> = line.chars().collect();
+            // 定位光标列对应的字符下标（cell 制），start 为该字符的起始列
+            let mut start = 0usize;
+            let mut idx = chars.len();
+            let mut i = 0usize;
+            while i < chars.len() {
+                let cw = cell_w(chars[i]);
+                if start >= col {
+                    idx = i;
+                    break;
                 }
-                line.push(c);
-            } else {
-                // 覆盖模式：替换光标位置的字符
-                let mut chars: Vec<char> = line.chars().collect();
-                chars[self.cursor_col] = c;
-                line.clear();
-                line.extend(chars.iter());
+                if start + cw > col {
+                    // 光标落在宽字符中间：整字符丢弃（擦除残半语义）
+                    chars.remove(i);
+                    idx = i;
+                    start += cw;
+                    break;
+                }
+                start += cw;
+                i += 1;
             }
-            self.cursor_col += 1;
+            // 记录是否处于行尾追加模式（后续补空格后插入点须跟着行尾走）
+            let append_mode = idx == chars.len();
+            // 覆盖模式：移除落在 [col, col+w) 内的已有字符
+            while idx < chars.len() && start < col + w {
+                start += cell_w(chars[idx]);
+                chars.remove(idx);
+            }
+            // 光标列超出行尾：补空格后再写入
+            while start < col {
+                chars.push(' ');
+                start += 1;
+            }
+            let pos = if append_mode { chars.len() } else { idx };
+            chars.insert(pos, c);
+            line.clear();
+            line.extend(chars.iter());
+            self.cursor_col += w;
         }
     }
 
@@ -1015,22 +1167,23 @@ impl AnsiParser {
             }
             // 清屏
             'J' => {
-                if self.suppress_clear {
-                    tracing::info!("AnsiParser: suppress_clear=true，跳过 \\x1b[J 清屏");
+                let mode = params.first().copied().unwrap_or(0);
+                // 仅抑制 ConPTY 启动期的全屏清屏（mode 2/3），避免初始化清屏清空提示符；
+                // 部分清屏（mode 0/1）必须照常生效——Backspace 重绘依赖它们，
+                // 否则删除的字符会残留在屏幕上
+                if self.suppress_clear && matches!(mode, 2 | 3) {
+                    tracing::info!(
+                        "AnsiParser: suppress_clear=true，跳过 \\x1b[{}J 全屏清屏",
+                        mode
+                    );
                     return;
                 }
-                let mode = params.first().copied().unwrap_or(0);
                 match mode {
                     0 => {
                         // 从光标到屏底清除
                         self.ensure_line_exists(lines);
                         if let Some(line) = lines.get_mut(self.cursor_row) {
-                            let char_count = line.chars().count();
-                            if self.cursor_col < char_count {
-                                let chars: Vec<char> = line.chars().take(self.cursor_col).collect();
-                                line.clear();
-                                line.extend(chars.iter());
-                            }
+                            truncate_line_at_cell(line, self.cursor_col);
                         }
                         // 移除光标行之后的所有行
                         while lines.len() > self.cursor_row + 1 {
@@ -1044,9 +1197,7 @@ impl AnsiParser {
                             lines[i].clear();
                         }
                         if let Some(line) = lines.get_mut(self.cursor_row) {
-                            let chars: Vec<char> = line.chars().skip(self.cursor_col).collect();
-                            line.clear();
-                            line.extend(chars.iter());
+                            blank_line_before_cell(line, self.cursor_col);
                         }
                     }
                     2 | 3 => {
@@ -1065,29 +1216,20 @@ impl AnsiParser {
                     _ => {}
                 }
             }
-            // 清行
+            // 清行（不可被 suppress_clear 抑制：Backspace 删除字符后 shell
+            // 靠 ESC[K 擦掉残影，抑制它会导致"删不掉的字符"残留）
             'K' => {
-                if self.suppress_clear {
-                    return;
-                }
                 let mode = params.first().copied().unwrap_or(0);
                 self.ensure_line_exists(lines);
                 if let Some(line) = lines.get_mut(self.cursor_row) {
                     match mode {
                         0 => {
                             // 从光标到行尾清除
-                            let char_count = line.chars().count();
-                            if self.cursor_col < char_count {
-                                let chars: Vec<char> = line.chars().take(self.cursor_col).collect();
-                                line.clear();
-                                line.extend(chars.iter());
-                            }
+                            truncate_line_at_cell(line, self.cursor_col);
                         }
                         1 => {
-                            // 从行首到光标清除
-                            let chars: Vec<char> = line.chars().skip(self.cursor_col).collect();
-                            line.clear();
-                            line.extend(chars.iter());
+                            // 从行首到光标清除（置空格保持对齐）
+                            blank_line_before_cell(line, self.cursor_col);
                         }
                         2 => {
                             line.clear();
@@ -1096,22 +1238,32 @@ impl AnsiParser {
                     }
                 }
             }
-            // 擦除字符（不移动光标和后续字符）
+            // 擦除字符（不移动光标和后续字符），按 cell 计数
             'X' => {
                 let n = params.first().copied().unwrap_or(1).max(1) as usize;
                 self.ensure_line_exists(lines);
                 if let Some(line) = lines.get_mut(self.cursor_row) {
-                    let mut chars: Vec<char> = line.chars().collect();
-                    for i in 0..n {
-                        let pos = self.cursor_col + i;
-                        if pos < chars.len() {
-                            chars[pos] = ' ';
+                    let col = self.cursor_col;
+                    let end = col + n;
+                    let mut cells = 0usize;
+                    let mut out: Vec<char> = Vec::new();
+                    for ch in line.chars() {
+                        let cw = cell_w(ch);
+                        if cells + cw <= col || cells >= end {
+                            out.push(ch);
                         } else {
-                            chars.push(' ');
+                            for _ in 0..cw {
+                                out.push(' ');
+                            }
                         }
+                        cells += cw;
+                    }
+                    while cells < end {
+                        out.push(' ');
+                        cells += 1;
                     }
                     line.clear();
-                    line.extend(chars.iter());
+                    line.extend(out.iter());
                 }
             }
             // private mode（?h/?l）：show/hide cursor, alternate screen 等 — 忽略

@@ -671,6 +671,46 @@ function Get-AetherLog {
     }
 }
 
+function Get-AetherLogMark {
+    <# 返回当前日志位置标记 @{ Path; ByteLength }。
+       与 Get-AetherLogSince 配合：只观察"打标记之后"新追加的日志行，
+       避免误匹配同一天早先会话的日志（日志按天追加写同一文件）。
+       用字节长度而非行数做基线：tracing 以 \n 换行写入，Get-Content
+       的行计数与之不完全一致，行数偏移会导致基线漏/重数行。 #>
+    $mark = @{ Path = $null; ByteLength = 0 }
+    if (Test-Path $script:LogDir) {
+        $log = Get-ChildItem $script:LogDir -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($log) {
+            $mark.Path = $log.FullName
+            # 用 Get-Item 现取长度：Get-ChildItem 的 Length 是枚举时刻快照，
+            # 应用正在追加写日志时会偏小，导致基线前的旧行漏进观察窗口
+            $mark.ByteLength = (Get-Item -LiteralPath $log.FullName).Length
+        }
+    }
+    [pscustomobject]$mark
+}
+
+function Get-AetherLogSince {
+    <# 返回 Get-AetherLogMark 打标记之后新追加的日志行。
+       -Pattern 可选正则过滤。用于"本次操作期间不应出现 X / 应出现 X"类断言，
+       比 Get-AetherLog（全天日志）精确，不受历史会话污染。 #>
+    param(
+        [Parameter(Mandatory)]$Mark,
+        [string]$Pattern
+    )
+    if (-not $Mark.Path -or -not (Test-Path $Mark.Path)) { return @() }
+    $fs = [System.IO.File]::Open($Mark.Path, 'Open', 'Read', 'ReadWrite')
+    try {
+        $fs.Seek($Mark.ByteLength, 'Begin') | Out-Null
+        $tail = (New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)).ReadToEnd()
+    } finally { $fs.Dispose() }
+    $lines = @($tail -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ })
+    if ($Pattern) { $lines = @($lines | Select-String $Pattern | ForEach-Object { $_.Line }) }
+    # 平铺返回：调用方 @() 收集后 .Count 语义正确（空结果即 0）。
+    # 若用逗号包裹，调用方 @() 二次包裹会让空结果 Count=1 造成假阳性。
+    return $lines
+}
+
 function Wait-AetherLogEvent {
     <# 轮询等待日志中出现指定正则（如异步行为完成：高亮着色、LSP 诊断）。
        只观察调用时刻之后**新增**的日志行（不会误匹配历史会话/旧日志）。
@@ -708,7 +748,8 @@ function Wait-AetherLogEvent {
 
 function Read-AetherHitRegions {
     <# 读取 tests/gui_hit_regions.jsonl（debug 构建自动记录每帧可点击区域）。
-       -Contains 传入 @{X;Y} 过滤包含该屏幕坐标的区域；-ActionLike 按名称模糊过滤。
+       -Contains 传入 @{X;Y} 过滤包含该坐标的区域（坐标与 region 同空间：
+       窗口内、名义值×Scale，非屏幕物理坐标）；-ActionLike 按名称模糊过滤。
        返回区域数组 @{ action; x; y; width; height }。 #>
     param(
         [hashtable]$Contains,
@@ -725,7 +766,9 @@ function Read-AetherHitRegions {
         })
     }
     if ($ActionLike) { $regions = @($regions | Where-Object { $_.action -like $ActionLike }) }
-    , $regions
+    # 平铺返回（管道枚举）：调用方用 @() 收集即为平坦数组，.Count 语义正确。
+    # 注意勿用逗号包裹返回——调用方 @() 会二次包裹，空结果 Count 也成 1。
+    return $regions
 }
 
 # ---------------------------------------------------------------- 用例与断言
@@ -822,6 +865,6 @@ Export-ModuleMember -Function Build-AetherApp, Start-AetherApp, Stop-AetherApp,
     Resize-AetherWindow, Move-AetherWindow, Set-AetherWindowState, Close-AetherWindow,
     Send-AetherDropFiles,
     Save-AetherScreenshot, New-AetherTestWorkspace, Remove-AetherTestWorkspace,
-    Get-AetherLog, Wait-AetherLogEvent, Read-AetherHitRegions,
+    Get-AetherLog, Get-AetherLogMark, Get-AetherLogSince, Wait-AetherLogEvent, Read-AetherHitRegions,
     Start-TestCase, Invoke-TestStep, Assert-Condition, Assert-PathExists,
     Assert-PathMissing, Complete-TestCase

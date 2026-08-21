@@ -35,6 +35,12 @@ pub(crate) unsafe fn on_key_down(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
         return DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
+    if let Some(r) = okd_browser_address(hwnd, vk) {
+        return r;
+    }
+    if let Some(r) = okd_empty_search(hwnd, vk, msg, wparam, lparam) {
+        return r;
+    }
     if let Some(r) = okd_file_tree_input(hwnd, vk) {
         return r;
     }
@@ -1165,4 +1171,127 @@ unsafe fn okd_ai_panel_input(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
         }
         _ => None,
     }
+}
+
+/// 内置浏览器地址栏编辑中的按键处理：回车导航、Esc 取消、退格删字；
+/// 其余带 Ctrl 的组合键吞掉防止编辑器快捷键误响应
+unsafe fn okd_browser_address(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
+    let Some(state) = get_and_set_state(hwnd) else {
+        return None;
+    };
+    let mut st = state.borrow_mut();
+    let id = st.active_browser_id()?;
+    let editing = st
+        .browser
+        .get(id)
+        .map(|i| i.address_editing)
+        .unwrap_or(false);
+    if !editing {
+        return None;
+    }
+    match vk {
+        VK_RETURN => {
+            if let Some(inst) = st.browser.get_mut(id) {
+                let input = inst.address_text.clone();
+                inst.navigate_input(&input);
+            }
+        }
+        VK_ESCAPE => {
+            if let Some(inst) = st.browser.get_mut(id) {
+                inst.address_editing = false;
+                inst.address_text = inst.url.clone();
+            }
+        }
+        VK_BACK => {
+            if let Some(inst) = st.browser.get_mut(id) {
+                inst.address_text.pop();
+            }
+        }
+        VK_LEFT | VK_RIGHT | VK_HOME | VK_END | VK_DELETE => {
+            // 追加式编辑：光标固定末尾，导航/删除键吞掉不做处理
+        }
+        _ => {
+            // Ctrl 组合键（Ctrl+W/T 等）吞掉，防止编辑器/标签快捷键误响应
+            let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
+            if !ctrl {
+                return None;
+            }
+        }
+    }
+    drop(st);
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
+}
+
+/// 智能体模式空状态快捷搜索框按键：
+/// Enter 直接执行搜索/导航并打开浏览器标签，Esc 取消，Backspace 删除末尾字符。
+unsafe fn okd_empty_search(
+    hwnd: HWND,
+    vk: VIRTUAL_KEY,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> Option<LRESULT> {
+    let Some(state) = get_and_set_state(hwnd) else {
+        return None;
+    };
+    let focused = state.borrow().browser.empty_search_focused;
+    if !focused {
+        return None;
+    }
+    // 兜底：搜索框仅在新标签页交互区可见，离开时释放焦点，防止键盘路由泄漏
+    if !state.borrow().ntp_active() {
+        state.borrow_mut().browser.reset_empty_search();
+        return None;
+    }
+    let composing = state.borrow().browser.empty_search_composition.is_some();
+    if composing {
+        // IME 合成期：交给默认窗口过程，让 IMM32 处理（确认/取消合成串）
+        return Some(DefWindowProcW(hwnd, msg, wparam, lparam));
+    }
+    let mut st = state.borrow_mut();
+    // WebView2 不可用时的回退 URL：ShellExecuteW 会泵送窗口消息，必须在 state 借用之外调用，
+    // 否则重入的消息处理器再次借用 state 触发 RefCell panic 闪退
+    let mut external_url: Option<String> = None;
+    match vk {
+        VK_RETURN => {
+            // 直接搜索用户输入：normalize_url 区分网址与搜索词（空输入 → 主页）
+            let input = st.browser.empty_search_text.clone();
+            let url = crate::browser::normalize_url(&input);
+            st.browser.reset_empty_search();
+            if st.browser.env_failed {
+                // 系统缺少 WebView2 Runtime：回退系统默认浏览器
+                external_url = Some(url);
+            } else {
+                // 双模式均在内置 WebView2 浏览器标签打开（应用内浏览，不跳转外部浏览器）
+                st.open_browser_tab(&url);
+            }
+        }
+        VK_ESCAPE => {
+            st.browser.reset_empty_search();
+        }
+        VK_BACK => {
+            st.browser.empty_search_text.pop();
+            st.browser.empty_search_caret_visible = true;
+        }
+        VK_LEFT | VK_RIGHT | VK_HOME | VK_END | VK_DELETE => {
+            // 追加式编辑：光标固定末尾，导航/删除键吞掉不做处理
+        }
+        _ => {
+            // Ctrl 组合键吞掉，防止编辑器/标签快捷键误响应
+            let ctrl = GetKeyState(VK_CONTROL.0 as i32) < 0;
+            if !ctrl {
+                return None;
+            }
+        }
+    }
+    drop(st);
+    if let Some(url) = external_url {
+        crate::browser::open_external_url(&url);
+        if let Some(s2) = get_and_set_state(hwnd) {
+            s2.borrow_mut().ui.status_message = format!("已在默认浏览器打开: {url}");
+        }
+    }
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
 }

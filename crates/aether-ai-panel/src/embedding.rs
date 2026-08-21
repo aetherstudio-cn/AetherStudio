@@ -1,7 +1,7 @@
 //! 文本嵌入模块（ONNX Runtime）
 //!
 //! 使用 sentence-transformers 模型将文本编码为稠密向量，
-//! 供 MemoryStore 的 sqlite-vec 语义检索使用。
+//! 供 MemoryStore 的向量语义检索使用。
 //!
 //! 全局单例懒加载：调用 [`init_embedding_model`] 后，
 //! [`embed_text`] 使用真实模型；未初始化时回退到 n-gram 哈希向量

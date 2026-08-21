@@ -45,8 +45,9 @@ pub(crate) unsafe fn on_r_button_down(
     let nodes_start_y = st.file_tree_nodes_start_y();
 
     // SubTask 9.3: 标签右键——检测是否命中标签栏的某个标签
+    // 智能体模式下标签栏在右侧面板顶部，使用实际区域
     let show_tab_bar = st.show_tab_bar();
-    let tab_region = st.ui.layout.tab_bar_region(show_tab_bar);
+    let tab_region = st.effective_tab_bar_region();
     if show_tab_bar && tab_region.contains(mouse_x, mouse_y) {
         if let Some(tab_idx) = st.tab_body_hit_test(mouse_x, mouse_y, tab_region.x, tab_region.y) {
             // 获取该标签的 file_path（用于判断 has_path 和复制路径）

@@ -53,6 +53,9 @@ exit (Complete-TestCase)
 - 文件树第 i 个节点行中心：
   `NX ($L.TITLE_BAR + $L.HEADER_H + 6 + $L.ROW_H * ($i + 1) + $L.ROW_H / 2)`（目录优先 + 字母序）。
 - 状态栏 y ≈ `NX ($L.TITLE_BAR + 窗口内容高 - $L.STATUS_H)`。
+- **hit region 坐标空间**：jsonl 里的 x/y/width/height 是"名义值×Scale"
+  （布局常量已乘一次 DPI 比例），转物理坐标需再乘 `$win.Scale` 一次。
+  `Invoke-AetherSmartClick` 内部已做该换算，手算坐标时勿忘。
 
 ## 4. 输入方式选择
 
@@ -136,10 +139,17 @@ Aether 窗口且位置重叠，请先用 `-Isolate` 移动测试窗口。
   （只观察调用后**新增**的日志行，不会误匹配历史会话）。
 - **hit regions**：`Read-AetherHitRegions -Contains @{X;Y}` —— debug 构建每帧把可点击
   区域写入 `tests/gui_hit_regions.jsonl`，可验证"点击位置预期落在哪个按钮/节点"。
+  注意 `-Contains` 的坐标与 region 同空间（窗口内、名义值×Scale），不是屏幕物理坐标。
   状态栏语言区域（`status:Rust` 等）是"文件打开成功"的可靠证据——
   **status_message（"已打开: xxx"）不写日志**，不要用日志断言它。
   注意 hit regions 是历史累计的，断言前可删除 jsonl 建立干净基线。
 - **截图**：`Save-AetherScreenshot -Window -Name`；像素断言 `Test-AetherPixelRegion`。
+- **截图差异（冻结检测）**：`Compare-AetherScreenshot -Before -After` 返回变化像素占比，
+  `Assert-AetherUiChanged -Before -After -MinChangedRatio` 断言操作后画面变化。
+  用于"点击没反应/窗口冻结"类回归：冻结时 EndDraw 永久失败，前后截图逐像素一致。
+- **日志基线**：`Get-AetherLogMark` 记录当前日志位置，`Get-AetherLogSince -Mark $m -Pattern X`
+  只返回打标记后新增的行——"本次会话期间不应出现 X"类断言用它，
+  比 `Get-AetherLog`（全天日志）精确，不受同天早先会话污染。
 - **UI 状态**：`Get-AetherUiState -Process` 返回日志尾部 + hit regions + CPU/内存，
   供探索式测试的"观察-决策"循环。
 - **编辑器状态**：`Get-AetherEditorState -Process` 返回标签数、状态栏项、最近日志。
@@ -194,7 +204,7 @@ $results = Invoke-AetherActionScript -Window $win -Actions $actions
 
 ```powershell
 # 智能查找并点击（根据动作名称自动定位）
-Invoke-AetherSmartClick -Window $win -ActionLike "new_file"
+Invoke-AetherSmartClick -Window $win -ActionLike "sidebar:new_file"
 Invoke-AetherSmartClick -Window $win -ActionLike "tab:*" -Right   # 右键标签
 
 # 等待 UI 元素出现
@@ -251,6 +261,32 @@ Write-Host "标签数: $($state.TabCount), 状态栏: $($state.StatusBarItems -j
     与真实键盘行为一致。应用通过 `GetKeyState` 检测修饰键状态。
 13. **WM_DROPFILES 无法 PostMessage**：文件拖放需要构造 HDROP 句柄，
     `Send-AetherDropFiles` 当前抛出异常提示替代方案（Ctrl+O / Start-AetherApp -Folder）。
+14. **"点击没反应"类缺陷的回归写法**：此类缺陷多为渲染管线冻结（如 D2D 裁剪栈
+    Push/Pop 不配对毒化渲染目标，EndDraw 永久返回 0x88990014），状态层正确但画面
+    停在旧帧。断言三件套：操作前后截图 `Assert-AetherUiChanged`（画面必须变化）+
+    再触发一次可见交互验证持续响应 + `Get-AetherLogSince` 断言无 "EndDraw 失败"。
+    参考用例：`cases/settings_gear_tab.tests.ps1`。
+15. **编辑器模式持久化污染用例**：模式存于 `%APPDATA%\Aether\settings.json` 的
+    `ui.editor_mode`，依赖特定模式的用例（如齿轮开设置 tab 仅开发者模式）启动前
+    检测该字段，必要时临时改写并在 finally 中先停进程再还原（应用退出时会落盘）。
+16. **PowerShell 返回值数组语义**：函数用 `, $x` 逗号包裹返回时，调用方再套 `@()`
+    会二次包裹——空结果 `.Count` 也成 1（假阳性），索引取到整个数组（坐标运算抛
+    op_Division）。另注意逗号优先级低于下标：`return , $arr[$i]` 解析为 `(,$arr)[$i]`。
+    框架约定：返回**集合**的函数平铺返回（`return $lines`），调用方 `@()` 收集；
+    返回**单对象**的函数直接 `return $obj`，调用方直接赋值（直接赋值不展开管道）。
+17. **末尾参数组展开陷阱**：`F -A $a -B $b @(if ($r) { @{X=$true} } else { @{} })`
+    中，非空哈希表会炸成多个命名实参、空哈希表展开为零个实参，都报
+    "找不到接受 Object[] 的位置参数"。可选开关一律显式分支：
+    `if ($r) { F -A $a -B $b -X } else { F -A $a -B $b }`。
+18. **hit region 坐标不是物理坐标**：jsonl 坐标是名义值×Scale（布局已乘一次 DPI），
+    PostMessage 点击要物理坐标，需再乘 `$win.Scale`。`Invoke-AetherSmartClick`
+    已内置换算；直接拿 region 坐标 `Send-AetherClickMsg` 会点偏（高 DPI 下偏约 1/3）。
+19. **持久化布局污染手算坐标**：侧栏宽度等布局状态用户可调且持久化，
+    锚定右缘的控件（如侧栏头部新建文件/文件夹按钮）手算坐标必偏。
+    新增可交互控件应在渲染处 `register_hit_region`（debug 构建零成本，
+    release 空实现），用例一律 `Invoke-AetherSmartClick` 语义点击。
+    已注册语义区域：`titlebar:*`、`activity:*`、`status:*`、`tab:*`、
+    `sidebar:new_file`、`sidebar:new_folder`。
 
 ## 11. 运行入口
 

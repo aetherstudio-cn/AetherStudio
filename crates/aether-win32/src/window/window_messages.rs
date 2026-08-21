@@ -114,7 +114,7 @@ unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
     LRESULT(0)
 }
 
-/// AI 温数据归档：周期检查空闲会话并异步归档进 MemoryStore（SQLite）
+/// AI 温数据归档：周期检查空闲会话并异步归档进 MemoryStore（AetherDB）
 unsafe fn on_timer_ai_archive(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
         state.borrow_mut().ai.ai_panel.trigger_warm_archive();
@@ -292,16 +292,28 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             need_invalidate = true;
             any_active = true;
         }
-        // AI 助手输入框光标闪烁（右侧面板）
+        // AI 助手输入框光标闪烁（智能体模式中间列 / 经典模式右面板）
         if st.ai.ai_panel.input_focused {
             st.ai.ai_panel.caret_visible = !st.ai.ai_panel.caret_visible;
-            let rp = st.ui.layout.right_panel_region().clone();
+            st.mark_ai_panel_dirty();
+            need_invalidate = true;
+            any_active = true;
+        }
+        // 新标签页快捷搜索框光标闪烁（智能体模式右面板 / 经典模式编辑器内容区）
+        if st.browser.empty_search_focused {
+            st.browser.empty_search_caret_visible = !st.browser.empty_search_caret_visible;
+            let ntp_region = st.new_tab_page_region(&st.ui.layout).clone();
+            let region_type = if st.editor_mode.is_agent() {
+                crate::dirty_rect::DirtyRegionType::RightPanel
+            } else {
+                crate::dirty_rect::DirtyRegionType::EditorContent
+            };
             st.win.dirty_tracker.mark_region(
-                rp.x,
-                rp.y,
-                rp.width,
-                rp.height,
-                crate::dirty_rect::DirtyRegionType::RightPanel,
+                ntp_region.x,
+                ntp_region.y,
+                ntp_region.width,
+                ntp_region.height,
+                region_type,
             );
             need_invalidate = true;
             any_active = true;
@@ -496,6 +508,23 @@ pub(crate) unsafe fn on_wm_app_12(
     });
     // REQ-P1-07: 不直接调用 render()，触发 WM_PAINT 统一渲染，避免双重渲染
     invalidate_window(_hwnd);
+    LRESULT(0)
+}
+
+/// msg if msg == crate::browser::WM_BROWSER_EVENT
+///
+/// 内置浏览器：WebView2 回调在 UI 线程把动作压入挂起队列并 PostMessage 到这里，
+/// 此处统一排空应用（环境/控制器就绪、URL/标题/历史变化等）
+pub(crate) unsafe fn on_browser_event(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    if let Some(state) = get_and_set_state(hwnd) {
+        state.borrow_mut().browser.drain_pending(hwnd);
+        invalidate_window(hwnd);
+    }
     LRESULT(0)
 }
 

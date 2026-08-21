@@ -1,0 +1,7 @@
+[package]
+name = "aether-db"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+memmap2 = "0.9"

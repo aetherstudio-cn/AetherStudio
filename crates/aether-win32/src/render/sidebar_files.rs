@@ -42,6 +42,11 @@ impl EditorState {
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
                 )
                 .unwrap();
+            // 禁止自动换行：侧边栏宽度不足时"资源管理器"直接裁剪（覆盖到按钮区域），
+            // 避免汉字被挤压成两列堆叠
+            let _ = header_format.SetWordWrapping(
+                windows::Win32::Graphics::DirectWrite::DWRITE_WORD_WRAPPING_NO_WRAP,
+            );
             let tree_format = self
                 .win
                 .render_ctx
@@ -121,7 +126,7 @@ impl EditorState {
             // 章节标题栏（紧凑风格，高度与 file_tree_list_start_y 共用常量）
             // 使用逻辑像素（与 TAB_BAR_HEIGHT 一致，不乘 dpi_scale，Direct2D 自动处理缩放）
             let header_h = crate::layout::FILE_TREE_HEADER_HEIGHT;
-            let header_text: Vec<u16> = "资源管理器".encode_utf16().chain(Some(0)).collect();
+            let header_text: Vec<u16> = "工作区".encode_utf16().chain(Some(0)).collect();
             let header_text_rect = D2D_RECT_F {
                 left: x + 10.0 * s,
                 top: y,
@@ -165,6 +170,24 @@ impl EditorState {
                 new_folder_rect.right - new_folder_rect.left,
                 new_folder_rect.bottom - new_folder_rect.top,
             ));
+
+            // TEST: 注册语义 hit region，供 GUI 自动化语义点击。
+            // 按钮锚定侧栏右缘，而侧栏宽度用户可调且持久化，手算坐标必偏，
+            // 只能靠语义定位（与 titlebar:* 按钮同一机制）。
+            crate::hit_test::register_hit_region(
+                "sidebar:new_file",
+                new_file_rect.left,
+                new_file_rect.top,
+                new_file_rect.right - new_file_rect.left,
+                new_file_rect.bottom - new_file_rect.top,
+            );
+            crate::hit_test::register_hit_region(
+                "sidebar:new_folder",
+                new_folder_rect.left,
+                new_folder_rect.top,
+                new_folder_rect.right - new_folder_rect.left,
+                new_folder_rect.bottom - new_folder_rect.top,
+            );
 
             let nf_hover = self
                 .fs

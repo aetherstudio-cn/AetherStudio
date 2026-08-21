@@ -193,7 +193,7 @@ mod tests {
     fn test_activity_item_new() {
         let item = ActivityItem::new(ActivityBarView::Explorer);
         assert_eq!(item.view, ActivityBarView::Explorer);
-        assert_eq!(item.tooltip, "资源管理器");
+        assert_eq!(item.tooltip, "工作区");
         assert!(!item.is_active);
     }
 

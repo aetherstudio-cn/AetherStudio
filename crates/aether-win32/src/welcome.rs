@@ -30,12 +30,16 @@ pub struct WelcomeLayout {
     pub left_col_width: f32,
     pub right_col_x: f32,
     pub right_col_width: f32,
-    pub top_margin: f32,
+    /// 内容块顶部绝对 y 坐标（品牌行/标题行起点）
+    pub content_top: f32,
+    /// 内容块底部绝对 y 坐标（分隔线终点）
+    pub content_bottom: f32,
     pub action_start_y: f32,
     pub action_item_h: f32,
     pub action_gap: f32,
     pub project_start_y: f32,
     pub project_item_h: f32,
+    pub project_gap: f32,
     pub more_y: Option<f32>,
     pub more_height: f32,
     /// 空状态"打开文件夹"按钮 rect (left, top, right, bottom)，仅在最近项目为空时为 Some
@@ -44,41 +48,64 @@ pub struct WelcomeLayout {
 
 impl WelcomeLayout {
     pub fn compute(x: f32, y: f32, width: f32, height: f32, project_count: usize) -> Self {
-        let top_margin = height * 0.10;
-        // 提升信息密度：使用 88% 的窗口宽度（原 70%），列间距收窄到 8%
-        let content_scale = 0.88f32;
-        let left_col_ratio = 0.42f32;
-        let right_col_ratio = 0.50f32;
-        let gap_ratio = 0.08f32;
-        let total_content_width = width * content_scale;
-        let left_col_width = total_content_width * left_col_ratio;
-        let right_col_width = total_content_width * right_col_ratio;
-        let col_gap = total_content_width * gap_ratio;
-        let left_col_x = x + width * 0.06;
+        // 精致化布局：内容总宽度上限 880px，水平居中，避免宽屏下拉伸臃肿
+        let total_content_width = (width * 0.86).min(880.0).max(0.0);
+        let col_gap = (total_content_width * 0.10).clamp(16.0, 56.0);
+        // 左右等宽：右列按内容所需取宽，避免右侧卡片留出大片空白
+        let left_col_ratio = 0.50f32;
+        let left_col_width = ((total_content_width - col_gap) * left_col_ratio).max(0.0);
+        let right_col_width = (total_content_width - col_gap - left_col_width).max(0.0);
+        let left_col_x = x + (width - total_content_width) / 2.0;
         let right_col_x = left_col_x + left_col_width + col_gap;
 
-        // 收窄品牌区与操作列表之间的间距（原 +100 → +76）
-        let action_start_y = y + top_margin + 76.0;
-        let action_item_h = 44.0f32;
-        let action_gap = 4.0f32;
+        // 紧凑尺寸常量
+        let brand_h = 48.0f32;
+        let brand_actions_gap = 28.0f32;
+        let action_item_h = 34.0f32;
+        let action_gap = 6.0f32;
+        let action_count = 4.0f32;
+        let tip_h = 18.0f32;
+        let left_col_height = brand_h
+            + brand_actions_gap
+            + action_count * action_item_h
+            + (action_count - 1.0) * action_gap
+            + 20.0
+            + tip_h;
 
-        let project_start_y = y + top_margin + 40.0;
-        let project_item_h = 52.0f32;
+        let heading_h = 24.0f32;
+        let project_item_h = 44.0f32;
+        let project_gap = 6.0f32;
+        let n = project_count as f32;
+        let right_col_height = if project_count > 0 {
+            heading_h + 10.0 + n * project_item_h + (n - 1.0) * project_gap + 12.0 + 20.0
+        } else {
+            // 空状态：图标40 + 12 + 主文案20 + 6 + 副文案16 + 14 + 按钮30
+            heading_h + 10.0 + 40.0 + 12.0 + 20.0 + 6.0 + 16.0 + 14.0 + 30.0
+        };
+
+        // 垂直居中：取两列较高者作为内容块高度，窗口过小时保留 16px 顶边距
+        let content_height = left_col_height
+            .max(right_col_height)
+            .min((height - 32.0).max(0.0));
+        let content_top = y + ((height - content_height) / 2.0).max(16.0);
+        let content_bottom = content_top + content_height;
+
+        let action_start_y = content_top + brand_h + brand_actions_gap;
+        let project_start_y = content_top + heading_h + 10.0;
 
         let more_y = if project_count > 0 {
-            Some(project_start_y + project_count as f32 * (project_item_h + 8.0) + 12.0)
+            Some(project_start_y + n * (project_item_h + project_gap) + 12.0)
         } else {
             None
         };
-        let more_height = 22.0f32;
+        let more_height = 20.0f32;
 
         // 空状态按钮：仅在无最近项目时计算
-        // 布局：图标(48) + 12 间距 + 主文案(20) + 6 间距 + 副文案(16) + 16 间距 → 按钮顶部
         let empty_state_button_rect = if project_count == 0 {
             let center_x = right_col_x + right_col_width / 2.0;
             let button_w = 120.0f32;
-            let button_h = 32.0f32;
-            let button_y = project_start_y + 48.0 + 12.0 + 20.0 + 6.0 + 16.0 + 16.0;
+            let button_h = 30.0f32;
+            let button_y = project_start_y + 40.0 + 12.0 + 20.0 + 6.0 + 16.0 + 14.0;
             Some((
                 center_x - button_w / 2.0,
                 button_y,
@@ -94,12 +121,14 @@ impl WelcomeLayout {
             left_col_width,
             right_col_x,
             right_col_width,
-            top_margin,
+            content_top,
+            content_bottom,
             action_start_y,
             action_item_h,
             action_gap,
             project_start_y,
             project_item_h,
+            project_gap,
             more_y,
             more_height,
             empty_state_button_rect,
@@ -109,185 +138,15 @@ impl WelcomeLayout {
 
 impl EditorState {
     pub fn show_welcome(&self) -> bool {
-        self.editor.content.file_path.is_none()
+        // 欢迎页仅经典模式无项目新窗口显示；智能体模式中间区域始终为 AI 面板
+        // 新标签页作为活动标签时显示 NTP 起始页而非全屏欢迎页（标签栏保持可见）
+        !self.editor_mode.is_agent()
+            && !self.active_tab_is_new_tab()
+            && self.editor.content.file_path.is_none()
             && self.fs.current_folder.is_none()
             && self.fs.file_tree.is_none()
             && !self.editor.content.is_dirty
             && self.editor.content.buffer.get_all_text().is_empty()
-    }
-
-    pub(crate) fn render_empty_placeholder(
-        &mut self,
-        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-    ) {
-        // 确保矢量图标几何已创建
-        self.ui.icons.ensure_created_from_target(target);
-        // 优先加载 PNG 位图（需要 &mut self，在获取 dwrite 不可变引用之前完成）
-        self.ensure_logo_bitmap(target);
-        let dwrite = self.win.text_renderer.dwrite_factory();
-
-        unsafe {
-            // 背景统一为编辑区层级色：避免比周围面板更深的"黑洞"观感
-            let bg_brush = target
-                .CreateSolidColorBrush(&self.win.theme.editor_bg, None)
-                .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
-                    panic!("D2D device lost")
-                });
-            let title_brush = target
-                .CreateSolidColorBrush(&color_f(0.9, 0.9, 0.9, 1.0), None)
-                .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
-                    panic!("D2D device lost")
-                });
-            let _subtitle_brush = target
-                .CreateSolidColorBrush(&color_f(0.6, 0.6, 0.6, 1.0), None)
-                .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
-                    panic!("D2D device lost")
-                });
-            // 快捷键引导：淡灰色，填充负空间且不与主体信息争夺注意力
-            let hint_brush = target
-                .CreateSolidColorBrush(&color_f(0.48, 0.48, 0.48, 1.0), None)
-                .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
-                    panic!("D2D device lost")
-                });
-
-            // 背景填充
-            let full_bg = D2D_RECT_F {
-                left: x,
-                top: y,
-                right: x + width,
-                bottom: y + height,
-            };
-            target.FillRectangle(&full_bg, &bg_brush);
-
-            // 居中显示 logo、提示文字与快捷键引导（整体垂直居中）
-            let logo_size = 80.0f32;
-            let center_x = x + width * 0.5;
-            let center_y = y + height * 0.5;
-            let logo_x = center_x - logo_size * 0.5;
-            // 文字在图片正下方；引导区 3 行，提升空状态信息密度
-            let text_h = 28.0f32;
-            let gap = 20.0f32;
-            let hint_line_h = 26.0f32;
-            let hint_block_h = 16.0 + hint_line_h * 3.0;
-            let total_h = logo_size + gap + text_h + hint_block_h;
-            let logo_y = center_y - total_h * 0.5;
-            // 使用 PNG 位图，加载失败时回退到矢量图标
-            if let Some(ref bitmap) = self.win.logo_bitmap {
-                let dest_rect = D2D_RECT_F {
-                    left: logo_x,
-                    top: logo_y,
-                    right: logo_x + logo_size,
-                    bottom: logo_y + logo_size,
-                };
-                target.DrawBitmap(
-                    bitmap,
-                    Some(&dest_rect),
-                    1.0,
-                    windows::Win32::Graphics::Direct2D::D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-                    None,
-                );
-            } else {
-                self.ui.icons.draw(
-                    target,
-                    crate::icons::IconKind::EmojiSheep,
-                    logo_x,
-                    logo_y,
-                    logo_size,
-                    logo_size,
-                    &title_brush,
-                );
-            }
-
-            let title_format = dwrite
-                .CreateTextFormat(
-                    windows::core::w!("Segoe UI"),
-                    None,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_BOLD,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    20.0,
-                    windows::core::w!("zh-CN"),
-                )
-                .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
-                    panic!("D2D device lost")
-                });
-            // 设置文字居中对齐
-            let _ = title_format.SetTextAlignment(
-                windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_ALIGNMENT_CENTER,
-            );
-            let _ = title_format.SetParagraphAlignment(
-                windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-            );
-            let title: Vec<u16> = "你好，世界".encode_utf16().chain(Some(0)).collect();
-            let title_rect = D2D_RECT_F {
-                left: x,
-                top: logo_y + logo_size + 16.0,
-                right: x + width,
-                bottom: logo_y + logo_size + 50.0,
-            };
-            target.DrawText(
-                &title,
-                &title_format,
-                &title_rect,
-                &title_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
-            );
-
-            // 快捷键引导（与 welcome_actions 的真实绑定一致，避免误导）
-            let hint_format = dwrite
-                .CreateTextFormat(
-                    windows::core::w!("Segoe UI"),
-                    None,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    13.0,
-                    windows::core::w!("zh-CN"),
-                )
-                .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
-                    panic!("D2D device lost")
-                });
-            let _ = hint_format.SetTextAlignment(
-                windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_ALIGNMENT_CENTER,
-            );
-            let _ = hint_format.SetParagraphAlignment(
-                windows::Win32::Graphics::DirectWrite::DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-            );
-            let hints = [
-                "打开文件夹  Ctrl + K",
-                "新建项目  Ctrl + N",
-                "在资源管理器中双击文件开始编辑",
-            ];
-            let hints_top = title_rect.bottom + 16.0;
-            for (i, hint) in hints.iter().enumerate() {
-                let hint_wide: Vec<u16> = hint.encode_utf16().chain(Some(0)).collect();
-                let hint_rect = D2D_RECT_F {
-                    left: x,
-                    top: hints_top + i as f32 * hint_line_h,
-                    right: x + width,
-                    bottom: hints_top + (i + 1) as f32 * hint_line_h,
-                };
-                target.DrawText(
-                    &hint_wide,
-                    &hint_format,
-                    &hint_rect,
-                    &hint_brush,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
-                );
-            }
-        }
     }
 
     fn welcome_actions() -> [WelcomeActionItem; 4] {
@@ -344,7 +203,8 @@ impl EditorState {
         }
 
         for (i, project) in recent_projects.iter().enumerate() {
-            let py = layout.project_start_y + i as f32 * (layout.project_item_h + 8.0);
+            let py =
+                layout.project_start_y + i as f32 * (layout.project_item_h + layout.project_gap);
             if mouse_x >= layout.right_col_x
                 && mouse_x <= layout.right_col_x + layout.right_col_width
                 && mouse_y >= py
@@ -471,9 +331,9 @@ impl EditorState {
             target.FillRectangle(&full_bg, &bg_brush);
 
             // UI-UX: 使用 PNG 位图替代矢量图标，保持视觉一致性
-            let logo_size = 60.0f32;
+            let logo_size = 44.0f32;
             let logo_x = layout.left_col_x;
-            let logo_y = y + layout.top_margin;
+            let logo_y = layout.content_top;
             if let Some(ref bitmap) = self.win.logo_bitmap {
                 let dest_rect = D2D_RECT_F {
                     left: logo_x,
@@ -507,7 +367,7 @@ impl EditorState {
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_BOLD,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    32.0,
+                    24.0,
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
@@ -516,10 +376,10 @@ impl EditorState {
                 });
             let brand_title: Vec<u16> = "牧羊人编辑器".encode_utf16().chain(Some(0)).collect();
             let brand_title_rect = D2D_RECT_F {
-                left: layout.left_col_x + 70.0,
-                top: y + layout.top_margin + 5.0,
+                left: layout.left_col_x + 54.0,
+                top: layout.content_top + 1.0,
                 right: layout.left_col_x + layout.left_col_width,
-                bottom: y + layout.top_margin + 45.0,
+                bottom: layout.content_top + 31.0,
             };
             target.DrawText(
                 &brand_title,
@@ -537,22 +397,19 @@ impl EditorState {
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    14.0,
+                    12.0,
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
                     eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
                     panic!("D2D device lost")
                 });
-            let brand_sub: Vec<u16> = "Aether Studio — 纯 Rust 原生编辑器"
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
+            let brand_sub: Vec<u16> = "你好!世界".encode_utf16().chain(Some(0)).collect();
             let brand_sub_rect = D2D_RECT_F {
-                left: layout.left_col_x + 70.0,
-                top: y + layout.top_margin + 42.0,
+                left: layout.left_col_x + 54.0,
+                top: layout.content_top + 29.0,
                 right: layout.left_col_x + layout.left_col_width,
-                bottom: y + layout.top_margin + 65.0,
+                bottom: layout.content_top + 48.0,
             };
             target.DrawText(
                 &brand_sub,
@@ -563,23 +420,6 @@ impl EditorState {
                 windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
             );
 
-            let action_icon_w = 40.0f32;
-            let action_icon_format = dwrite
-                .CreateTextFormat(
-                    windows::core::w!("Segoe UI"),
-                    None,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    18.0,
-                    windows::core::w!("zh-CN"),
-                )
-                .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
-                    panic!("D2D device lost")
-                });
-            let _ = action_icon_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-
             let action_label_format = dwrite
                 .CreateTextFormat(
                     windows::core::w!("Segoe UI"),
@@ -587,7 +427,7 @@ impl EditorState {
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    14.0,
+                    13.0,
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
@@ -602,7 +442,7 @@ impl EditorState {
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    12.0,
+                    11.0,
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
@@ -631,8 +471,13 @@ impl EditorState {
                     right: layout.left_col_x + layout.left_col_width,
                     bottom: ay + layout.action_item_h,
                 };
-                target.FillRectangle(
-                    &item_bg,
+                let item_rounded = D2D1_ROUNDED_RECT {
+                    rect: item_bg,
+                    radiusX: 6.0,
+                    radiusY: 6.0,
+                };
+                target.FillRoundedRectangle(
+                    &item_rounded,
                     if is_hovered || is_focused {
                         &hover_bg_brush
                     } else {
@@ -642,7 +487,7 @@ impl EditorState {
 
                 // 键盘焦点边框
                 if is_focused {
-                    target.DrawRectangle(&item_bg, &focus_border_brush, 1.5, None);
+                    target.DrawRoundedRectangle(&item_rounded, &focus_border_brush, 1.5, None);
                 }
 
                 // 矢量图标（替代 emoji）
@@ -660,19 +505,19 @@ impl EditorState {
                 self.ui.icons.draw(
                     target,
                     action.icon_kind,
-                    layout.left_col_x + 8.0,
-                    ay + 8.0,
-                    action_icon_w - 8.0,
-                    layout.action_item_h - 16.0,
+                    layout.left_col_x + 10.0,
+                    ay + (layout.action_item_h - 16.0) / 2.0,
+                    16.0,
+                    16.0,
                     &icon_brush,
                 );
 
                 let label_text: Vec<u16> = action.label.encode_utf16().chain(Some(0)).collect();
                 let label_rect = D2D_RECT_F {
-                    left: layout.left_col_x + action_icon_w + 8.0,
-                    top: ay + 10.0,
-                    right: layout.left_col_x + layout.left_col_width - 80.0,
-                    bottom: ay + layout.action_item_h - 10.0,
+                    left: layout.left_col_x + 34.0,
+                    top: ay + 8.0,
+                    right: layout.left_col_x + layout.left_col_width - 64.0,
+                    bottom: ay + layout.action_item_h - 8.0,
                 };
                 target.DrawText(
                     &label_text,
@@ -691,10 +536,10 @@ impl EditorState {
                     let shortcut_text: Vec<u16> =
                         action.shortcut.encode_utf16().chain(Some(0)).collect();
                     let shortcut_rect = D2D_RECT_F {
-                        left: layout.left_col_x + layout.left_col_width - 75.0,
-                        top: ay + 14.0,
-                        right: layout.left_col_x + layout.left_col_width - 8.0,
-                        bottom: ay + layout.action_item_h - 14.0,
+                        left: layout.left_col_x + layout.left_col_width - 60.0,
+                        top: ay + 9.0,
+                        right: layout.left_col_x + layout.left_col_width - 10.0,
+                        bottom: ay + layout.action_item_h - 9.0,
                     };
                     target.DrawText(
                         &shortcut_text,
@@ -709,7 +554,7 @@ impl EditorState {
 
             let tip_y = layout.action_start_y
                 + actions.len() as f32 * (layout.action_item_h + layout.action_gap)
-                + 30.0;
+                + 20.0;
             let tip_format = dwrite
                 .CreateTextFormat(
                     windows::core::w!("Segoe UI"),
@@ -717,7 +562,7 @@ impl EditorState {
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    13.0,
+                    12.0,
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
@@ -732,7 +577,7 @@ impl EditorState {
                 left: layout.left_col_x,
                 top: tip_y,
                 right: layout.left_col_x + layout.left_col_width,
-                bottom: tip_y + 24.0,
+                bottom: tip_y + 18.0,
             };
             target.DrawText(
                 &tip_text,
@@ -747,9 +592,9 @@ impl EditorState {
             let sep_x = layout.right_col_x - col_gap / 2.0;
             let sep_rect = D2D_RECT_F {
                 left: sep_x,
-                top: y + layout.top_margin,
+                top: layout.content_top,
                 right: sep_x + 1.0,
-                bottom: y + height - layout.top_margin,
+                bottom: layout.content_bottom,
             };
             target.FillRectangle(&sep_rect, &separator_brush);
 
@@ -757,10 +602,10 @@ impl EditorState {
                 .CreateTextFormat(
                     windows::core::w!("Segoe UI"),
                     None,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_BOLD,
+                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_SEMI_BOLD,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    16.0,
+                    14.0,
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
@@ -770,9 +615,9 @@ impl EditorState {
             let recent_heading: Vec<u16> = "最近项目".encode_utf16().chain(Some(0)).collect();
             let recent_heading_rect = D2D_RECT_F {
                 left: layout.right_col_x,
-                top: y + layout.top_margin,
+                top: layout.content_top,
                 right: layout.right_col_x + layout.right_col_width,
-                bottom: y + layout.top_margin + 28.0,
+                bottom: layout.content_top + 24.0,
             };
             target.DrawText(
                 &recent_heading,
@@ -783,22 +628,6 @@ impl EditorState {
                 windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE_NATURAL,
             );
 
-            let project_icon_format = dwrite
-                .CreateTextFormat(
-                    windows::core::w!("Segoe UI"),
-                    None,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
-                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    20.0,
-                    windows::core::w!("zh-CN"),
-                )
-                .unwrap_or_else(|e| {
-                    eprintln!("[H-14] D2D 操作失败 (设备丢失?): {:?}", e);
-                    panic!("D2D device lost")
-                });
-            let _ = project_icon_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-
             let project_name_format = dwrite
                 .CreateTextFormat(
                     windows::core::w!("Segoe UI"),
@@ -806,7 +635,7 @@ impl EditorState {
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                    14.0,
+                    13.0,
                     windows::core::w!("zh-CN"),
                 )
                 .unwrap_or_else(|e| {
@@ -830,7 +659,8 @@ impl EditorState {
                 });
 
             for (i, project) in recent_projects.iter().enumerate() {
-                let py = layout.project_start_y + i as f32 * (layout.project_item_h + 8.0);
+                let py = layout.project_start_y
+                    + i as f32 * (layout.project_item_h + layout.project_gap);
                 let project_action = WelcomeAction::OpenRecentProject(project.path.clone());
                 let is_hovered = self.ui.welcome_hover_action.as_ref() == Some(&project_action);
                 let is_focused = self.ui.welcome_focus_action.as_ref() == Some(&project_action);
@@ -841,8 +671,13 @@ impl EditorState {
                     right: layout.right_col_x + layout.right_col_width,
                     bottom: py + layout.project_item_h,
                 };
-                target.FillRectangle(
-                    &proj_bg,
+                let proj_rounded = D2D1_ROUNDED_RECT {
+                    rect: proj_bg,
+                    radiusX: 6.0,
+                    radiusY: 6.0,
+                };
+                target.FillRoundedRectangle(
+                    &proj_rounded,
                     if is_hovered || is_focused {
                         &hover_bg_brush
                     } else {
@@ -852,7 +687,7 @@ impl EditorState {
 
                 // 键盘焦点边框
                 if is_focused {
-                    target.DrawRectangle(&proj_bg, &focus_border_brush, 1.5, None);
+                    target.DrawRoundedRectangle(&proj_rounded, &focus_border_brush, 1.5, None);
                 }
 
                 let folder_brush = if is_hovered {
@@ -863,19 +698,19 @@ impl EditorState {
                 self.ui.icons.draw(
                     target,
                     crate::icons::IconKind::Folder,
-                    layout.right_col_x + 8.0,
-                    py + 12.0,
-                    32.0,
-                    layout.project_item_h - 24.0,
+                    layout.right_col_x + 10.0,
+                    py + (layout.project_item_h - 20.0) / 2.0,
+                    20.0,
+                    20.0,
                     folder_brush,
                 );
 
                 let name_text: Vec<u16> = project.name.encode_utf16().chain(Some(0)).collect();
                 let name_rect = D2D_RECT_F {
-                    left: layout.right_col_x + 44.0,
-                    top: py + 8.0,
+                    left: layout.right_col_x + 38.0,
+                    top: py + 6.0,
                     right: layout.right_col_x + layout.right_col_width - 8.0,
-                    bottom: py + 28.0,
+                    bottom: py + 24.0,
                 };
                 target.DrawText(
                     &name_text,
@@ -894,14 +729,14 @@ impl EditorState {
                     &project.path,
                     &project_path_format,
                     dwrite,
-                    layout.right_col_width - 52.0,
+                    layout.right_col_width - 46.0,
                 );
                 let path_text: Vec<u16> = path_str.encode_utf16().chain(Some(0)).collect();
                 let path_rect = D2D_RECT_F {
-                    left: layout.right_col_x + 44.0,
-                    top: py + 28.0,
+                    left: layout.right_col_x + 38.0,
+                    top: py + 24.0,
                     right: layout.right_col_x + layout.right_col_width - 8.0,
-                    bottom: py + layout.project_item_h - 8.0,
+                    bottom: py + layout.project_item_h - 6.0,
                 };
                 target.DrawText(
                     &path_text,
@@ -916,8 +751,8 @@ impl EditorState {
             if !has_recent_projects {
                 let center_x = layout.right_col_x + layout.right_col_width / 2.0;
 
-                // 1. 大图标 Folder 48x48 居中，灰色柔和
-                let icon_size = 48.0f32;
+                // 1. 大图标 Folder 40x40 居中，灰色柔和
+                let icon_size = 40.0f32;
                 let icon_x = center_x - icon_size / 2.0;
                 let icon_y = layout.project_start_y;
                 let empty_icon_brush = target
@@ -939,7 +774,7 @@ impl EditorState {
                     &empty_icon_brush,
                 );
 
-                // 2. 主文案 "暂无最近项目" 14pt 居中
+                // 2. 主文案 "暂无最近项目" 13pt 居中
                 let empty_main_format = dwrite
                     .CreateTextFormat(
                         windows::core::w!("Segoe UI"),
@@ -947,7 +782,7 @@ impl EditorState {
                         windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL,
                         windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STYLE_NORMAL,
                         windows::Win32::Graphics::DirectWrite::DWRITE_FONT_STRETCH_NORMAL,
-                        14.0,
+                        13.0,
                         windows::core::w!("zh-CN"),
                     )
                     .unwrap_or_else(|e| {
@@ -1047,8 +882,8 @@ impl EditorState {
                     };
                     let rounded = D2D1_ROUNDED_RECT {
                         rect: btn_rect,
-                        radiusX: 4.0,
-                        radiusY: 4.0,
+                        radiusX: 6.0,
+                        radiusY: 6.0,
                     };
                     target.FillRoundedRectangle(&rounded, &btn_brush);
 
@@ -1212,8 +1047,8 @@ mod tests {
     #[test]
     fn test_welcome_layout_compute() {
         let layout = WelcomeLayout::compute(0.0, 0.0, 1000.0, 600.0, 3);
-        assert_eq!(layout.action_item_h, 44.0);
-        assert_eq!(layout.project_item_h, 52.0);
+        assert_eq!(layout.action_item_h, 34.0);
+        assert_eq!(layout.project_item_h, 44.0);
         assert!(layout.left_col_x >= 0.0);
         assert!(layout.right_col_x > layout.left_col_x);
         assert!(layout.more_y.is_some());
@@ -1233,9 +1068,9 @@ mod tests {
             "空状态按钮 rect 应在 project_count=0 时为 Some"
         );
         let (left, top, right, bottom) = layout.empty_state_button_rect.unwrap();
-        // 按钮宽度 120，高度 32
+        // 按钮宽度 120，高度 30
         assert_eq!(right - left, 120.0, "按钮宽度应为 120px");
-        assert_eq!(bottom - top, 32.0, "按钮高度应为 32px");
+        assert_eq!(bottom - top, 30.0, "按钮高度应为 30px");
         // 按钮应水平居中于右侧列
         let center_x = layout.right_col_x + layout.right_col_width / 2.0;
         assert!((left + right) / 2.0 - center_x < 0.01, "按钮应居中于右侧列");
@@ -1267,7 +1102,7 @@ mod tests {
     #[test]
     fn test_welcome_layout_zero_and_small_size() {
         let layout = WelcomeLayout::compute(0.0, 0.0, 0.0, 0.0, 0);
-        assert_eq!(layout.action_item_h, 44.0);
+        assert_eq!(layout.action_item_h, 34.0);
         assert!(layout.more_y.is_none());
 
         let layout = WelcomeLayout::compute(0.0, 0.0, 100.0, 100.0, 5);

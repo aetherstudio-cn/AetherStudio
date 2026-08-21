@@ -279,7 +279,7 @@ pub struct AiConversation {
     pub should_stop: Arc<AtomicBool>,
     /// 本轮注入过的 playbook 条目 ID（用于反馈归因）
     pub used_bullet_ids: Vec<String>,
-    /// 标签休眠：messages 已卸载（完整内容在 SQLite 温数据层），
+    /// 标签休眠：messages 已卸载（完整内容在 AetherDB 温数据层），
     /// 轻量现场（草稿/滚动/模式等）仍驻留内存；激活时同步水合
     pub hibernated: bool,
     /// 休眠两阶段握手：发起归档时记录当时 updated_at，
@@ -629,13 +629,13 @@ pub struct AiPanel {
     pub reasoning_toggle_regions: Vec<(usize, f32, f32, f32, f32)>,
     /// 热数据持久化存储（三阶段架构：热/温）
     pub hot_data_store: Option<crate::ai_hot_data::HotDataStore>,
-    /// 温数据持久化存储（MemoryStore：SQLite + sqlite-vec）
+    /// 温数据持久化存储（MemoryStore：AetherDB 纯 Rust 存储）
     pub warm_data_store: Option<crate::ai_warm_data::WarmDataStore>,
     /// 历史列表：仅显示当前工作区的会话
     pub history_workspace_only: bool,
     /// Playbook 管理面板是否展开
     pub playbook_open: bool,
-    /// Playbook 面板条目缓存（展开时从 SQLite 加载）
+    /// Playbook 面板条目缓存（展开时从 AetherDB 加载）
     pub playbook_items: Vec<crate::memory_store::PlaybookBullet>,
     /// Playbook 标题栏按钮命中区 (x, y, w, h)
     pub playbook_button_region: Option<(f32, f32, f32, f32)>,
@@ -716,6 +716,14 @@ pub struct AiPanel {
     pub expand_original_text: String,
     /// 扩写动画起始时间戳（毫秒），用于计算进度
     pub expand_anim_start_ms: u64,
+    /// 智能体模式左侧边栏：新会话按钮命中区 (x, y, w, h)
+    pub agent_new_chat_region: Option<(f32, f32, f32, f32)>,
+    /// 智能体模式左侧边栏：对话标签页命中区 (conv_index, x, y, w, h)
+    pub agent_tab_regions: Vec<(usize, f32, f32, f32, f32)>,
+    /// 智能体模式左侧边栏：对话标签页关闭按钮命中区 (conv_index, x, y, w, h)
+    pub agent_tab_close_regions: Vec<(usize, f32, f32, f32, f32)>,
+    /// 智能体模式左侧边栏：文件树区域 y 偏移量（相对于侧边栏顶部）
+    pub agent_file_tree_offset_y: f32,
 }
 
 /// 在后台线程发起一次流式 AI 请求，把事件写入共享 stream_state。
@@ -913,6 +921,10 @@ impl AiPanel {
             expand_anim_progress: 0.0,
             expand_original_text: String::new(),
             expand_anim_start_ms: 0,
+            agent_new_chat_region: None,
+            agent_tab_regions: Vec::new(),
+            agent_tab_close_regions: Vec::new(),
+            agent_file_tree_offset_y: 0.0,
         };
         panel.restore_latest_conversation();
         panel
@@ -1130,7 +1142,7 @@ impl AiPanel {
         self.dismiss_history_dropdown();
     }
 
-    /// 对指定空闲标签发起休眠请求：异步归档进 SQLite，落库成功回执后才卸载消息体。
+    /// 对指定空闲标签发起休眠请求：异步归档进 AetherDB，落库成功回执后才卸载消息体。
     /// 生成中、已休眠、活动标签、无归档价值的会话跳过。
     fn request_hibernate(&mut self, idx: usize) {
         if idx == self.active || idx >= self.conversations.len() {
@@ -1264,7 +1276,7 @@ impl AiPanel {
                 preview,
                 mode: format!("{:?}", conv.mode),
             };
-            // 持久化：异步归档进 SQLite（温数据层，含向量索引）
+            // 持久化：异步归档进 AetherDB（温数据层，含向量索引）
             if let Some(warm_store) = self.warm_data_store.as_ref() {
                 warm_store.request_archive(conv.id.clone(), conv.clone());
             }
@@ -1319,7 +1331,7 @@ impl AiPanel {
             self.dismiss_history_dropdown();
             return;
         }
-        // 否则尝试从 SQLite 加载完整会话，失败则创建占位会话
+        // 否则尝试从 AetherDB 加载完整会话，失败则创建占位会话
         self.snapshot_active_into_slot();
         let prev = self.active;
         let conv = self
@@ -2569,7 +2581,7 @@ impl AiPanel {
 
     // ===== Playbook 管理面板 =====
 
-    /// 切换 Playbook 管理面板展开/收起（展开时从 SQLite 加载条目）
+    /// 切换 Playbook 管理面板展开/收起（展开时从 AetherDB 加载条目）
     pub fn toggle_playbook_panel(&mut self) {
         self.playbook_open = !self.playbook_open;
         if self.playbook_open {
@@ -2779,7 +2791,7 @@ impl AiPanel {
         self.history_editing_caret = prev;
     }
 
-    /// 提交标题编辑（回车）：持久化到 SQLite 并同步内存
+    /// 提交标题编辑（回车）：持久化到 AetherDB 并同步内存
     pub fn commit_history_edit(&mut self) -> Result<(), String> {
         let id = match self.history_editing_id.take() {
             Some(id) => id,
@@ -2840,7 +2852,7 @@ impl AiPanel {
         self.history_page = self.history_page.saturating_sub(1);
     }
 
-    /// 删除一条历史记录（内存索引 + SQLite 级联删除）
+    /// 删除一条历史记录（内存索引 + AetherDB 级联删除）
     pub fn delete_history_item(&mut self, hist_idx: usize) -> Result<(), String> {
         let meta = self
             .history

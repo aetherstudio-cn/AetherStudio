@@ -319,7 +319,11 @@ impl EditorState {
                 bottom: cy + card_h,
             };
             target.FillRectangle(&accent_rect, &accent_brush);
-            let info_text = "配置 API 密钥后，AI 助手可在 Agent 模式下新建、修改、删除文件。点击「保存」时会自动验证密钥有效性并保存；新建的模型只有点击「保存」后才会真正保存。";
+            let info_text = if self.ui.settings_panel.is_adding_model() {
+                "配置 API 密钥后，AI 助手可在 Agent 模式下新建、修改、删除文件。点击「保存」时会自动验证密钥有效性并保存；新建的模型只有点击「保存」后才会真正保存。"
+            } else {
+                "配置 API 密钥后，AI 助手可在 Agent 模式下新建、修改、删除文件。点击「保存」时会自动验证密钥有效性，并将更改写入当前模型。"
+            };
             let info_color = color_f(0.72, 0.74, 0.78, 1.0);
             let info_brush = self
                 .win
@@ -344,11 +348,15 @@ impl EditorState {
             );
             cy += card_h + gap;
 
-            // 当前编辑模型指示（AI 页编辑的是当前激活模型；在「模型」页可切换/新建）
-            let model_hint = format!(
-                "正在编辑：{}",
-                self.ui.settings_panel.active_model_display()
-            );
+            // 当前编辑模型指示（添加模式显示草稿提示；编辑模式显示目标模型名）
+            let model_hint = if self.ui.settings_panel.is_adding_model() {
+                "正在添加：新模型".to_string()
+            } else {
+                format!(
+                    "正在编辑：{}",
+                    self.ui.settings_panel.active_model_display()
+                )
+            };
             let hint_wide: Vec<u16> = model_hint.encode_utf16().chain(Some(0)).collect();
             let hint_color = color_f(0.60, 0.78, 0.95, 1.0);
             let hint_brush = self

@@ -172,15 +172,14 @@ impl EditorState {
             };
 
             let margin = 10.0f32;
-            // 顶部间距 6px + 标签条 24px = 30px，与资源管理器标题栏(FILE_TREE_HEADER_HEIGHT)、
-            // 编辑器标签栏(TAB_BAR_HEIGHT)高度对齐（逻辑像素，Direct2D 自动处理 DPI 缩放）
+            // 顶部间距 6px（智能体模式下对话标签条移至左侧边栏，此处不再渲染）
             let mut cy = y + 6.0;
 
             // 清空命中区域（每帧重建；必须在注册任何命中区之前调用）
             self.ai.ai_panel.clear_hit_regions();
 
-            // ===== 对话标签条（多会话）=====
-            {
+            // ===== 对话标签条（多会话）：仅开发者模式渲染，智能体模式移至左侧边栏 =====
+            if !self.editor_mode.is_agent() {
                 let tab_h = 24.0f32;
                 let tab_y = cy;
                 let gap = 4.0f32;

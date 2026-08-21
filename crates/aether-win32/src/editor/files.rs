@@ -1,8 +1,13 @@
 use super::*;
 
 /// 检查当前标签页是否可以重用（空文件且未修改）
+///
+/// 仅当活动标签是文件标签时才可复用：新标签页（NTP）等特殊标签下
+/// content 同样为空，若走复用路径 tabs 会残留 NewTab，文件无法渲染，
+/// 此时必须走新建标签路径。
 pub(super) fn can_reuse_current_tab(state: &EditorState) -> bool {
-    state.editor.content.file_path.is_none()
+    state.active_tab_is_file()
+        && state.editor.content.file_path.is_none()
         && !state.editor.content.is_dirty
         && state.editor.content.buffer.len_bytes() == 0
 }
@@ -31,6 +36,7 @@ pub(super) fn open_in_new_tab(state: &mut EditorState, tab: Tab) {
     state.editor.tab_bar.active_tab = state.editor.tab_bar.tabs.len() - 1;
     state.swap_tab_content(state.editor.tab_bar.active_tab);
     state.editor.is_selecting = false;
+    state.dismiss_default_new_tab();
     state.emit_event(crate::events::EditorEvent::TabChanged);
     // 标记标签栏和编辑器区域脏区，避免新标签打开时触发全窗口重绘
     let editor_region = state.ui.layout.editor_region();
@@ -67,8 +73,7 @@ pub fn load_file(state: &mut EditorState, path: PathBuf) {
     match PieceTable::from_file(&path) {
         Ok(buffer) => {
             // 仅当存在标签页时才复用当前空标签：tabs 为空（如启动后打开的第一个文件）
-            // 时必须走新建标签路径，否则 show_empty_placeholder() 仍为 true，
-            // 编辑器区域渲染占位页导致文件"点不开"，要再点一次才能打开。
+            // 时必须走新建标签路径，否则 swap_tab_content 无处可换，文件无法绑定到标签页。
             if can_reuse_current_tab(state) && !state.editor.tab_bar.tabs.is_empty() {
                 state.editor.content.buffer = buffer;
                 state.editor.content.file_path = Some(path.clone());
@@ -374,6 +379,8 @@ pub fn open_folder(state: &mut EditorState, path: PathBuf) {
     state.fs.sidebar_scroll_y = 0.0;
     // UI-T01: 工作区切换后标题栏需要立即更新，标记全窗口重绘
     state.win.dirty_tracker.mark_full_window();
+    // 打开项目后显示默认新标签页（空标签栏时创建；已有标签的工作区切换不插入）
+    state.ensure_default_new_tab();
 
     // 初始化 LSP 客户端（启动 rust-analyzer 等语言服务器）
     // 先清空旧工作区的诊断表/补全结果：诊断按 Url 存储，
@@ -457,6 +464,10 @@ pub(crate) fn on_folder_scan_batch_ref(state: &mut EditorState, batch: &ScannedB
 /// 在打开的文件夹根目录查找 README 并自动加载
 /// P2-7: 仅在当前标签页为空且未修改时才自动加载，避免覆盖用户已有内容
 pub(super) fn try_open_readme(state: &mut EditorState, folder: &Path) {
+    // 新标签页是打开项目后的着陆页：不自动打开 README 抢占，用户可手动点击文件树
+    if state.active_tab_is_new_tab() {
+        return;
+    }
     // 当前标签页有内容或未保存的修改时，不自动加载 README
     if state.editor.content.is_dirty
         || state.editor.content.buffer.len_bytes() > 0
@@ -510,8 +521,8 @@ pub fn close_workspace(state: &mut EditorState) {
     state.editor.content.cache_window_start = 0;
     state.editor.content.cached_tokens.clear();
     state.editor.content.language = Language::PlainText;
+    // 关闭工作区后回到欢迎页（空标签栏），与无项目新窗口一致
     state.editor.tab_bar.tabs.clear();
-    state.editor.tab_bar.tabs.push(crate::tabs::Tab::new());
     state.editor.tab_bar.active_tab = 0;
     state.fs.selected_file_node = None;
     state.fs.hover_file_node = None;
