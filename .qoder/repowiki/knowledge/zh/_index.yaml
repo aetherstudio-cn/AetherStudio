@@ -3,27 +3,29 @@ schema_version: 1
 locale: zh-CN
 branch: dev
 nodes_managed: true
-exported_at: "2026-08-23T12:18:27Z"
+exported_at: "2026-08-27T08:58:21Z"
 modules:
     "":
-        dir_name: Aether Studio Rust 工作区根
-        title: Aether Studio Rust 工作区根
+        dir_name: Aether Studio 仓库根（Cargo Workspace 与工程配置）
+        title: Aether Studio 仓库根（Cargo Workspace 与工程配置）
         scope:
             - README.md
             - LICENSE.txt
             - CONTRIBUTING.md
             - AGENT_SPEC.md
             - TEST_WORKFLOW.md
-            - .gitignore
             - Cargo.toml
             - rust-toolchain.toml
+            - .gitignore
             - .cargo/
             - .github/
             - .trae/
-            - 赞助.md
+            - deliverables/
+            - installer/
+            - scripts/
+            - tests/
         source_files: []
-        children:
-            - tests_and_scripts
+        children: []
         depends_on: []
         related_to: []
     tests_and_scripts:

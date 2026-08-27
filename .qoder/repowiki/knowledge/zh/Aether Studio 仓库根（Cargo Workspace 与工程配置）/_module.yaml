@@ -1,0 +1,22 @@
+schema_version: 1
+module_path: ""
+title: Aether Studio 仓库根（Cargo Workspace 与工程配置）
+scope:
+    - README.md
+    - LICENSE.txt
+    - CONTRIBUTING.md
+    - AGENT_SPEC.md
+    - TEST_WORKFLOW.md
+    - Cargo.toml
+    - rust-toolchain.toml
+    - .gitignore
+    - .cargo/
+    - .github/
+    - .trae/
+    - deliverables/
+    - installer/
+    - scripts/
+    - tests/
+source_files: []
+depends_on: []
+related_to: []
