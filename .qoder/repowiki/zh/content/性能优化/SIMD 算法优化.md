@@ -1,15 +1,19 @@
 # SIMD 算法优化
 
 <cite>
-**本文引用的文件**   
-- [simd_utils.rs](file://crates/aether-core/src/simd_utils.rs)
-- [char_width.rs](file://crates/aether-core/src/char_width.rs)
-- [benchmarks.rs](file://crates/aether-core/src/benchmarks.rs)
-- [piece_table.rs](file://crates/aether-core/src/buffer/piece_table.rs)
+**本文引用的文件**
+- [crates/aether-core/src/simd_utils.rs](file://crates/aether-core/src/simd_utils.rs)
+- [crates/aether-core/Cargo.toml](file://crates/aether-core/Cargo.toml)
+- [crates/aether-core/src/benchmarks.rs](file://crates/aether-core/src/benchmarks.rs)
+- [crates/aether-core/src/lexer/common.rs](file://crates/aether-core/src/lexer/common.rs)
+- [crates/aether-render/src/gpu/shaders/char_classify.hlsl](file://crates/aether-render/src/gpu/shaders/char_classify.hlsl)
+- [crates/aether-render/src/gpu/shaders/token_scan.hlsl](file://crates/aether-render/src/gpu/shaders/token_scan.hlsl)
+- [crates/aether-render/src/gpu/syntax.rs](file://crates/aether-render/src/gpu/syntax.rs)
+- [.cargo/config.toml](file://.cargo/config.toml)
 </cite>
 
 ## 目录
-1. [引言](#引言)
+1. [简介](#简介)
 2. [项目结构](#项目结构)
 3. [核心组件](#核心组件)
 4. [架构总览](#架构总览)
@@ -20,318 +24,253 @@
 9. [结论](#结论)
 10. [附录](#附录)
 
-## 引言
-本专题聚焦牧羊人编辑器在文本处理中的 SIMD 算法优化，围绕以下热点路径展开：换行符查找、空白字符跳过、字节搜索、字符串前缀匹配与行长度计算；并深入讨论字符宽度计算的 Unicode 策略（含多字节编码支持）。文档同时给出编译器自动向量化与手动 SWAR 优化的选择原则、基准测试方法与结果解读，以及跨平台兼容性与调试技巧。
+## 简介
+本技术文档聚焦于编辑器核心中的 SIMD（单指令多数据）算法优化，覆盖以下主题：
+- 向量操作与并行数据处理在文本处理中的应用
+- 换行符计数、字节查找、空白跳过等关键算法的 SIMD 实现
+- x86 SSE/AVX 与 ARM NEON 的支持策略（通过第三方库运行时分派）
+- 性能基准测试方法与结果解读
+- SIMD 编程最佳实践、调试技巧与常见瓶颈定位及解决方案
+- 面向开发者的优化指导原则与实用示例
 
 ## 项目结构
-本次优化主要位于 aether-core 库中：
-- simd_utils.rs：提供基于 u128/u64 的 SWAR 批量处理工具函数，覆盖换行计数、字节查找、空白跳过、前缀匹配等。
-- char_width.rs：实现 Unicode East Asian Width 的精简版，用于精确计算字符显示宽度。
-- piece_table.rs：在构建行索引时调用 find_byte_simd 加速扫描换行符，并在大片段上采用 count_newlines_simd。
-- benchmarks.rs：提供统一的基准框架与针对 SIMD 函数的基准用例。
+本项目将 SIMD 加速集中在 aether-core 的文本工具层，并通过 GPU 着色器在渲染侧进行大规模并行词法扫描。整体结构如下：
+- CPU 侧 SIMD：基于 bytecount/memchr 的高性能原语，以及 SWAR 实现的空白跳过
+- 词法基础：通用跳过/扫描工具函数，供各语言 lexer 复用
+- GPU 侧并行：字符分类与 Token 扫描着色器，利用 Compute Shader 并行化
+- 构建配置：目标 CPU 特性与发布优化选项
 
 ```mermaid
 graph TB
-subgraph "aether-core"
-A["simd_utils.rs<br/>SWAR 批量处理"]
-B["char_width.rs<br/>Unicode 宽度计算"]
-C["piece_table.rs<br/>行索引构建/更新"]
-D["benchmarks.rs<br/>基准测试框架"]
-end
-C --> A
-D --> A
-B -.-> C
+A["aether-core<br/>SIMD 工具"] --> B["词法基础<br/>common.rs"]
+A --> C["基准测试<br/>benchmarks.rs"]
+D["aether-render<br/>GPU 着色器"] --> E["字符分类<br/>char_classify.hlsl"]
+D --> F["Token 扫描<br/>token_scan.hlsl"]
+G[".cargo/config.toml<br/>编译目标与优化"] --> A
+G --> D
 ```
 
 图表来源
-- [simd_utils.rs:1-553](file://crates/aether-core/src/simd_utils.rs#L1-L553)
-- [char_width.rs:1-432](file://crates/aether-core/src/char_width.rs#L1-L432)
-- [piece_table.rs:670-797](file://crates/aether-core/src/buffer/piece_table.rs#L670-L797)
-- [benchmarks.rs:1-443](file://crates/aether-core/src/benchmarks.rs#L1-L443)
+- [crates/aether-core/src/simd_utils.rs:1-20](file://crates/aether-core/src/simd_utils.rs#L1-L20)
+- [crates/aether-core/src/lexer/common.rs:1-20](file://crates/aether-core/src/lexer/common.rs#L1-L20)
+- [crates/aether-core/src/benchmarks.rs:1-20](file://crates/aether-core/src/benchmarks.rs#L1-L20)
+- [crates/aether-render/src/gpu/shaders/char_classify.hlsl:1-20](file://crates/aether-render/src/gpu/shaders/char_classify.hlsl#L1-L20)
+- [crates/aether-render/src/gpu/shaders/token_scan.hlsl:1-20](file://crates/aether-render/src/gpu/shaders/token_scan.hlsl#L1-L20)
+- [.cargo/config.toml:8-11](file://.cargo/config.toml#L8-L11)
 
 章节来源
-- [simd_utils.rs:1-553](file://crates/aether-core/src/simd_utils.rs#L1-L553)
-- [char_width.rs:1-432](file://crates/aether-core/src/char_width.rs#L1-L432)
-- [piece_table.rs:670-797](file://crates/aether-core/src/buffer/piece_table.rs#L670-L797)
-- [benchmarks.rs:1-443](file://crates/aether-core/src/benchmarks.rs#L1-L443)
+- [crates/aether-core/src/simd_utils.rs:1-20](file://crates/aether-core/src/simd_utils.rs#L1-L20)
+- [crates/aether-core/Cargo.toml:6-12](file://crates/aether-core/Cargo.toml#L6-L12)
+- [crates/aether-core/src/benchmarks.rs:1-20](file://crates/aether-core/src/benchmarks.rs#L1-L20)
+- [crates/aether-core/src/lexer/common.rs:1-20](file://crates/aether-core/src/lexer/common.rs#L1-L20)
+- [crates/aether-render/src/gpu/shaders/char_classify.hlsl:1-20](file://crates/aether-render/src/gpu/shaders/char_classify.hlsl#L1-L20)
+- [crates/aether-render/src/gpu/shaders/token_scan.hlsl:1-20](file://crates/aether-render/src/gpu/shaders/token_scan.hlsl#L1-L20)
+- [.cargo/config.toml:8-11](file://.cargo/config.toml#L8-L11)
 
 ## 核心组件
-- 换行符计数：count_newlines_simd(data)
-  - 使用 u128 块进行 XOR + has_zero_byte_u128 快速检测，命中后逐字节精确计数，避免借位传播导致的误计。
-  - 剩余部分按 u64 和标量回退。
-- 字节查找：find_byte_simd(data, target)
-  - 以 u128/u64 块并行比较目标字节，利用 has_zero_byte_* 定位候选位置，再逐字节验证首个真实匹配。
-- 空白跳过：skip_whitespace_simd(data, start)
-  - 对空格、制表符、回车三类空白做 u128/u64 批量判定，整块全白则直接步进，否则回退逐字节。
-- 前缀匹配：starts_with_simd(data, prefix)
-  - 按 8/4/1 字节粒度批量比较，提升关键字检测速度。
-- 行长度：line_length_simd(data, start)
-  - 复用 find_byte_simd 快速定位下一个换行符，返回行内长度。
-- 字符分类：classify_chars_simd(...)
-  - 将字节分类为字母/数字/空白/其他，便于词法阶段预处理。
+- SIMD 文本工具：提供换行计数、字节查找、空白跳过、前缀匹配、行长度计算、字符分类等高性能原语
+- 词法基础工具：通用跳过空白、注释、字符串字面量、标识符、数字等逻辑
+- GPU 并行词法：字符分类与 Token 扫描着色器，用于大规模并行识别
+- 基准测试框架：统一的计时、迭代、吞吐统计，覆盖 SIMD 与增量词法分析
 
 章节来源
-- [simd_utils.rs:10-82](file://crates/aether-core/src/simd_utils.rs#L10-L82)
-- [simd_utils.rs:88-171](file://crates/aether-core/src/simd_utils.rs#L88-L171)
-- [simd_utils.rs:176-258](file://crates/aether-core/src/simd_utils.rs#L176-L258)
-- [simd_utils.rs:279-335](file://crates/aether-core/src/simd_utils.rs#L279-L335)
-- [simd_utils.rs:340-345](file://crates/aether-core/src/simd_utils.rs#L340-L345)
-- [simd_utils.rs:352-377](file://crates/aether-core/src/simd_utils.rs#L352-L377)
+- [crates/aether-core/src/simd_utils.rs:8-101](file://crates/aether-core/src/simd_utils.rs#L8-L101)
+- [crates/aether-core/src/lexer/common.rs:5-90](file://crates/aether-core/src/lexer/common.rs#L5-L90)
+- [crates/aether-render/src/gpu/shaders/char_classify.hlsl:44-88](file://crates/aether-render/src/gpu/shaders/char_classify.hlsl#L44-L88)
+- [crates/aether-render/src/gpu/shaders/token_scan.hlsl:56-141](file://crates/aether-render/src/gpu/shaders/token_scan.hlsl#L56-L141)
+- [crates/aether-core/src/benchmarks.rs:11-87](file://crates/aether-core/src/benchmarks.rs#L11-L87)
 
 ## 架构总览
-SIMD 工具被上层模块消费，形成“底层 SWAR 工具 → 上层数据结构/算法”的分层调用关系。
+CPU 侧使用高度优化的 SIMD 原语（bytecount/memchr/SWAR），配合编译器向量化友好的切片遍历；GPU 侧通过 HLSL 着色器完成字符分类与 Token 扫描，形成“CPU 预处理 + GPU 并行”的双轨加速路径。
 
 ```mermaid
 sequenceDiagram
-participant PT as "PieceTable(行索引)"
-participant SU as "simd_utils"
-participant BT as "基准框架(benchmarks)"
-Note over PT : 构建行索引时扫描换行符
-PT->>SU : find_byte_simd(piece_data[offset..], b'\\n')
-SU-->>PT : Option<usize> 偏移或 None
-PT->>SU : count_newlines_simd(data) (当 data.len()>=64)
-SU-->>PT : u32 换行数量
-Note over BT : 运行 SIMD 基准
-BT->>SU : count_newlines_simd / find_byte_simd / skip_whitespace_simd
-SU-->>BT : 返回值供断言与计时
+participant App as "应用"
+participant Core as "aether-core SIMD"
+participant GPU as "GPU 着色器"
+participant Lex as "词法器"
+App->>Core : 调用 count_newlines_simd / find_byte_simd / skip_whitespace_simd
+Core-->>App : 返回计数/位置/偏移
+App->>GPU : 提交文本到 char_classify.hlsl
+GPU-->>App : 输出字符分类数组
+App->>GPU : 提交 token_scan.hlsl
+GPU-->>App : 输出 Token 列表
+App->>Lex : 使用 common.rs 工具进行边界修正与语义解析
+Lex-->>App : 返回词法单元
 ```
 
 图表来源
-- [piece_table.rs:670-696](file://crates/aether-core/src/buffer/piece_table.rs#L670-L696)
-- [piece_table.rs:784-791](file://crates/aether-core/src/buffer/piece_table.rs#L784-L791)
-- [benchmarks.rs:236-263](file://crates/aether-core/src/benchmarks.rs#L236-L263)
-- [simd_utils.rs:88-171](file://crates/aether-core/src/simd_utils.rs#L88-L171)
-- [simd_utils.rs:10-82](file://crates/aether-core/src/simd_utils.rs#L10-L82)
+- [crates/aether-core/src/simd_utils.rs:8-79](file://crates/aether-core/src/simd_utils.rs#L8-L79)
+- [crates/aether-render/src/gpu/shaders/char_classify.hlsl:74-88](file://crates/aether-render/src/gpu/shaders/char_classify.hlsl#L74-L88)
+- [crates/aether-render/src/gpu/shaders/token_scan.hlsl:141-312](file://crates/aether-render/src/gpu/shaders/token_scan.hlsl#L141-L312)
+- [crates/aether-core/src/lexer/common.rs:5-90](file://crates/aether-core/src/lexer/common.rs#L5-L90)
 
 ## 详细组件分析
 
-### 组件一：SWAR 文本处理工具集（simd_utils）
-该模块通过 u128/u64 块模拟 SIMD 效果，无需外部依赖即可在稳定 Rust 中使用。关键设计点：
-- 零字节检测 has_zero_byte_u128/has_zero_byte：利用 x-0x01... 与 ~x 的高位掩码判断是否存在 0 字节。
-- 假阳性防护：SWAR 在高字节组合下可能产生误判，因此每次命中后必须逐字节验证，确保返回首个真实匹配。
-- 边界处理：优先 16 字节块，其次 8 字节块，最后标量收尾，保证任意长度输入的正确性。
+### SIMD 文本工具（aether-core）
+- 换行计数：委托给 bytecount，内部具备 AVX2/SSE2 运行时分派，适合大数据集快速统计
+- 字节查找：委托给 memchr，同样具备底层 SIMD 分派，支持高效定位目标字节
+- 空白跳过：采用 16 字节 SWAR 批量检测，结合 chunks_exact 消除边界检查，提升向量化友好性
+- 其他工具：前缀匹配、行长度计算、字符分类等，保持零拷贝与最小开销
 
 ```mermaid
 flowchart TD
-Start(["进入函数"]) --> CheckLen["检查数据长度"]
-CheckLen --> Loop16{"是否还有 16 字节块?"}
-Loop16 --> |是| Load16["加载 16 字节块"]
-Load16 --> XOR["与目标模式异或"]
-XOR --> ZeroCheck["has_zero_byte 检测"]
-ZeroCheck --> Hit{"存在 0 字节?"}
-Hit --> |否| Next16["i += 16"] --> Loop16
-Hit --> |是| Verify["逐字节验证首个匹配"] --> ReturnPos["返回匹配位置"]
-Loop16 --> |否| Loop8{"是否还有 8 字节块?"}
-Loop8 --> |是| Load8["加载 8 字节块"] --> XOR8["与目标模式异或"] --> ZeroCheck8["has_zero_byte 检测"] --> Hit8{"存在 0 字节?"}
-Hit8 --> |否| Next8["i += 8"] --> Loop8
-Hit8 --> |是| Verify8["逐字节验证首个匹配"] --> ReturnPos
-Loop8 --> |否| Tail["标量处理剩余字节"] --> End(["结束"])
+Start(["进入 skip_whitespace_simd"]) --> CheckLen["获取数据长度与起始位置"]
+CheckLen --> LoopChunks["按 16 字节块循环"]
+LoopChunks --> LoadV["加载 u128 向量"]
+LoadV --> Compare{"是否全为空白?"}
+Compare --> |是| Advance["i += 16"]
+Compare --> |否| BreakLoop["退出批量循环"]
+Advance --> LoopChunks
+BreakLoop --> TailLoop["逐个处理剩余字节"]
+TailLoop --> End(["返回最终偏移"])
 ```
 
 图表来源
-- [simd_utils.rs:88-171](file://crates/aether-core/src/simd_utils.rs#L88-L171)
-- [simd_utils.rs:262-274](file://crates/aether-core/src/simd_utils.rs#L262-L274)
+- [crates/aether-core/src/simd_utils.rs:20-55](file://crates/aether-core/src/simd_utils.rs#L20-L55)
 
 章节来源
-- [simd_utils.rs:10-82](file://crates/aether-core/src/simd_utils.rs#L10-L82)
-- [simd_utils.rs:88-171](file://crates/aether-core/src/simd_utils.rs#L88-L171)
-- [simd_utils.rs:176-258](file://crates/aether-core/src/simd_utils.rs#L176-L258)
-- [simd_utils.rs:279-335](file://crates/aether-core/src/simd_utils.rs#L279-L335)
-- [simd_utils.rs:340-345](file://crates/aether-core/src/simd_utils.rs#L340-L345)
-- [simd_utils.rs:352-377](file://crates/aether-core/src/simd_utils.rs#L352-L377)
+- [crates/aether-core/src/simd_utils.rs:8-101](file://crates/aether-core/src/simd_utils.rs#L8-L101)
 
-### 组件二：Unicode 字符宽度计算（char_width）
-该模块实现 East Asian Width 的精简版，满足编辑器的显示需求：
-- 零宽度：控制字符、组合标记、格式控制符、BOM 等归为零宽。
-- 宽字符：CJK、全角、Emoji 等归为 2 宽。
-- 其余为窄字符，宽度为 1。
-- 字符串宽度 str_width 对每个字符累加。
+### 词法基础工具（common.rs）
+- 提供跨语言复用的跳过/扫描函数：空白、行注释、块注释、字符串字面量、标识符、数字等
+- 这些函数仅依赖字节切片，不耦合特定语言语义，便于在不同 lexer 中复用
+- 与 SIMD 工具互补：SIMD 负责热点路径加速，common 负责复杂语义边界处理
+
+章节来源
+- [crates/aether-core/src/lexer/common.rs:5-90](file://crates/aether-core/src/lexer/common.rs#L5-L90)
+
+### GPU 并行词法（HLSL）
+- 字符分类着色器：每个线程处理一个字符，查表得到类别，输出 CharClasses
+- Token 扫描着色器：基于字符分类识别 Token 边界，使用共享内存与前缀和思想，原子计数器写入全局 Token 列表
+- 语法分类器（Rust 侧）：管理模式缓冲区与着色器资源，驱动 GPU 执行
 
 ```mermaid
-flowchart TD
-Entry(["输入字符 c"]) --> CP["获取码点 cp"]
-CP --> IsZero{"是否零宽?"}
-IsZero --> |是| Ret0["返回 0"]
-IsZero --> |否| IsWide{"是否宽字符?"}
-IsWide --> |是| Ret2["返回 2"]
-IsWide --> |否| Ret1["返回 1"]
+classDiagram
+class GpuSyntaxClassifier {
++new(context, language)
++create_patterns_buffer(patterns)
++load_shader(bytecode)
++create_uav(...)
+}
+class SyntaxPattern {
++pattern_type
++token_sequence
++sequence_len
++output_class
++priority
+}
+GpuSyntaxClassifier --> SyntaxPattern : "创建并上传"
 ```
 
 图表来源
-- [char_width.rs:17-32](file://crates/aether-core/src/char_width.rs#L17-L32)
-- [char_width.rs:40-221](file://crates/aether-core/src/char_width.rs#L40-L221)
-- [char_width.rs:224-301](file://crates/aether-core/src/char_width.rs#L224-L301)
-- [char_width.rs:304-342](file://crates/aether-core/src/char_width.rs#L304-L342)
+- [crates/aether-render/src/gpu/syntax.rs:39-72](file://crates/aether-render/src/gpu/syntax.rs#L39-L72)
+- [crates/aether-render/src/gpu/syntax.rs:236-256](file://crates/aether-render/src/gpu/syntax.rs#L236-L256)
 
 章节来源
-- [char_width.rs:1-432](file://crates/aether-core/src/char_width.rs#L1-L432)
+- [crates/aether-render/src/gpu/shaders/char_classify.hlsl:44-88](file://crates/aether-render/src/gpu/shaders/char_classify.hlsl#L44-L88)
+- [crates/aether-render/src/gpu/shaders/token_scan.hlsl:56-141](file://crates/aether-render/src/gpu/shaders/token_scan.hlsl#L56-L141)
+- [crates/aether-render/src/gpu/shaders/token_scan.hlsl:218-312](file://crates/aether-render/src/gpu/shaders/token_scan.hlsl#L218-L312)
+- [crates/aether-render/src/gpu/syntax.rs:39-72](file://crates/aether-render/src/gpu/syntax.rs#L39-L72)
+- [crates/aether-render/src/gpu/syntax.rs:236-256](file://crates/aether-render/src/gpu/syntax.rs#L236-L256)
 
-### 组件三：PieceTable 行索引构建与更新
-- 构建行索引：遍历每个 piece 的数据块，循环调用 find_byte_simd 定位换行符，累计全局起始偏移。
-- 大片段换行计数：当数据长度达到阈值（≥64），使用 count_newlines_simd 加速。
-
-```mermaid
-sequenceDiagram
-participant PT as "PieceTable"
-participant SU as "simd_utils"
-PT->>PT : 遍历 pieces
-loop 每个 piece
-PT->>SU : find_byte_simd(piece_data[offset..], b'\\n')
-alt 找到
-SU-->>PT : pos
-PT->>PT : 记录全局行起点
-PT->>PT : offset += pos + 1
-else 未找到
-SU-->>PT : None
-break
-end
-end
-PT->>SU : count_newlines_simd(data) (data.len()>=64)
-SU-->>PT : u32 换行数
-```
-
-图表来源
-- [piece_table.rs:670-696](file://crates/aether-core/src/buffer/piece_table.rs#L670-L696)
-- [piece_table.rs:784-791](file://crates/aether-core/src/buffer/piece_table.rs#L784-L791)
-- [simd_utils.rs:88-171](file://crates/aether-core/src/simd_utils.rs#L88-L171)
-- [simd_utils.rs:10-82](file://crates/aether-core/src/simd_utils.rs#L10-L82)
-
-章节来源
-- [piece_table.rs:670-696](file://crates/aether-core/src/buffer/piece_table.rs#L670-L696)
-- [piece_table.rs:784-791](file://crates/aether-core/src/buffer/piece_table.rs#L784-L791)
-
-### 组件四：基准测试框架与 SIMD 用例
-- 统一框架 run_benchmark：支持预热、最大时间限制、吞吐统计。
-- SIMD 用例：
-  - benchmark_simd_newlines：统计 10K 行数据的换行数。
-  - benchmark_simd_find_byte：在 10K 行数据中查找换行符。
-  - benchmark_simd_skip_whitespace：跳过固定空白串。
+### 基准测试与结果分析
+- 统一基准框架：run_benchmark 支持预热、最大时间限制、多次迭代统计平均/最小/最大时间与吞吐量
+- SIMD 专项测试：覆盖换行计数、字节查找、空白跳过，验证正确性与性能
+- 增量词法对比：全量分析与增量更新的速度对比，体现增量策略优势
 
 ```mermaid
 sequenceDiagram
-participant Bench as "run_benchmark"
-participant Case as "benchmark_simd_*"
-participant SU as "simd_utils"
-Bench->>Case : 执行多次迭代
-Case->>SU : 调用 count/find/skip 函数
-SU-->>Case : 返回值
-Case-->>Bench : 完成一次迭代
-Bench-->>Bench : 统计平均/最小/最大耗时与吞吐
+participant Bench as "基准框架"
+participant Test as "SIMD 测试用例"
+participant Impl as "SIMD 实现"
+Bench->>Bench : run_benchmark(name, iterations, max_total_secs, f)
+loop 预热
+Bench->>Impl : 执行 f()
+end
+loop 正式测试
+Bench->>Impl : 执行 f()
+Impl-->>Bench : 耗时
+end
+Bench-->>Test : 生成 BenchmarkResult平均/最小/最大/吞吐
 ```
 
 图表来源
-- [benchmarks.rs:56-87](file://crates/aether-core/src/benchmarks.rs#L56-L87)
-- [benchmarks.rs:236-263](file://crates/aether-core/src/benchmarks.rs#L236-L263)
-- [simd_utils.rs:10-82](file://crates/aether-core/src/simd_utils.rs#L10-L82)
-- [simd_utils.rs:88-171](file://crates/aether-core/src/simd_utils.rs#L88-L171)
-- [simd_utils.rs:176-258](file://crates/aether-core/src/simd_utils.rs#L176-L258)
+- [crates/aether-core/src/benchmarks.rs:55-87](file://crates/aether-core/src/benchmarks.rs#L55-L87)
+- [crates/aether-core/src/benchmarks.rs:234-263](file://crates/aether-core/src/benchmarks.rs#L234-L263)
 
 章节来源
-- [benchmarks.rs:1-443](file://crates/aether-core/src/benchmarks.rs#L1-L443)
+- [crates/aether-core/src/benchmarks.rs:11-87](file://crates/aether-core/src/benchmarks.rs#L11-L87)
+- [crates/aether-core/src/benchmarks.rs:234-263](file://crates/aether-core/src/benchmarks.rs#L234-L263)
+- [crates/aether-core/src/benchmarks.rs:398-442](file://crates/aether-core/src/benchmarks.rs#L398-L442)
 
 ## 依赖关系分析
-- simd_utils 作为纯工具模块，无外部依赖，仅使用标准库整数类型与位运算。
-- piece_table 依赖 simd_utils 提供的 find_byte_simd 与 count_newlines_simd。
-- benchmarks 依赖 simd_utils 暴露的公共接口进行性能评估。
+- aether-core 依赖 memchr 与 bytecount，二者在运行时根据 CPU 能力选择最优实现（SSE/AVX2/NEON 等）
+- .cargo/config.toml 设置目标 CPU 与发布优化，确保编译器生成高效代码
+- GPU 侧通过 Direct3D11 上下文管理着色器与缓冲区，Rust 侧负责资源生命周期
 
 ```mermaid
 graph LR
-SU["simd_utils.rs"] --> PT["piece_table.rs"]
-SU --> BM["benchmarks.rs"]
+A["aether-core/Cargo.toml"] --> B["memchr"]
+A --> C["bytecount"]
+D[".cargo/config.toml"] --> E["target-cpu=sandybridge"]
+F["aether-render GPU"] --> G["Direct3D11 上下文"]
 ```
 
 图表来源
-- [piece_table.rs:670-696](file://crates/aether-core/src/buffer/piece_table.rs#L670-L696)
-- [benchmarks.rs:236-263](file://crates/aether-core/src/benchmarks.rs#L236-L263)
-- [simd_utils.rs:10-82](file://crates/aether-core/src/simd_utils.rs#L10-L82)
-- [simd_utils.rs:88-171](file://crates/aether-core/src/simd_utils.rs#L88-L171)
+- [crates/aether-core/Cargo.toml:6-12](file://crates/aether-core/Cargo.toml#L6-L12)
+- [.cargo/config.toml:8-11](file://.cargo/config.toml#L8-L11)
 
 章节来源
-- [piece_table.rs:670-696](file://crates/aether-core/src/buffer/piece_table.rs#L670-L696)
-- [benchmarks.rs:236-263](file://crates/aether-core/src/benchmarks.rs#L236-L263)
-- [simd_utils.rs:10-82](file://crates/aether-core/src/simd_utils.rs#L10-L82)
-- [simd_utils.rs:88-171](file://crates/aether-core/src/simd_utils.rs#L88-L171)
+- [crates/aether-core/Cargo.toml:6-12](file://crates/aether-core/Cargo.toml#L6-L12)
+- [.cargo/config.toml:8-11](file://.cargo/config.toml#L8-L11)
 
 ## 性能考量
-- 批处理粒度选择
-  - 优先 16 字节块（u128），其次 8 字节块（u64），最后标量。大块减少分支与循环开销，小段保障正确性。
-- 假阳性与验证成本
-  - SWAR 的 has_zero_byte 可能在高字节组合下产生误判，必须在命中后进行逐字节验证，确保返回首个真实匹配。
-- 阈值策略
-  - 在 count_line_breaks 中对小于阈值的短数据走标量路径，避免小块上的额外开销。
-- 内存访问模式
-  - 顺序扫描与对齐读取有利于缓存友好；避免不必要的拷贝，尽量切片引用。
-- 编译器自动向量化 vs 手动 SWAR
-  - 对于简单循环（如逐字节过滤），现代编译器在 -O2/-O3 下通常能自动向量化；但对于复杂条件（如多类空白判定、非 ASCII 安全校验），手动 SWAR 更可控且可移植。
-  - 本项目采用稳定 Rust 的 u128/u64 块模拟 SIMD，不引入 unstable intrinsics，兼顾跨平台与编译稳定性。
+- 使用成熟 SIMD 库：bytecount/memchr 提供运行时分派，避免手写 SWAR 的维护成本与潜在错误
+- 向量化友好遍历：使用 chunks_exact 减少边界检查，利于编译器自动向量化
+- GPU 并行：字符分类与 Token 扫描在 GPU 上并行执行，适合大规模文本处理
+- 构建优化：发布配置启用 LTO、单 codegen unit、opt-level 3，最大化性能
+- 基准驱动优化：通过统一基准框架持续评估改进效果，避免局部优化导致整体退化
 
-[本节为通用指导，不直接分析具体文件]
+[本节为通用性能讨论，不直接分析具体文件]
 
 ## 故障排查指南
-- 高字节误判问题
-  - 现象：包含 CJK 或多字节 UTF-8 序列时，SWAR 可能误报存在目标字节。
-  - 解决：在 has_zero_byte 命中后，务必逐字节验证，返回首个真实匹配位置。
-  - 参考路径：[simd_utils.rs:119-127](file://crates/aether-core/src/simd_utils.rs#L119-L127)、[simd_utils.rs:150-157](file://crates/aether-core/src/simd_utils.rs#L150-L157)
-- 边界情况
-  - 空输入、单字节、恰好 16/8 字节边界需覆盖。单元测试已覆盖常见边界。
-  - 参考路径：[simd_utils.rs:499-504](file://crates/aether-core/src/simd_utils.rs#L499-L504)、[simd_utils.rs:507-513](file://crates/aether-core/src/simd_utils.rs#L507-L513)
-- 行索引一致性
-  - 删除/插入后行索引应与重建一致，确保增量更新逻辑正确。
-  - 参考路径：[piece_table.rs:843-868](file://crates/aether-core/src/buffer/piece_table.rs#L843-L868)
-- 基准回归
-  - 若发现性能退化，先确认数据分布（如换行密度）、阈值设置与分支预测影响。
-  - 参考路径：[benchmarks.rs:236-263](file://crates/aether-core/src/benchmarks.rs#L236-L263)
+- 高字节误报问题：确保字节查找与分类对非 ASCII 字符正确处理，测试覆盖中文、带音标字符与 emoji
+- 边界条件：验证空输入、短输入、16 字节边界等场景的正确性
+- GPU 资源泄漏：确保 patterns_buffer、UAV/SRV 等资源生命周期管理正确
+- 基准稳定性：预热次数与最大时间限制需合理设置，避免冷启动或超时影响结果
 
 章节来源
-- [simd_utils.rs:119-127](file://crates/aether-core/src/simd_utils.rs#L119-L127)
-- [simd_utils.rs:150-157](file://crates/aether-core/src/simd_utils.rs#L150-L157)
-- [simd_utils.rs:499-504](file://crates/aether-core/src/simd_utils.rs#L499-L504)
-- [simd_utils.rs:507-513](file://crates/aether-core/src/simd_utils.rs#L507-L513)
-- [piece_table.rs:843-868](file://crates/aether-core/src/buffer/piece_table.rs#L843-L868)
-- [benchmarks.rs:236-263](file://crates/aether-core/src/benchmarks.rs#L236-L263)
+- [crates/aether-core/src/simd_utils.rs:127-141](file://crates/aether-core/src/simd_utils.rs#L127-L141)
+- [crates/aether-core/src/simd_utils.rs:172-183](file://crates/aether-core/src/simd_utils.rs#L172-L183)
+- [crates/aether-core/src/benchmarks.rs:55-87](file://crates/aether-core/src/benchmarks.rs#L55-L87)
+- [crates/aether-render/src/gpu/syntax.rs:236-256](file://crates/aether-render/src/gpu/syntax.rs#L236-L256)
 
 ## 结论
-本项目在稳定 Rust 环境下，通过 u128/u64 块的 SWAR 技术实现了高效的文本处理工具集，显著提升了换行查找、空白跳过与字节搜索的性能，并与 PieceTable 的行索引构建流程深度集成。字符宽度计算遵循 Unicode East Asian Width 的主要范围，满足编辑器显示需求。基准框架提供了可复用的性能评估手段，便于持续监控与回归。
+本项目通过“CPU SIMD + GPU 并行”的组合策略，显著提升了文本处理的吞吐与延迟表现。核心思路包括：
+- 借助成熟 SIMD 库获得跨平台、跨指令集的高效实现
+- 以 SWAR 与向量化友好遍历优化热点路径
+- 在 GPU 上并行执行字符分类与 Token 扫描，充分利用硬件并行能力
+- 通过基准测试驱动持续优化，确保性能可度量、可回归
 
 [本节为总结性内容，不直接分析具体文件]
 
 ## 附录
 
-### 编译器自动向量化与手动 SIMD 的选择原则
-- 何时优先自动向量化
-  - 简单线性循环、无复杂分支、数据连续、可推断的步长与对齐。
-- 何时选择手动 SWAR/SIMD
-  - 需要多模式并行比较（如空白三类）、非 ASCII 安全校验、复杂条件合并、跨平台稳定要求。
-- 本项目实践
-  - 使用 u128/u64 块与 has_zero_byte 实现跨平台 SWAR，避免不稳定特性与平台差异。
-  - 在 PieceTable 中按需切换标量路径（短数据），平衡开销与收益。
+### SIMD 编程最佳实践
+- 优先使用成熟库：如 bytecount/memchr，避免重复造轮子
+- 控制数据布局：对齐与连续内存访问有利于向量化
+- 减少分支与边界检查：使用 chunks_exact 等工具函数
+- 合理划分任务：CPU 做轻量预处理，GPU 做大规模并行
+- 持续基准验证：用统一框架衡量每次改动的影响
 
 [本节为通用指导，不直接分析具体文件]
 
-### 基准测试方法与结果分析要点
-- 方法
-  - 使用 run_benchmark 进行预热与限时长测，统计平均/最小/最大耗时与吞吐量。
-  - 针对典型场景构造数据（如 10K 行、每行约 100 字符）。
-- 结果解读
-  - 关注吞吐变化与尾延迟（max time），结合数据分布（换行密度、空白比例）分析瓶颈。
-  - 对比标量实现（如 filter/count）与 SWAR 实现的差异，验证优化收益。
-- 参考路径
-  - [benchmarks.rs:56-87](file://crates/aether-core/src/benchmarks.rs#L56-L87)
-  - [benchmarks.rs:236-263](file://crates/aether-core/src/benchmarks.rs#L236-L263)
+### 调试技巧
+- 单元测试覆盖边界与异常路径：空串、短串、16 字节边界、高字节字符
+- 打印中间状态：在 GPU 端可通过 UAV 输出中间结果辅助定位
+- 隔离热点：将热点函数独立成模块，便于单独基准与剖析
 
 章节来源
-- [benchmarks.rs:56-87](file://crates/aether-core/src/benchmarks.rs#L56-L87)
-- [benchmarks.rs:236-263](file://crates/aether-core/src/benchmarks.rs#L236-L263)
-
-### 跨平台兼容性与调试技巧
-- 兼容性
-  - 使用稳定 Rust 的 u128/u64 块，避免 unstable intrinsics，确保跨平台一致行为。
-  - 注意大小端序：代码采用 little-endian 填充块，符合主流平台默认。
-- 调试技巧
-  - 针对 SWAR 假阳性，增加断言与日志输出，验证逐字节验证路径是否命中。
-  - 使用最小化用例（如 16/8 字节边界、全高字节输入）复现问题。
-  - 借助单元测试覆盖非 ASCII 与 Emoji 场景，确保宽度计算与字节查找正确。
-
-章节来源
-- [simd_utils.rs:414-427](file://crates/aether-core/src/simd_utils.rs#L414-L427)
-- [char_width.rs:344-431](file://crates/aether-core/src/char_width.rs#L344-L431)
+- [crates/aether-core/src/simd_utils.rs:107-170](file://crates/aether-core/src/simd_utils.rs#L107-L170)
+- [crates/aether-core/src/benchmarks.rs:398-442](file://crates/aether-core/src/benchmarks.rs#L398-L442)

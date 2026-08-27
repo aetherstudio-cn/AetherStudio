@@ -1635,58 +1635,6 @@ impl EditorState {
                 }
                 cy += fmt_seg_h + gap;
 
-                // logprobs 调试开关
-                let logprobs_on = self.ui.settings_panel.logprobs;
-                let logprobs_region = self.render_pill_switch(
-                    target,
-                    x + margin,
-                    cy,
-                    logprobs_on,
-                    "logprobs  返回输出 token 概率（调试用）",
-                    &label_format,
-                    text_brush,
-                );
-                self.ui.settings_panel.logprobs_toggle_region = Some(logprobs_region);
-                cy += 20.0 + gap;
-
-                // top_logprobs（仅 logprobs 开启时显示）
-                if logprobs_on {
-                    let top_lp_valid = self.ui.settings_panel.top_logprobs_valid();
-                    let top_lp_value = self.ui.settings_panel.top_logprobs.clone();
-                    let top_lp_bottom = self.render_dev_text_input(
-                        target,
-                        x,
-                        margin,
-                        input_w,
-                        label_h,
-                        input_h,
-                        cy,
-                        "top_logprobs（每位置候选 token 数 0-20，可选）",
-                        &top_lp_value,
-                        "（不下发）",
-                        crate::settings::SettingsField::TopLogprobs,
-                        top_lp_valid,
-                        &label_format,
-                        &input_format,
-                        text_brush,
-                    );
-                    cy = top_lp_bottom + gap;
-                }
-
-                // 流式用量统计开关
-                let usage_on = self.ui.settings_panel.include_usage;
-                let usage_region = self.render_pill_switch(
-                    target,
-                    x + margin,
-                    cy,
-                    usage_on,
-                    "流式用量统计  末尾返回 token 用量（stream_options）",
-                    &label_format,
-                    text_brush,
-                );
-                self.ui.settings_panel.include_usage_toggle_region = Some(usage_region);
-                cy += 20.0 + gap;
-
                 // 用户标识 user_id
                 let user_id_value = self.ui.settings_panel.user_id.clone();
                 let uid_bottom = self.render_dev_text_input(

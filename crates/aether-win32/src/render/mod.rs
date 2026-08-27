@@ -6,7 +6,7 @@ pub(crate) use aether_render::d2d::glass;
 pub(crate) use windows::Win32::Graphics::Direct2D::Common::{D2D_POINT_2F, D2D_RECT_F};
 pub(crate) use windows::Win32::Graphics::Direct2D::{
     ID2D1SolidColorBrush, D2D1_ANTIALIAS_MODE_ALIASED, D2D1_DRAW_TEXT_OPTIONS_CLIP,
-    D2D1_DRAW_TEXT_OPTIONS_NONE,
+    D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_DRAW_TEXT_OPTIONS_NONE,
 };
 pub(crate) use windows::Win32::Graphics::DirectWrite::{
     IDWriteTextFormat, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL,
@@ -67,6 +67,8 @@ impl EditorState {
         // 多会话并发：轮询所有会话（活动 + 后台），对本帧刚完成的每个会话处理 Agent 动作；
         // 对本帧因错误中断的会话抢救已接收的文件块（不执行 RUN 命令）
         let (ai_completed, ai_interrupted) = self.ai.ai_panel.poll_all_background();
+        // 本帧是否有会话刚结束（完成/中断），用于后续脏标记判断
+        let ai_just_finished = !ai_completed.is_empty() || !ai_interrupted.is_empty();
         self.ai.ai_panel.sync_active_title();
         for conv_idx in ai_completed {
             self.process_ai_agent_actions_for(conv_idx);
@@ -79,7 +81,10 @@ impl EditorState {
         // 若缺少此标记，infer_from_state 返回 None（右侧面板可见性未变），
         // 依赖 on_paint 的全窗口防护导致每帧全量重绘，产生重影和性能浪费。
         // 智能体模式下生成中 UI（流式文本/停止按钮）在中间列，需标中间区域。
-        if self.ai.ai_panel.any_generating() {
+        // 完成/中断帧同样要标脏：此时 any_generating() 已变 false，若不标，
+        // 思考块自动折叠（块高收缩、后续内容上移）那一帧不会重绘，
+        // 旧的展开思考内容残留在屏幕上形成重影。
+        if self.ai.ai_panel.any_generating() || ai_just_finished {
             if self.editor_mode.is_agent() {
                 self.mark_ai_panel_dirty();
             } else if self.ui.layout.right_panel_visible {
@@ -805,6 +810,10 @@ impl EditorState {
         } else if self.editor_mode.is_agent() {
             // 智能体模式：中间区域渲染 AI 对话面板（占据编辑器内容区域，包括欢迎页/空占位页场景）
             // 智能体模式标签栏在右侧面板渲染，中间区域不预留标签栏高度
+            // 检测 AI 面板超时（与右侧面板路径一致，避免思考模式长等待请求永不收尾）
+            if self.ai.ai_panel.check_timeout() {
+                self.ai.ai_panel.handle_timeout();
+            }
             let agent_center = self.ui.layout.editor_content_region(false);
             let text_brush = match self
                 .win

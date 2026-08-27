@@ -562,40 +562,96 @@ impl EditorState {
         // 直接移至回收站，无确认对话框（VS Code 行为）。
         // 用户可通过 Ctrl+Z 撤销或从系统回收站还原。
 
+        // 文件暂存：删除前先收集受影响标签页（含目录前缀匹配）并快照内容，
+        // 供 Ctrl+Z 从内存直接回写恢复。
+        // 注意：活动标签页内容存放在 self.editor.content，tabs[active] 条目已被 swap 空，
+        // 需分别检查两处。
+        let mut affected_paths: Vec<PathBuf> = Vec::new();
+        if self
+            .editor
+            .content
+            .file_path
+            .as_ref()
+            .is_some_and(|fp| fp.starts_with(&path))
+        {
+            affected_paths.push(self.editor.content.file_path.clone().unwrap());
+        }
+        for tab in self.editor.tab_bar.tabs.iter() {
+            if let Some(fp) = tab.file_path() {
+                if fp.starts_with(&path) {
+                    affected_paths.push(fp.clone());
+                }
+            }
+        }
+        let mut records: Vec<(PathBuf, Option<String>)> = Vec::new();
+        for p in &affected_paths {
+            let content = if self.editor.content.file_path.as_ref() == Some(p) {
+                self.editor.content.buffer.get_all_text()
+            } else {
+                self.editor
+                    .tab_bar
+                    .tabs
+                    .iter()
+                    .find_map(|t| {
+                        if t.file_path() == Some(p) {
+                            t.as_file().map(|c| c.buffer.get_all_text())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default()
+            };
+            records.push((p.clone(), Some(content)));
+        }
+        // 被删节点本身无对应标签页（目录或文件未打开）：文件则从磁盘快照，目录无快照
+        if !affected_paths.iter().any(|p| p == &path) {
+            let content = if path.is_file() {
+                const MAX_SNAPSHOT_BYTES: u64 = 2 * 1024 * 1024;
+                match std::fs::metadata(&path) {
+                    Ok(meta) if meta.len() <= MAX_SNAPSHOT_BYTES => {
+                        std::fs::read_to_string(&path).ok()
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            records.push((path.clone(), content));
+        }
+
         // 使用 Windows 回收站 API（可由系统回收站恢复）
         match crate::recycle_bin::move_to_recycle_bin(&path) {
             Ok(()) => {
-                self.ui.status_message = format!("已删除: {} (可从回收站恢复)", name);
-                // 记录删除操作以支持 Ctrl+Z 撤销
-                self.fs
-                    .delete_undo_stack
-                    .push(crate::undo_delete::DeleteRecord {
-                        original_path: path.clone(),
-                        timestamp: std::time::Instant::now(),
-                    });
+                self.ui.status_message = format!("已删除: {} (Ctrl+Z 可撤销)", name);
+                // 记录删除操作以支持 Ctrl+Z 撤销（含内容快照）
+                for (p, content) in records {
+                    self.fs
+                        .delete_undo_stack
+                        .push(crate::undo_delete::DeleteRecord {
+                            original_path: p,
+                            timestamp: std::time::Instant::now(),
+                            content,
+                        });
+                }
                 // 淡汰超过 20 条的旧记录
                 if self.fs.delete_undo_stack.len() > 20 {
-                    self.fs.delete_undo_stack.remove(0);
+                    let extra = self.fs.delete_undo_stack.len() - 20;
+                    self.fs.delete_undo_stack.drain(0..extra);
                 }
-                // 关闭已删除文件的标签页
-                let path_str = path.to_string_lossy().to_string();
-                let mut tabs_to_close: Vec<usize> = Vec::new();
-                for (i, tab) in self.editor.tab_bar.tabs.iter().enumerate() {
-                    if let Some(ref fp) = tab.file_path() {
-                        if fp.to_string_lossy() == path_str {
-                            tabs_to_close.push(i);
-                        }
-                    }
+                // 文件暂存：不关闭标签页，仅标记 deleted_from_disk，
+                // 内容继续缓存在内存中，标签标题画横线提示已删除
+                if self
+                    .editor
+                    .content
+                    .file_path
+                    .as_ref()
+                    .is_some_and(|fp| fp.starts_with(&path))
+                {
+                    self.editor.content.deleted_from_disk = true;
                 }
-                for idx in tabs_to_close.into_iter().rev() {
-                    self.close_tab(idx);
-                }
-                if let Some(ref active_path) = self.editor.content.file_path {
-                    if active_path.to_string_lossy() == path_str {
-                        self.editor.content.buffer =
-                            aether_core::buffer::piece_table::PieceTable::from_string(String::new());
-                        self.editor.content.file_path = None;
-                        self.editor.content.is_dirty = false;
+                for tab in self.editor.tab_bar.tabs.iter_mut() {
+                    if tab.file_path().is_some_and(|fp| fp.starts_with(&path)) {
+                        tab.set_deleted(true);
                     }
                 }
                 self.fs.selected_file_node = None;
@@ -604,6 +660,85 @@ impl EditorState {
             }
             Err(e) => {
                 self.ui.status_message = format!("删除失败: {}", e);
+            }
+        }
+    }
+    /// Ctrl+Z 撤销最近一次文件删除（回退机制）。
+    ///
+    /// 恢复优先级：
+    /// 1. 内存缓存：存在标记 `deleted_from_disk` 的对应标签页 → 直接从缓冲区
+    ///    回写磁盘（保留删除后的未保存编辑）并清除删除标记；
+    /// 2. 删除快照：标签页已关闭时用 `DeleteRecord.content` 回写；
+    /// 3. 回收站兜底：无内容可用（如目录删除）时提示用户从回收站还原。
+    pub fn undo_last_file_delete(&mut self) {
+        let Some(record) = crate::undo_delete::pop_last_delete(&mut self.fs.delete_undo_stack)
+        else {
+            self.ui.status_message = "没有可撤销的删除操作".to_string();
+            return;
+        };
+        let path = record.original_path;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+
+        // 文件已重新存在（外部已还原）：同步状态即可
+        if path.exists() {
+            self.clear_deleted_mark(&path);
+            self.refresh_file_tree_light();
+            self.ui.status_message = format!("已恢复: {}", name);
+            return;
+        }
+
+        // 优先级 1：从内存缓存的标签页缓冲区回写（活动标签页内容在 self.editor.content）
+        let mut restore_content: Option<String> = None;
+        if self.editor.content.deleted_from_disk
+            && self.editor.content.file_path.as_deref() == Some(path.as_path())
+        {
+            restore_content = Some(self.editor.content.buffer.get_all_text());
+        } else {
+            for tab in self.editor.tab_bar.tabs.iter() {
+                if tab.is_deleted() && tab.file_path() == Some(&path) {
+                    if let Some(c) = tab.as_file() {
+                        restore_content = Some(c.buffer.get_all_text());
+                    }
+                    break;
+                }
+            }
+        }
+        // 优先级 2：删除时的内容快照
+        let content = match restore_content.or(record.content) {
+            Some(c) => c,
+            None => {
+                self.ui.status_message =
+                    format!("已撤销删除: {} (内容无缓存，请从回收站还原)", name);
+                return;
+            }
+        };
+
+        // 回写磁盘：父目录可能被一并删除，需先重建
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::write(&path, &content) {
+            Ok(()) => {
+                self.clear_deleted_mark(&path);
+                self.refresh_file_tree_light();
+                self.ui.status_message = format!("已恢复: {}", name);
+            }
+            Err(e) => {
+                self.ui.status_message = format!("恢复失败: {} ({})", name, e);
+            }
+        }
+    }
+    /// 清除与路径匹配的所有标签页的删除标记（撤销恢复或外部还原后调用）。
+    fn clear_deleted_mark(&mut self, path: &std::path::Path) {
+        if self.editor.content.file_path.as_deref() == Some(path) {
+            self.editor.content.deleted_from_disk = false;
+        }
+        for tab in self.editor.tab_bar.tabs.iter_mut() {
+            if tab.file_path().is_some_and(|fp| fp.as_path() == path) {
+                tab.set_deleted(false);
             }
         }
     }
@@ -1106,6 +1241,8 @@ impl EditorState {
 
         // 标记可见行数组需要重建
         self.mark_file_tree_rows_dirty();
+        // 新加载的子节点中可能包含已展开但未加载的嵌套目录，立即触发预加载
+        self.preload_expanded_dirs();
         // 触发重绘
         self.emit_event(crate::events::EditorEvent::SidebarChanged);
     }

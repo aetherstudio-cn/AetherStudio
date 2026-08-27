@@ -30,6 +30,10 @@ pub const LIST_PREFIX: &str = "<<<<<<< AETHER_LIST";
 pub const PLAN_HEADER: &str = "<<<<<<< AETHER_PLAN";
 /// 规划器任务清单块结束：`>>>>>>> AETHER_END_PLAN`
 pub const PLAN_FOOTER: &str = ">>>>>>> AETHER_END_PLAN";
+/// 询问卡片块起始：`<<<<<<< AETHER_ASK`（需求不清时向用户提问 + 选项）
+pub const ASK_HEADER: &str = "<<<<<<< AETHER_ASK";
+/// 询问卡片块结束：`>>>>>>> AETHER_END_ASK`
+pub const ASK_FOOTER: &str = ">>>>>>> AETHER_END_ASK";
 
 /// 精准定位标记：`<<<<<<< AETHER_LOCATE <location_type> <params>`
 pub const LOCATE_HEADER: &str = "<<<<<<< AETHER_LOCATE";
@@ -114,6 +118,10 @@ pub enum PreciseLocation {
     Keyword {
         keyword: String,
         context_lines: usize,
+        /// 大小写不敏感匹配（默认大小写敏感）
+        case_insensitive: bool,
+        /// 全字匹配：仅命中两侧均非单词字符的出现（默认子串匹配）
+        whole_word: bool,
     },
     /// 行号范围定位：指定具体的起始行号和结束行号
     LineRange { start_line: usize, end_line: usize },
@@ -122,6 +130,8 @@ pub enum PreciseLocation {
         snippet: String,
         similarity_threshold: f32,
     },
+    /// 函数定义搜索定位：识别 `fn/def/func/function name` 定义并覆盖整个函数体
+    Function { name: String },
 }
 
 /// 精准编辑操作类型
@@ -136,6 +146,8 @@ pub enum EditOperation {
     },
     /// 删除：删除定位到的代码片段
     Delete,
+    /// 重命名：整词替换标识符（函数重命名时同步更新所有调用点，跨文件协同）
+    Rename { new_name: String },
 }
 
 /// 插入位置
@@ -239,10 +251,12 @@ pub fn parse_edits(response: &str, default_path: Option<&str>) -> Vec<AiEdit> {
 ///
 /// 支持格式：
 /// ```text
-/// <<<<<<< AETHER_LOCATE keyword <keyword> [context_lines]
+/// <<<<<<< AETHER_LOCATE keyword <keyword> [context_lines] [flags]
 /// <<<<<<< AETHER_LOCATE lines <start_line> <end_line>
 /// <<<<<<< AETHER_LOCATE snippet <snippet> [similarity_threshold]
+/// <<<<<<< AETHER_LOCATE fn <name>
 /// ```
+/// flags 为逗号分隔选项：`ci`（大小写不敏感）、`word`（全字匹配）。
 pub fn parse_precise_location(line: &str) -> Option<PreciseLocation> {
     let trimmed = line.trim_end();
     if !trimmed.starts_with(LOCATE_HEADER) {
@@ -263,9 +277,20 @@ pub fn parse_precise_location(line: &str) -> Option<PreciseLocation> {
             }
             let keyword = parts[1].to_string();
             let context_lines = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
+            let flags = parts.get(3).unwrap_or(&"");
             Some(PreciseLocation::Keyword {
                 keyword,
                 context_lines,
+                case_insensitive: flags.contains("ci"),
+                whole_word: flags.contains("word"),
+            })
+        }
+        "fn" => {
+            if parts.len() < 2 {
+                return None;
+            }
+            Some(PreciseLocation::Function {
+                name: parts[1].to_string(),
             })
         }
         "lines" => {
@@ -337,6 +362,14 @@ pub fn parse_edit_operation(line: &str) -> Option<EditOperation> {
             }
         }
         "delete" => Some(EditOperation::Delete),
+        "rename" => {
+            if parts.len() < 2 {
+                return None;
+            }
+            Some(EditOperation::Rename {
+                new_name: parts[1].to_string(),
+            })
+        }
         _ => None,
     }
 }
@@ -354,10 +387,23 @@ pub fn parse_precise_edits(response: &str) -> Vec<PreciseEdit> {
     let lines: Vec<&str> = response.lines().collect();
     let mut edits = Vec::new();
     let mut i = 0;
+    // 上下文路径：精准编辑默认作用于其前面最近的 AETHER_FILE 块目标文件
+    let mut last_file_path: Option<String> = None;
 
     while i < lines.len() {
-        // 查找定位标记
-        let Some(location) = parse_precise_location(lines[i]) else {
+        // 记录最近的 FILE 头路径（含未闭合块，作为精准编辑的默认目标）
+        if let Some(p) = parse_file_header(lines[i].trim_end()) {
+            if !p.is_empty() {
+                last_file_path = Some(p);
+            }
+        }
+        // 查找定位标记（支持 ` @ <path>` 后缀显式指定目标文件）
+        let trimmed = lines[i].trim_end();
+        let (loc_line, path_override) = match trimmed.split_once(" @ ") {
+            Some((l, p)) if l.starts_with(LOCATE_HEADER) => (l, Some(p.trim().to_string())),
+            _ => (trimmed, None),
+        };
+        let Some(location) = parse_precise_location(loc_line) else {
             i += 1;
             continue;
         };
@@ -403,18 +449,144 @@ pub fn parse_precise_edits(response: &str) -> Vec<PreciseEdit> {
                 content: insert_content,
                 ..
             } => *insert_content = content,
-            EditOperation::Delete => {}
+            EditOperation::Delete | EditOperation::Rename { .. } => {}
         }
 
-        // 创建精准编辑（需要从上下文推断路径）
-        // 这里简化处理，实际应该从上下文或标记中获取路径
-        let path = PathBuf::from("unknown"); // TODO: 从上下文获取路径
+        // 目标路径优先级：LOCATE 行 `@ path` 显式指定 > 最近的 FILE 头 > unknown
+        let path = path_override
+            .or_else(|| last_file_path.clone())
+            .unwrap_or_else(|| "unknown".to_string());
         let context_lines = 5; // 默认上下文行数
 
-        edits.push(PreciseEdit::new(path, location, operation, context_lines));
+        edits.push(PreciseEdit::new(
+            PathBuf::from(path),
+            location,
+            operation,
+            context_lines,
+        ));
     }
 
     edits
+}
+
+/// 判断字符是否为「单词字符」（字母/数字/下划线/美元符），用于全字匹配边界判定。
+pub fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '$'
+}
+
+/// 全字标识符替换：仅替换两侧均非单词字符的出现（`foo` 不会误伤 `foobar`），
+/// 返回 `(新内容, 替换次数)`。用于函数重命名时同步更新调用点。
+pub fn rename_whole_word(content: &str, old: &str, new: &str) -> (String, usize) {
+    if old.is_empty() || old == new {
+        return (content.to_string(), 0);
+    }
+    let mut count = 0usize;
+    let mut out = String::with_capacity(content.len());
+    let mut search_start = 0usize;
+    while let Some(rel) = content[search_start..].find(old) {
+        let abs = search_start + rel;
+        let before_ok = content[..abs]
+            .chars()
+            .next_back()
+            .map_or(true, |c| !is_word_char(c));
+        let after_ok = content[abs + old.len()..]
+            .chars()
+            .next()
+            .map_or(true, |c| !is_word_char(c));
+        out.push_str(&content[search_start..abs]);
+        if before_ok && after_ok {
+            out.push_str(new);
+            count += 1;
+        } else {
+            out.push_str(old);
+        }
+        search_start = abs + old.len();
+    }
+    out.push_str(&content[search_start..]);
+    (out, count)
+}
+
+/// 判断一行是否为指定名称的函数定义行（覆盖 Rust/Python/Go/JS/TS 等常见语言）。
+fn is_function_def_line(line: &str, name: &str) -> bool {
+    let t = line.trim_start();
+    for kw in ["fn ", "def ", "func ", "function ", "sub "] {
+        let Some(after_kw) = t.strip_prefix(kw) else {
+            continue;
+        };
+        // 允许 `pub fn ` / `async fn ` 等前缀：退而检查行内 `kw + name` 组合
+        let rest = if after_kw.starts_with(name) {
+            after_kw[name.len()..].to_string()
+        } else {
+            continue;
+        };
+        if rest.starts_with('(') || rest.starts_with('<') || rest.trim_start().starts_with('(') {
+            return true;
+        }
+        return false;
+    }
+    // 行内含 `kw name(` 的变体（如 `pub fn foo(`、`export function foo(`）
+    for kw in ["fn ", "def ", "func ", "function ", "sub "] {
+        if let Some(idx) = t.find(kw) {
+            let after = &t[idx + kw.len()..];
+            if let Some(rest) = after.strip_prefix(name) {
+                if rest.starts_with('(')
+                    || rest.starts_with('<')
+                    || rest.trim_start().starts_with('(')
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// 函数搜索：在文件内容中查找函数定义并返回其行范围（0-based，含两端）。
+///
+/// 花括号语言（Rust/C/JS/Go…）用花括号配平确定函数体结尾；
+/// Python 用缩进回退确定结尾。未找到定义时返回 None。
+pub fn find_function_span(content: &str, name: &str) -> Option<(usize, usize)> {
+    if name.is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    let def = lines.iter().position(|l| is_function_def_line(l, name))?;
+    let first = lines[def];
+    let indent_of = |l: &str| l.len() - l.trim_start().len();
+    if first.trim_start().starts_with("def ") || first.trim_start().starts_with("async def ") {
+        // Python：函数体到下一条缩进不深于定义行的非空行为止
+        let base = indent_of(first);
+        let mut end = def;
+        for i in def + 1..lines.len() {
+            if lines[i].trim().is_empty() {
+                continue;
+            }
+            if indent_of(lines[i]) <= base {
+                break;
+            }
+            end = i;
+        }
+        return Some((def, end));
+    }
+    // 花括号语言：从定义行起配平花括号
+    let mut balance = 0i32;
+    let mut opened = false;
+    for i in def..lines.len() {
+        for c in lines[i].chars() {
+            match c {
+                '{' => {
+                    balance += 1;
+                    opened = true;
+                }
+                '}' => balance -= 1,
+                _ => {}
+            }
+        }
+        if opened && balance <= 0 {
+            return Some((def, i));
+        }
+    }
+    Some((def, def))
 }
 
 /// 抢救流式中断时未闭合的尾部 FILE 块（缺 `>>>>>>> AETHER_END_FILE` 结束标记）。
@@ -509,7 +681,7 @@ pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
         let t = lines[i].trim_end();
         // 跳过完整的 FILE 块体
         if parse_file_header(t).is_some() {
-            if let Some((_, _, next_i)) = scan_file_block(&lines, i) {
+            if let Some((_, _, _, next_i)) = scan_file_block(&lines, i) {
                 i = next_i;
                 continue;
             }
@@ -636,6 +808,8 @@ pub enum AgentDisplayBlock {
         path: String,
         /// 文件块的 replace 段完整内容（供卡片展开预览）
         content: String,
+        /// 文件块的 search 段内容（旧内容片段，供 +/- 行数统计）
+        old: String,
     },
     Run {
         cmd: String,
@@ -649,6 +823,11 @@ pub enum AgentDisplayBlock {
     /// 未闭合的文件块（流式截断）——通知用户该文件未落盘
     Incomplete {
         path: String,
+    },
+    /// 询问卡片：需求不清时 AI 向用户提问，附 2~4 个选项（用户也可自定义回答）
+    Ask {
+        question: String,
+        options: Vec<String>,
     },
 }
 
@@ -664,11 +843,12 @@ fn push_text_block(blocks: &mut Vec<AgentDisplayBlock>, lines: &[&str]) {
     }
 }
 
-/// 从 `start`（FILE 头行）起扫描一个完整文件块，返回 `(操作类型, replace段内容, 块结束后的下一行下标)`；
+/// 从 `start`（FILE 头行）起扫描一个完整文件块，返回 `(操作类型, search段内容, replace段内容, 块结束后的下一行下标)`；
 /// 块不完整（缺分隔行或结束行）时返回 None。
-fn scan_file_block(lines: &[&str], start: usize) -> Option<(FileOpKind, String, usize)> {
+fn scan_file_block(lines: &[&str], start: usize) -> Option<(FileOpKind, String, String, usize)> {
     let mut i = start + 1;
     let mut search_empty = true;
+    let search_start = i;
     while i < lines.len() && lines[i].trim_end() != FILE_SEP {
         if !lines[i].trim().is_empty() {
             search_empty = false;
@@ -678,6 +858,7 @@ fn scan_file_block(lines: &[&str], start: usize) -> Option<(FileOpKind, String, 
     if i >= lines.len() {
         return None; // 无分隔行
     }
+    let search = lines[search_start..i].join("\n");
     i += 1; // 跳过分隔行
     let replace_start = i;
     let mut replace_empty = true;
@@ -699,7 +880,7 @@ fn scan_file_block(lines: &[&str], start: usize) -> Option<(FileOpKind, String, 
     } else {
         FileOpKind::Modify
     };
-    Some((kind, content, i))
+    Some((kind, search, content, i))
 }
 
 /// 从 `start`（RUN 头行）起扫描一个完整命令块，返回 `(命令列表, 块结束后的下一行下标)`；
@@ -721,6 +902,45 @@ fn scan_run_block(lines: &[&str], start: usize) -> Option<(Vec<String>, usize)> 
     Some((cmds, i))
 }
 
+/// 从 `start`（ASK 头行）起扫描一个完整询问块，返回 `(问题, 选项列表, 块结束后的下一行下标)`；
+/// 块不完整（缺结束行）或问题/选项为空时返回 None。
+///
+/// 格式：问题行在前（1~多行），选项行以 `- ` 或 `* ` 开头；选项行之后的非选项行忽略。
+fn scan_ask_block(lines: &[&str], start: usize) -> Option<(String, Vec<String>, usize)> {
+    let mut i = start + 1;
+    let mut question_lines: Vec<&str> = Vec::new();
+    let mut options: Vec<String> = Vec::new();
+    while i < lines.len() && lines[i].trim_end() != ASK_FOOTER {
+        let t = lines[i].trim();
+        if let Some(opt) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
+            let opt = opt.trim();
+            if !opt.is_empty() {
+                options.push(opt.to_string());
+            }
+        } else if options.is_empty() && !t.is_empty() {
+            question_lines.push(lines[i]);
+        }
+        i += 1;
+    }
+    if i >= lines.len() {
+        return None; // 无结束行
+    }
+    i += 1; // 跳过结束行
+    let question = question_lines.join("\n").trim().to_string();
+    if question.is_empty() || options.is_empty() {
+        return None;
+    }
+    Some((question, options, i))
+}
+
+/// 判断是否为独占一行的协议标记行（<<<<<<< / >>>>>>> / ======= + AETHER_ 前缀）。
+/// 这类行若未被识别为合法块，属于内部协议泄漏，不应展示给用户。
+fn is_protocol_marker_line(t: &str) -> bool {
+    t.starts_with("<<<<<<< AETHER_")
+        || t.starts_with(">>>>>>> AETHER_")
+        || t.starts_with("======= AETHER_")
+}
+
 /// 将 AI 回复按出现顺序解析为"文本 + 操作"块，隐藏原始标记，供面板渲染操作卡片。
 ///
 /// 解析失败/标记不完整时，剩余内容作为普通文本返回（不丢内容）。
@@ -733,13 +953,14 @@ pub fn parse_display_blocks(response: &str) -> Vec<AgentDisplayBlock> {
         let trimmed = lines[i].trim_end();
         // 文件块
         if let Some(path) = parse_file_header(trimmed) {
-            if let Some((kind, content, next_i)) = scan_file_block(&lines, i) {
+            if let Some((kind, search, content, next_i)) = scan_file_block(&lines, i) {
                 push_text_block(&mut blocks, &text_buf);
                 text_buf.clear();
                 blocks.push(AgentDisplayBlock::File {
                     kind,
                     path: path.trim().to_string(),
                     content,
+                    old: search,
                 });
                 i = next_i;
                 continue;
@@ -776,6 +997,50 @@ pub fn parse_display_blocks(response: &str) -> Vec<AgentDisplayBlock> {
             i += 1;
             continue;
         }
+        // 询问卡片块（需求不清时向用户提问 + 选项）
+        if trimmed == ASK_HEADER {
+            if let Some((question, options, next_i)) = scan_ask_block(&lines, i) {
+                push_text_block(&mut blocks, &text_buf);
+                text_buf.clear();
+                blocks.push(AgentDisplayBlock::Ask { question, options });
+                i = next_i;
+                continue;
+            }
+        }
+        // 精准编辑块（含内容行）：内部协议，整体不展示
+        //（执行结果由编辑器状态消息「✓ 已精准修改」呈现）。
+        if trimmed.starts_with(EDIT_HEADER) {
+            i += 1;
+            while i < lines.len() && lines[i].trim_end() != EDIT_FOOTER {
+                i += 1;
+            }
+            if i < lines.len() {
+                i += 1; // 跳过结束行；未闭合则已到末尾
+            }
+            continue;
+        }
+        // 规划块（含内容行）：内部协议，整体不展示
+        if trimmed.starts_with(PLAN_HEADER) {
+            i += 1;
+            while i < lines.len() && lines[i].trim_end() != PLAN_FOOTER {
+                i += 1;
+            }
+            if i < lines.len() {
+                i += 1;
+            }
+            continue;
+        }
+        // 精准定位单行指令：内部协议，不展示
+        if trimmed.starts_with(LOCATE_HEADER) {
+            i += 1;
+            continue;
+        }
+        // 泄漏的协议标记行（如模型违规输出的 >>>>>>> AETHER_END_LIST）不进入展示文本；
+        // FILE 头保留，供尾部截断 Incomplete 检测使用。
+        if is_protocol_marker_line(trimmed) && parse_file_header(trimmed).is_none() {
+            i += 1;
+            continue;
+        }
         text_buf.push(lines[i]);
         i += 1;
     }
@@ -793,6 +1058,24 @@ pub fn parse_display_blocks(response: &str) -> Vec<AgentDisplayBlock> {
         }
     } else {
         push_text_block(&mut blocks, &text_buf);
+    }
+    // 纯探查回合（仅 READ/LIST 卡片，无文件/命令操作）：开场白属于内部叙述，
+    // 整体过滤，只向用户展示工具卡片。
+    let probe_only = blocks.iter().any(|b| {
+        matches!(
+            b,
+            AgentDisplayBlock::Read { .. } | AgentDisplayBlock::List { .. }
+        )
+    }) && !blocks.iter().any(|b| {
+        matches!(
+            b,
+            AgentDisplayBlock::File { .. }
+                | AgentDisplayBlock::Run { .. }
+                | AgentDisplayBlock::Incomplete { .. }
+        )
+    });
+    if probe_only {
+        blocks.retain(|b| !matches!(b, AgentDisplayBlock::Text(_)));
     }
     blocks
 }
@@ -1026,6 +1309,7 @@ cargo test\n\
                 kind,
                 path,
                 content,
+                ..
             } => {
                 assert_eq!(*kind, FileOpKind::Create);
                 assert_eq!(path, "a.rs");
@@ -1087,19 +1371,82 @@ cargo test\n\
 <<<<<<< AETHER_READ a.rs\n\
 <<<<<<< AETHER_LIST\n";
         let blocks = parse_display_blocks(text);
-        assert_eq!(blocks[0], AgentDisplayBlock::Text("看下代码".to_string()));
+        assert_eq!(blocks.len(), 2);
         assert_eq!(
-            blocks[1],
+            blocks[0],
             AgentDisplayBlock::Read {
                 path: "a.rs".to_string()
             }
         );
         assert_eq!(
-            blocks[2],
+            blocks[1],
             AgentDisplayBlock::List {
                 path: ".".to_string()
             }
         );
+    }
+
+    #[test]
+    fn test_display_blocks_probe_hides_narration_and_leaked_marker() {
+        // 纯探查回合：模型违规输出的结束标记与开场白均不展示，只剩工具卡片
+        let text = [
+            "我先看看当前工作区里有哪些文件。",
+            LIST_PREFIX,
+            ">>>>>>> AETHER_END_LIST",
+        ]
+        .join("\n");
+        let blocks = parse_display_blocks(&text);
+        assert_eq!(
+            blocks,
+            vec![AgentDisplayBlock::List {
+                path: ".".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn test_display_blocks_hides_locate_edit_and_plan_blocks() {
+        // 精准定位/精准编辑/规划块均为内部协议，内容行不展示，仅保留普通文本
+        let text = [
+            "开始修改。".to_string(),
+            format!("{} keyword fn_main", LOCATE_HEADER),
+            format!("{} replace", EDIT_HEADER),
+            "fn main() {}".to_string(),
+            EDIT_FOOTER.to_string(),
+            PLAN_HEADER.to_string(),
+            "TASK a——b".to_string(),
+            PLAN_FOOTER.to_string(),
+            "完成。".to_string(),
+        ]
+        .join("\n");
+        let blocks = parse_display_blocks(&text);
+        assert_eq!(blocks.len(), 1);
+        // 隐藏块不割裂文本：前后叙述合并为一段
+        assert_eq!(
+            blocks[0],
+            AgentDisplayBlock::Text("开始修改。\n完成。".to_string())
+        );
+    }
+
+    #[test]
+    fn test_display_blocks_mixed_turn_keeps_text_strips_leaked_marker() {
+        // 含文件操作的回合：文本保留，但泄漏标记行仍被过滤
+        let text = [
+            "下面修改文件：",
+            ">>>>>>> AETHER_END_LIST",
+            FILE_HEADER_PREFIX,
+            FILE_SEP,
+            "内容",
+            FILE_FOOTER,
+        ]
+        .join("\n");
+        let blocks = parse_display_blocks(&text);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(
+            blocks[0],
+            AgentDisplayBlock::Text("下面修改文件：".to_string())
+        );
+        assert!(matches!(blocks[1], AgentDisplayBlock::File { .. }));
     }
 
     #[test]
@@ -1154,5 +1501,202 @@ RUN python -m http.server 8000\n\
         s.push_str(">>>>>>> AETHER_END_PLAN\n");
         let (_, tasks) = parse_plan(&s).expect("应解析");
         assert_eq!(tasks.len(), 20);
+    }
+
+    #[test]
+    fn test_display_blocks_ask_card() {
+        // 完整询问块：解析为 Ask 卡片（问题 + 选项），前后文本保留
+        let text = [
+            "先确认一下需求：".to_string(),
+            ASK_HEADER.to_string(),
+            "你希望主题用哪种风格？".to_string(),
+            "- 深色".to_string(),
+            "* 浅色".to_string(),
+            "- 跟随系统".to_string(),
+            ASK_FOOTER.to_string(),
+            "选好后我立刻开工。".to_string(),
+        ]
+        .join("\n");
+        let blocks = parse_display_blocks(&text);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(
+            blocks[0],
+            AgentDisplayBlock::Text("先确认一下需求：".to_string())
+        );
+        match &blocks[1] {
+            AgentDisplayBlock::Ask { question, options } => {
+                assert_eq!(question, "你希望主题用哪种风格？");
+                assert_eq!(
+                    options,
+                    &vec![
+                        "深色".to_string(),
+                        "浅色".to_string(),
+                        "跟随系统".to_string()
+                    ]
+                );
+            }
+            other => panic!("应为 Ask 块，实际 {:?}", other),
+        }
+        assert_eq!(
+            blocks[2],
+            AgentDisplayBlock::Text("选好后我立刻开工。".to_string())
+        );
+    }
+
+    #[test]
+    fn test_display_blocks_ask_multiple_keeps_order() {
+        // 引导式顺序提问：同一回复多个询问块按序解析，供 UI 逐个展示
+        let text = [
+            ASK_HEADER.to_string(),
+            "页面用途是什么？".to_string(),
+            "- 个人博客".to_string(),
+            "- 产品展示".to_string(),
+            ASK_FOOTER.to_string(),
+            ASK_HEADER.to_string(),
+            "需要哪种配色？".to_string(),
+            "- 深色".to_string(),
+            "- 浅色".to_string(),
+            ASK_FOOTER.to_string(),
+        ]
+        .join("\n");
+        let blocks = parse_display_blocks(&text);
+        assert_eq!(blocks.len(), 2);
+        match (&blocks[0], &blocks[1]) {
+            (
+                AgentDisplayBlock::Ask { question: q1, .. },
+                AgentDisplayBlock::Ask { question: q2, .. },
+            ) => {
+                assert_eq!(q1, "页面用途是什么？");
+                assert_eq!(q2, "需要哪种配色？");
+            }
+            other => panic!("应为两个 Ask 块，实际 {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_display_blocks_ask_incomplete_yields_no_card() {
+        // 未闭合（流式中间态）：不产生 Ask 卡片，头行被协议标记规则过滤
+        let text = "<<<<<<< AETHER_ASK\n你希望哪种风格？\n- 深色";
+        let blocks = parse_display_blocks(text);
+        assert!(!blocks
+            .iter()
+            .any(|b| matches!(b, AgentDisplayBlock::Ask { .. })));
+    }
+
+    #[test]
+    fn test_display_blocks_ask_missing_question_or_options_rejected() {
+        // 缺问题或缺选项的块不产生卡片（整体被协议行过滤规则隐藏）
+        let no_question = "<<<<<<< AETHER_ASK\n- 只有选项\n>>>>>>> AETHER_END_ASK";
+        let blocks = parse_display_blocks(no_question);
+        assert!(!blocks
+            .iter()
+            .any(|b| matches!(b, AgentDisplayBlock::Ask { .. })));
+
+        let no_options = "<<<<<<< AETHER_ASK\n只有问题\n>>>>>>> AETHER_END_ASK";
+        let blocks = parse_display_blocks(no_options);
+        assert!(!blocks
+            .iter()
+            .any(|b| matches!(b, AgentDisplayBlock::Ask { .. })));
+    }
+
+    #[test]
+    fn test_locate_fn_and_keyword_flags() {
+        let loc = parse_precise_location("<<<<<<< AETHER_LOCATE fn compute");
+        assert_eq!(
+            loc,
+            Some(PreciseLocation::Function {
+                name: "compute".to_string()
+            })
+        );
+        let loc = parse_precise_location("<<<<<<< AETHER_LOCATE keyword foo 3 ci,word");
+        match loc {
+            Some(PreciseLocation::Keyword {
+                keyword,
+                context_lines,
+                case_insensitive,
+                whole_word,
+            }) => {
+                assert_eq!(keyword, "foo");
+                assert_eq!(context_lines, 3);
+                assert!(case_insensitive);
+                assert!(whole_word);
+            }
+            other => panic!("应为 Keyword，实际 {:?}", other),
+        }
+        // 默认大小写敏感、子串匹配
+        let loc = parse_precise_location("<<<<<<< AETHER_LOCATE keyword bar");
+        match loc {
+            Some(PreciseLocation::Keyword {
+                case_insensitive,
+                whole_word,
+                ..
+            }) => {
+                assert!(!case_insensitive);
+                assert!(!whole_word);
+            }
+            other => panic!("应为 Keyword，实际 {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_edit_rename_parsed() {
+        let op = parse_edit_operation("<<<<<<< AETHER_EDIT rename new_name");
+        assert_eq!(
+            op,
+            Some(EditOperation::Rename {
+                new_name: "new_name".to_string()
+            })
+        );
+        assert_eq!(parse_edit_operation("<<<<<<< AETHER_EDIT rename"), None);
+    }
+
+    #[test]
+    fn test_precise_edit_path_from_file_header_and_override() {
+        let text = "<<<<<<< AETHER_FILE src/a.rs\n======= AETHER_SEP\nx\n>>>>>>> AETHER_END_FILE\n\
+<<<<<<< AETHER_LOCATE fn foo\n\
+<<<<<<< AETHER_EDIT delete\n\
+>>>>>>> AETHER_END_EDIT\n\
+<<<<<<< AETHER_LOCATE fn bar @ src/b.rs\n\
+<<<<<<< AETHER_EDIT delete\n\
+>>>>>>> AETHER_END_EDIT\n";
+        let edits = parse_precise_edits(text);
+        assert_eq!(edits.len(), 2);
+        // 第一个继承最近的 FILE 头路径
+        assert_eq!(edits[0].path, PathBuf::from("src/a.rs"));
+        // 第二个被 @ 显式覆盖
+        assert_eq!(edits[1].path, PathBuf::from("src/b.rs"));
+        assert_eq!(
+            edits[1].location,
+            PreciseLocation::Function {
+                name: "bar".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_rename_whole_word_boundaries() {
+        let src = "foo(1); foobar(2); x.foo; let foo = foo;";
+        let (out, n) = rename_whole_word(src, "foo", "bar");
+        assert_eq!(n, 4);
+        assert_eq!(out, "bar(1); foobar(2); x.bar; let bar = bar;");
+        // 同名替换不计次
+        let (_, n) = rename_whole_word(src, "foo", "foo");
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn test_find_function_span_rust_braces() {
+        let src = "fn a() {}\n\nfn target(x: i32) -> i32 {\n    if x > 0 {\n        return 1;\n    }\n    2\n}\n\nfn b() {}";
+        let span = find_function_span(src, "target");
+        assert_eq!(span, Some((2, 7)));
+        // 不会误命中调用点或前缀同名函数
+        assert!(find_function_span(src, "targe").is_none());
+    }
+
+    #[test]
+    fn test_find_function_span_python_indent() {
+        let src = "def a():\n    pass\n\ndef target(x):\n    if x:\n        return 1\n    return 2\n\ndef b():\n    pass";
+        let span = find_function_span(src, "target");
+        assert_eq!(span, Some((3, 6)));
     }
 }

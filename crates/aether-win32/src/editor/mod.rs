@@ -487,6 +487,12 @@ pub struct EditorContentState {
     /// REQ-P1-09: 当前活动标签页的编辑状态（单一归属，切换标签时通过 swap 交换）
     pub content: TabContent,
     pub is_selecting: bool,
+    /// 滚动条拖拽状态（左键按住滑块/轨道期间为 Some）
+    pub(crate) scrollbar_drag: Option<scrollbar::Axis>,
+    /// 滚动条拖拽抓取偏移（按下点距滑块顶/左边的距离）
+    pub(crate) scrollbar_drag_offset: f32,
+    /// 滚动条悬停状态（高亮反馈）
+    pub(crate) scrollbar_hover: Option<scrollbar::Axis>,
     /// 标签栏状态
     pub tab_bar: TabBarState,
     // 查找与替换状态
@@ -827,7 +833,7 @@ impl EditorState {
         let hover_content = None;
 
         // 提前提取 editor_mode，避免 app_settings 被移动后无法借用
-        let editor_mode = crate::layout::EditorMode::from_str(&app_settings.ui.editor_mode);
+        let editor_mode = app_settings.ui.editor_mode;
         let mut state = Self {
             win: WindowRenderState {
                 hwnd,
@@ -856,6 +862,9 @@ impl EditorState {
             editor: EditorContentState {
                 content: TabContent::new(),
                 is_selecting: false,
+                scrollbar_drag: None,
+                scrollbar_drag_offset: 0.0,
+                scrollbar_hover: None,
                 tab_bar: TabBarState::default(),
                 find: FindState::default(),
                 multi_cursor: MultiCursorState::new(),
@@ -2249,6 +2258,7 @@ mod dialogs;
 mod find;
 mod git;
 mod ime;
+pub(crate) mod scrollbar;
 
 mod ai;
 mod cursor;

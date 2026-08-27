@@ -138,37 +138,8 @@ pub const CORNER_HANDLE_SIZE: f32 = 12.0;
 ///
 /// 智能体模式下 AI 对话面板在左侧为主体，文件编辑区移至右侧，
 /// 设置以弹窗形式打开，终端注册为独立标签页。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum EditorMode {
-    /// 开发者模式：传统 IDE 布局，AI 面板在右侧
-    #[default]
-    Developer,
-    /// 智能体模式：AI 对话为主体在左侧，编辑器在右侧
-    Agent,
-}
-
-impl EditorMode {
-    /// 从持久化字符串解析
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "agent" => Self::Agent,
-            _ => Self::Developer,
-        }
-    }
-
-    /// 转为持久化字符串
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Developer => "developer",
-            Self::Agent => "agent",
-        }
-    }
-
-    /// 是否为智能体模式
-    pub fn is_agent(&self) -> bool {
-        matches!(self, Self::Agent)
-    }
-}
+/// 枚举定义在 aether-shared（与 settings.json 序列化形状一致），此处重导出。
+pub use aether_shared::settings::EditorMode;
 
 /// 标题栏右侧按钮布局（单一事实源）。
 ///

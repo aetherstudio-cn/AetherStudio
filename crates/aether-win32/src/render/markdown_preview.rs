@@ -310,7 +310,7 @@ impl EditorState {
                 bottom: y + line_height,
             },
             &text_brush,
-            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
             DWRITE_MEASURING_MODE_NATURAL,
         );
 
@@ -432,7 +432,7 @@ impl EditorState {
             D2D_POINT_2F { x, y },
             &layout,
             &text_brush,
-            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
         );
     }
 
@@ -614,7 +614,7 @@ impl EditorState {
                 bottom: y + line_height,
             },
             &code_brush,
-            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
             DWRITE_MEASURING_MODE_NATURAL,
         );
     }
@@ -680,7 +680,7 @@ impl EditorState {
                 bottom: y + line_height,
             },
             &quote_brush,
-            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
             DWRITE_MEASURING_MODE_NATURAL,
         );
     }

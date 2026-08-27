@@ -168,152 +168,6 @@ impl EditorState {
         }
     }
 
-    /// 绘制计费统计模块
-    pub(super) unsafe fn draw_billing_stats(
-        &mut self,
-        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
-        x: f32,
-        w: f32,
-        y: f32,
-    ) -> f32 {
-        let billing_history = &self.ui.app_settings.billing_history;
-
-        // 计算总费用和总 token 数量
-        let total_cost = billing_history.total_cost();
-        let total_tokens = billing_history.total_tokens();
-        let cache_hit_rate = billing_history.cache_hit_rate();
-
-        // 绘制标题
-        let title_format = self
-            .win
-            .render_ctx
-            .text_format_cache
-            .get_format(
-                14.0,
-                DWRITE_FONT_WEIGHT_BOLD.0 as u32,
-                DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
-                DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
-            )
-            .unwrap();
-        let title_brush = self
-            .win
-            .render_ctx
-            .brush_cache
-            .get_brush(target, &color_f(0.92, 0.92, 0.92, 1.0))
-            .unwrap();
-        let title_text: Vec<u16> = "计费统计".encode_utf16().chain(Some(0)).collect();
-        let title_rect = D2D_RECT_F {
-            left: x + 2.0,
-            top: y,
-            right: x + w,
-            bottom: y + 20.0,
-        };
-        target.DrawText(
-            &title_text,
-            &title_format,
-            &title_rect,
-            &title_brush,
-            D2D1_DRAW_TEXT_OPTIONS_NONE,
-            DWRITE_MEASURING_MODE_NATURAL,
-        );
-
-        let mut current_y = y + 30.0;
-
-        // 绘制总费用卡片
-        let cost_card_rect = D2D_RECT_F {
-            left: x,
-            top: current_y,
-            right: x + w,
-            bottom: current_y + 80.0,
-        };
-        self.draw_settings_card(target, &cost_card_rect);
-
-        // 绘制总费用
-        let cost_format = self
-            .win
-            .render_ctx
-            .text_format_cache
-            .get_format(
-                24.0,
-                DWRITE_FONT_WEIGHT_BOLD.0 as u32,
-                DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
-                DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
-            )
-            .unwrap();
-        let cost_brush = self
-            .win
-            .render_ctx
-            .brush_cache
-            .get_brush(target, &color_f(0.30, 0.80, 0.48, 1.0))
-            .unwrap();
-        let cost_text = format!("¥ {:.2}", total_cost);
-        let cost_wide: Vec<u16> = cost_text.encode_utf16().chain(Some(0)).collect();
-        let cost_rect = D2D_RECT_F {
-            left: cost_card_rect.left,
-            top: cost_card_rect.top + 10.0,
-            right: cost_card_rect.right,
-            bottom: cost_card_rect.top + 50.0,
-        };
-        target.DrawText(
-            &cost_wide,
-            &cost_format,
-            &cost_rect,
-            &cost_brush,
-            D2D1_DRAW_TEXT_OPTIONS_NONE,
-            DWRITE_MEASURING_MODE_NATURAL,
-        );
-
-        // 绘制总费用标签
-        let cost_label_format = self
-            .win
-            .render_ctx
-            .text_format_cache
-            .get_format(
-                12.0,
-                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-                DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
-                DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
-            )
-            .unwrap();
-        let cost_label_brush = self
-            .win
-            .render_ctx
-            .brush_cache
-            .get_brush(target, &color_f(0.62, 0.62, 0.65, 1.0))
-            .unwrap();
-        let cost_label_text: Vec<u16> = "总费用（人民币）".encode_utf16().chain(Some(0)).collect();
-        let cost_label_rect = D2D_RECT_F {
-            left: cost_card_rect.left,
-            top: cost_card_rect.top + 50.0,
-            right: cost_card_rect.right,
-            bottom: cost_card_rect.bottom - 10.0,
-        };
-        target.DrawText(
-            &cost_label_text,
-            &cost_label_format,
-            &cost_label_rect,
-            &cost_label_brush,
-            D2D1_DRAW_TEXT_OPTIONS_NONE,
-            DWRITE_MEASURING_MODE_NATURAL,
-        );
-
-        current_y += 90.0;
-
-        // 绘制统计数据行
-        let stats_rows = vec![
-            ("总 Token 数量", format!("{}", total_tokens), None),
-            (
-                "缓存命中率",
-                format!("{:.1}%", cache_hit_rate * 100.0),
-                None,
-            ),
-        ];
-
-        current_y = self.draw_settings_group(target, "统计数据", x, w, current_y, &stats_rows);
-
-        current_y
-    }
-
     /// 绘制一个设置分组：分组标题 + 卡片 + 若干设置行；返回卡片底部 Y
     pub(super) unsafe fn draw_settings_group(
         &mut self,
@@ -1108,7 +962,7 @@ impl EditorState {
             } else {
                 "开发者模式"
             };
-            let default_is_agent = self.ui.app_settings.ui.editor_mode == "agent";
+            let default_is_agent = self.ui.app_settings.ui.editor_mode.is_agent();
             let mode_rows = [
                 ("当前模式", mode_label.to_string(), None),
                 (
@@ -1162,10 +1016,6 @@ impl EditorState {
                 ),
             ];
             cy = self.draw_settings_group(target, "自动保存", x, width, cy, &auto_save_rows);
-            cy += 16.0;
-
-            // 计费统计模块
-            cy = self.draw_billing_stats(target, x, width, cy);
             cy += 16.0;
 
             // 提示

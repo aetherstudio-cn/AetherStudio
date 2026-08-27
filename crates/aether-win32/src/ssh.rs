@@ -505,7 +505,13 @@ impl SshManagerPanel {
         self.form_host = config.host.clone();
         self.form_port = config.port.to_string();
         self.form_username = config.username.clone();
-        self.form_auth_type = config.auth_type.as_str().into();
+        self.form_auth_type = match config.auth_type {
+            aether_shared::settings::SshAuthType::Password => SshAuthType::Password,
+            aether_shared::settings::SshAuthType::Key => SshAuthType::Key,
+            // Fallback（未知旧值）等同 Agent
+            aether_shared::settings::SshAuthType::Agent
+            | aether_shared::settings::SshAuthType::Fallback => SshAuthType::Agent,
+        };
         self.form_key_path = config.key_path.clone();
         self.focus_field = 0;
         self.error_message = None;
@@ -552,9 +558,9 @@ impl SshManagerPanel {
             .parse()
             .map_err(|_| "端口号无效".to_string())?;
         let auth_type = match self.form_auth_type {
-            SshAuthType::Password => "password", // 理论不可达（上方已拦截），保留 exhaustiveness
-            SshAuthType::Key => "key",
-            SshAuthType::Agent => "agent",
+            SshAuthType::Password => aether_shared::settings::SshAuthType::Password, // 理论不可达（上方已拦截），保留 exhaustiveness
+            SshAuthType::Key => aether_shared::settings::SshAuthType::Key,
+            SshAuthType::Agent => aether_shared::settings::SshAuthType::Agent,
         };
         // P1-2: 密钥认证必须提供 key_path
         if self.form_auth_type == SshAuthType::Key && self.form_key_path.trim().is_empty() {
@@ -565,7 +571,7 @@ impl SshManagerPanel {
             host: self.form_host.trim().to_string(),
             port,
             username: self.form_username.trim().to_string(),
-            auth_type: auth_type.to_string(),
+            auth_type,
             key_path: if self.form_auth_type == SshAuthType::Key {
                 self.form_key_path.clone()
             } else {
@@ -581,8 +587,8 @@ impl SshManagerPanel {
     pub fn config_to_ssh_config(
         config: &aether_shared::settings::SshServerConfig,
     ) -> aether_remote::ssh::SshConfig {
-        let auth = match config.auth_type.as_str() {
-            "key" => aether_remote::ssh::SshAuth::Key {
+        let auth = match config.auth_type {
+            aether_shared::settings::SshAuthType::Key => aether_remote::ssh::SshAuth::Key {
                 path: config.key_path.clone(),
                 passphrase: None,
             },
@@ -594,16 +600,6 @@ impl SshManagerPanel {
             port: config.port,
             username: config.username.clone(),
             auth,
-        }
-    }
-}
-
-impl From<&str> for SshAuthType {
-    fn from(s: &str) -> Self {
-        match s {
-            "password" => SshAuthType::Password,
-            "key" => SshAuthType::Key,
-            _ => SshAuthType::Agent,
         }
     }
 }

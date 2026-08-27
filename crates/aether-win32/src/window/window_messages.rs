@@ -511,6 +511,30 @@ pub(crate) unsafe fn on_wm_app_12(
     LRESULT(0)
 }
 
+/// msg if msg == WM_APP + 14
+///
+/// AI 对话内文件名链接：后台线程预读完成，携带 (路径, 内容) 回到 UI 线程建标签页。
+pub(crate) unsafe fn on_wm_app_14(
+    _hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let raw = lparam.0 as usize;
+    // H-09: 立即重建 Box 确保 drop 语义保证清理，即使 EDITOR_STATE 为 None 也不泄漏
+    let _payload_guard = unsafe { Box::from_raw(raw as *mut (std::path::PathBuf, String)) };
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            state
+                .borrow_mut()
+                .finish_open_ai_file_link(&_payload_guard.0, &_payload_guard.1);
+        }
+    });
+    // REQ-P1-07: 触发 WM_PAINT 统一渲染，避免双重渲染
+    invalidate_window(_hwnd);
+    LRESULT(0)
+}
+
 /// msg if msg == crate::browser::WM_BROWSER_EVENT
 ///
 /// 内置浏览器：WebView2 回调在 UI 线程把动作压入挂起队列并 PostMessage 到这里，

@@ -438,6 +438,36 @@ pub(crate) fn on_folder_scan_batch_ref(state: &mut EditorState, batch: &ScannedB
     }
     if batch.complete {
         state.fs.is_loading_folder = false;
+        // 初始扫描完成后，同步预加载所有根层目录（depth==0）的子节点，
+        // 避免等待 16ms 定时器逐批异步加载导致的可见延迟。
+        // 根层目录数量通常不多（几十到几百），同步扫描一层开销可控。
+        if let Some(ref mut tree) = state.fs.file_tree {
+            let root = state.fs.current_folder.clone();
+            if let Some(root) = root {
+                let mut idx = tree.first_root_node();
+                while let Some(i) = idx {
+                    let node = tree.get_node(i).unwrap();
+                    if node.kind == FileKind::Directory && node.is_expanded && !node.is_loaded {
+                        let dir_path = root.join(tree.get_name(node));
+                        let _ = populate_children_one_level(tree, &dir_path, i, 1);
+                        if let Some(n) = tree.get_node_mut(i) {
+                            n.is_loaded = true;
+                        }
+                    }
+                    idx = {
+                        let node = tree.get_node(i).unwrap();
+                        if node.next_sibling != u32::MAX {
+                            Some(node.next_sibling)
+                        } else {
+                            None
+                        }
+                    };
+                }
+            }
+        }
+        state.mark_file_tree_rows_dirty();
+        // 立即启动嵌套已展开目录的异步预加载，不等下一个定时器周期
+        state.preload_expanded_dirs();
         if let Some(folder) = state.fs.current_folder.clone() {
             state.ui.git.detect(&folder);
             if let Some(branch) = state.ui.git.current_branch_name() {

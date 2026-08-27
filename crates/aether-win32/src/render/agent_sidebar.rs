@@ -207,7 +207,6 @@ impl EditorState {
                 } else {
                     &conv.title
                 };
-                let title_wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
                 let item_format = self
                     .win
                     .render_ctx
@@ -225,6 +224,18 @@ impl EditorState {
                     right: x + width - 40.0,
                     bottom: item_y + tab_item_height,
                 };
+                // 显示层缩写：标题超出可用宽度时截断加 "…"，避免溢出到关闭按钮
+                let title_shown = self
+                    .win
+                    .render_ctx
+                    .text_format_cache
+                    .truncate_with_ellipsis(
+                        title,
+                        12.0,
+                        DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                        title_rect.right - title_rect.left,
+                    );
+                let title_wide: Vec<u16> = title_shown.encode_utf16().chain(Some(0)).collect();
                 target.DrawText(
                     &title_wide,
                     &item_format,

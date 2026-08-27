@@ -7,6 +7,7 @@
 //! 底层存储通过 [`MemoryStore`] trait 抽象（见 memory_store.rs），
 //! 当前实现为 AetherDbMemoryStore（自研 AetherDB）。
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
@@ -67,6 +68,9 @@ pub struct WarmDataStore {
     workspace_hash: Arc<RwLock<String>>,
     /// ACE Reflector 的 LLM 客户端（None = 未启用反思）
     reflector_client: Arc<Mutex<Option<aether_ai::AiClient>>>,
+    /// 已删除会话的墓碑集合：删除后若队列中仍有在途归档请求，
+    /// worker 检到墓碑则跳过归档，防止已删除记录复活
+    deleted_tombstones: Arc<Mutex<HashSet<String>>>,
 }
 
 impl WarmDataStore {
@@ -82,15 +86,18 @@ impl WarmDataStore {
 
         let workspace_hash = Arc::new(RwLock::new(String::new()));
         let reflector_client: Arc<Mutex<Option<aether_ai::AiClient>>> = Arc::new(Mutex::new(None));
+        let deleted_tombstones: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
         let worker_store = Arc::clone(&store);
         let worker_base = base_dir.clone();
         let worker_reflector = Arc::clone(&reflector_client);
+        let worker_tombstones = Arc::clone(&deleted_tombstones);
         let handle = std::thread::spawn(move || {
             Self::archive_worker(
                 worker_store,
                 worker_base,
                 worker_reflector,
+                worker_tombstones,
                 request_rx,
                 result_tx,
             );
@@ -104,6 +111,7 @@ impl WarmDataStore {
             worker_handle: Some(handle),
             workspace_hash,
             reflector_client,
+            deleted_tombstones,
         })
     }
 
@@ -220,9 +228,17 @@ impl WarmDataStore {
         store: Arc<dyn MemoryStore>,
         base_dir: PathBuf,
         reflector_client: Arc<Mutex<Option<aether_ai::AiClient>>>,
+        tombstones: Arc<Mutex<HashSet<String>>>,
         request_rx: Receiver<ArchiveRequest>,
         result_tx: Sender<ArchiveResult>,
     ) {
+        // 墓碑检查：会话已被删除 → 跳过归档（同时消费墓碑，避免集合无限增长）
+        let tombstoned = |conv_id: &str| -> bool {
+            tombstones
+                .lock()
+                .map(|mut g| g.remove(conv_id))
+                .unwrap_or(false)
+        };
         // grow-and-refine：每次启动执行一次保守剪枝（高 harmful 条目清理 + 审计日志）
         match store.prune_bullets(&crate::memory_store::PruneConfig::default()) {
             Ok(report) if report.pruned > 0 => {
@@ -241,7 +257,11 @@ impl WarmDataStore {
                     conv,
                     workspace_hash: hash,
                 } => {
-                    let result = Self::archive_single(store.as_ref(), &conv_id, &conv, &hash);
+                    let result = if tombstoned(&conv_id) {
+                        Err("会话已删除，跳过归档".to_string())
+                    } else {
+                        Self::archive_single(store.as_ref(), &conv_id, &conv, &hash)
+                    };
                     if result.is_ok() {
                         Self::maybe_reflect(&store, &reflector_client, &conv);
                     }
@@ -257,7 +277,11 @@ impl WarmDataStore {
                 } => {
                     for conv in sessions {
                         let conv_id = conv.id.clone();
-                        let result = Self::archive_single(store.as_ref(), &conv_id, &conv, &hash);
+                        let result = if tombstoned(&conv_id) {
+                            Err("会话已删除，跳过归档".to_string())
+                        } else {
+                            Self::archive_single(store.as_ref(), &conv_id, &conv, &hash)
+                        };
                         if result.is_ok() && reflect {
                             Self::maybe_reflect(&store, &reflector_client, &conv);
                         }
@@ -414,14 +438,29 @@ impl WarmDataStore {
         Ok(results)
     }
 
-    /// 删除历史会话（级联删除消息与向量索引）
+    /// 删除历史会话（级联删除消息与向量索引）；立墓碑屏蔽在途归档
     pub fn delete_conversation(&self, conv_id: &str) -> Result<(), String> {
+        self.mark_tombstone(conv_id);
         self.store.delete_conversation(conv_id)
     }
 
-    /// 清空全部历史会话；返回删除条数
+    /// 清空全部历史会话；返回删除条数（先立墓碑，防在途归档复活已删会话）
     pub fn clear_all_conversations(&self) -> Result<usize, String> {
+        if let Ok(convs) = self.store.list_conversations(1_000_000) {
+            if let Ok(mut g) = self.deleted_tombstones.lock() {
+                for c in convs {
+                    g.insert(c.id);
+                }
+            }
+        }
         self.store.clear_all_conversations()
+    }
+
+    /// 为单个会话立删除墓碑（投毒容忍：锁异常不阻断删除操作）
+    fn mark_tombstone(&self, conv_id: &str) {
+        if let Ok(mut g) = self.deleted_tombstones.lock() {
+            g.insert(conv_id.to_string());
+        }
     }
 
     /// 清理无工作区绑定的历史会话；返回删除条数
@@ -595,6 +634,45 @@ mod tests {
         assert_eq!(convs[0].title, "测试会话");
         assert_eq!(convs[0].workspace_hash, "ws-hash-1");
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn deleted_conversation_not_resurrected_by_inflight_archive() {
+        let dir = std::env::temp_dir().join(format!(
+            "aether_warm_tomb_{}",
+            crate::memory_store::new_id("t")
+        ));
+        let store = WarmDataStore::new(dir.clone()).unwrap();
+
+        let mut conv = AiConversation::new("gone".to_string(), "将被删除".to_string());
+        conv.messages
+            .push(AiMessage::new(AiRole::User, "你好".to_string()));
+        conv.messages
+            .push(AiMessage::new(AiRole::Assistant, "你好！".to_string()));
+
+        // 先投递归档请求（模拟关闭标签/休眠触发的在途归档），再删除会话
+        store.request_archive("gone".to_string(), conv);
+        store.delete_conversation("gone").unwrap();
+
+        // 轮询直到 worker 处理完队列中的请求
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut processed = false;
+        while std::time::Instant::now() < deadline && !processed {
+            if !store.poll_results().is_empty() {
+                processed = true;
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+
+        // 无论归档先于删除还是墓碑拦截了归档，库中均不得残留该会话
+        let convs = store.search_conversations("", false, 10).unwrap();
+        assert!(
+            convs.is_empty(),
+            "已删除会话不得被在途归档复活，实际残留: {:?}",
+            convs.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }
