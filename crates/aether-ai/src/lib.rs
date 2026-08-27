@@ -4,8 +4,6 @@ use std::io::{BufRead, BufReader, Read};
 use std::sync::mpsc;
 use url::Url;
 
-pub mod tokenizer;
-
 // H-01: SSRF DNS 重绑定限制说明
 //
 // 当前实现对 DNS 解析返回的所有 IP 做私有地址校验（resolve_and_lock），
@@ -187,13 +185,7 @@ pub struct AiConfig {
     pub stop: Option<Vec<String>>,
     /// 响应格式：Some("json_object")=强制 JSON 输出
     pub response_format: Option<String>,
-    /// 流式用量统计：Some(true) 时下发 stream_options.include_usage
-    pub include_usage: Option<bool>,
-    /// 返回输出 token 对数概率（调试用）
-    pub logprobs: Option<bool>,
-    /// 每位置候选 token 数（0-20，需 logprobs 开启）
-    pub top_logprobs: Option<u32>,
-    /// 业务侧用户标识，None/空表示不下发
+    /// 业务侧用户标识，None/空=不下发
     pub user_id: Option<String>,
 }
 
@@ -217,9 +209,6 @@ impl std::fmt::Debug for AiConfig {
             .field("presence_penalty", &self.presence_penalty)
             .field("stop", &self.stop)
             .field("response_format", &self.response_format)
-            .field("include_usage", &self.include_usage)
-            .field("logprobs", &self.logprobs)
-            .field("top_logprobs", &self.top_logprobs)
             .field("user_id", &self.user_id)
             .finish()
     }
@@ -256,9 +245,6 @@ impl AiConfig {
             presence_penalty: settings.presence_penalty,
             stop: settings.stop.clone(),
             response_format: settings.response_format.clone(),
-            include_usage: settings.include_usage,
-            logprobs: settings.logprobs,
-            top_logprobs: settings.top_logprobs,
             user_id: settings.user_id.clone(),
         }
     }
@@ -735,17 +721,6 @@ impl AiClient {
         self.stream_openai_compatible(messages)
     }
 
-    /// 计算消息列表的 token 数量
-    pub fn count_messages_tokens(&self, messages: &[ChatMessage]) -> Result<usize, AiError> {
-        tokenizer::count_messages_tokens(messages)
-            .map_err(|e| AiError::Config(format!("Token 计算失败: {}", e)))
-    }
-
-    /// 计算文本的 token 数量
-    pub fn count_tokens(&self, text: &str) -> Result<usize, AiError> {
-        tokenizer::count_tokens(text).map_err(|e| AiError::Config(format!("Token 计算失败: {}", e)))
-    }
-
     /// 为 DeepSeek 请求体注入 thinking 参数（深度思考开关）。
     ///
     /// DeepSeek V4 用 `thinking: {"type":"enabled"|"disabled"}` 控制思考/非思考模式，
@@ -835,17 +810,6 @@ impl AiClient {
         // JSON 输出模式（仅 json_object 时下发，文本模式用服务端默认）
         if self.config.response_format.as_deref() == Some("json_object") {
             body["response_format"] = serde_json::json!({ "type": "json_object" });
-        }
-        // 流式用量统计：末尾 chunk 附带 token 用量
-        if self.config.include_usage == Some(true) {
-            body["stream_options"] = serde_json::json!({ "include_usage": true });
-        }
-        // logprobs 调试参数（top_logprobs 需 logprobs 开启，上限 20）
-        if self.config.logprobs == Some(true) {
-            body["logprobs"] = serde_json::json!(true);
-            if let Some(n) = self.config.top_logprobs {
-                body["top_logprobs"] = serde_json::json!(n.min(20));
-            }
         }
         // 业务侧用户标识（空字符串不下发）
         if let Some(uid) = self.config.user_id.as_deref() {
@@ -1203,9 +1167,6 @@ mod tests {
             presence_penalty: None,
             stop: None,
             response_format: None,
-            include_usage: None,
-            logprobs: None,
-            top_logprobs: None,
             user_id: None,
         };
         let out = format!("{:?}", config);

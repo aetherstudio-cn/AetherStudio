@@ -18,10 +18,14 @@ impl EditorState {
     ) {
         let mut cy = start_y;
         unsafe {
-            // 卡片布局最小宽度：当 AI 侧边栏过宽、设置区被压窄时，卡片不再继续压缩，
-            // 而是保持该最小宽度并向右溢出；溢出部分会被随后绘制的 AI 侧边栏覆盖，
-            // 从而避免模型卡片被越挤越扁、文字互相重叠。
-            let eff_width = width.max(500.0);
+            // 卡片布局最小宽度：经典模式下设置区被压窄时，卡片保持该最小宽度向右溢出，
+            // 溢出部分被随后绘制的 AI 侧边栏覆盖，避免卡片被越挤越扁、文字互相重叠；
+            // 智能体模式下右面板外无遮挡，强制钳制为实际宽度，防止卡片画到窗口外。
+            let eff_width = if self.editor_mode.is_agent() {
+                width.max(0.0)
+            } else {
+                width.max(500.0)
+            };
             let content_w = eff_width - margin * 2.0;
 
             // 说明

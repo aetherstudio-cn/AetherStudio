@@ -487,6 +487,12 @@ pub struct EditorContentState {
     /// REQ-P1-09: 当前活动标签页的编辑状态（单一归属，切换标签时通过 swap 交换）
     pub content: TabContent,
     pub is_selecting: bool,
+    /// 滚动条拖拽状态（左键按住滑块/轨道期间为 Some）
+    pub(crate) scrollbar_drag: Option<scrollbar::Axis>,
+    /// 滚动条拖拽抓取偏移（按下点距滑块顶/左边的距离）
+    pub(crate) scrollbar_drag_offset: f32,
+    /// 滚动条悬停状态（高亮反馈）
+    pub(crate) scrollbar_hover: Option<scrollbar::Axis>,
     /// 标签栏状态
     pub tab_bar: TabBarState,
     // 查找与替换状态
@@ -659,6 +665,8 @@ pub struct EditorState {
     pub ai: AiPanelState,
     /// 终端面板
     pub terminal: TerminalState,
+    /// 内置浏览器（WebView2 管理器，智能体模式浏览器标签页）
+    pub browser: crate::browser::BrowserState,
     /// LSP 与诊断
     pub lsp: LspDiagState,
     /// UI 面板与组件
@@ -669,6 +677,8 @@ pub struct EditorState {
     pub remote: RemoteState,
     /// 空闲内存优化：Frozen 冰冻态管理（最小化/长期空闲时释放内存）
     pub power: crate::power::PowerManager,
+    /// 当前编辑器模式（开发者/智能体），从 app_settings.ui.editor_mode 同步
+    pub editor_mode: crate::layout::EditorMode,
 }
 
 /// 工作区 AI 面板快照：保存切换工作区时的完整对话标签页组状态
@@ -822,6 +832,8 @@ impl EditorState {
         let completion_items = Vec::new();
         let hover_content = None;
 
+        // 提前提取 editor_mode，避免 app_settings 被移动后无法借用
+        let editor_mode = app_settings.ui.editor_mode;
         let mut state = Self {
             win: WindowRenderState {
                 hwnd,
@@ -850,6 +862,9 @@ impl EditorState {
             editor: EditorContentState {
                 content: TabContent::new(),
                 is_selecting: false,
+                scrollbar_drag: None,
+                scrollbar_drag_offset: 0.0,
+                scrollbar_hover: None,
                 tab_bar: TabBarState::default(),
                 find: FindState::default(),
                 multi_cursor: MultiCursorState::new(),
@@ -891,6 +906,7 @@ impl EditorState {
                 saved_ime_himc: None,
                 bottom_panel_tab: BottomPanelTab::default(),
             },
+            browser: crate::browser::BrowserState::new(),
             lsp: LspDiagState {
                 diagnostics: HashMap::new(),
                 lsp: LspState {
@@ -966,6 +982,7 @@ impl EditorState {
                 ssh_connecting: false,
             },
             power: crate::power::PowerManager::new(),
+            editor_mode,
         };
         // 加载 logo 位图（aether-512.png）
         // 注意：此时还没有 render target，位图会在首次渲染时通过 ensure_logo_bitmap 懒加载
@@ -982,8 +999,8 @@ impl EditorState {
         if !menu_order.is_empty() {
             state.ui.menu_bar.apply_order(&menu_order);
         }
-        // 启动时 tabs 为空，由渲染层根据 show_welcome()/show_empty_placeholder() 显示欢迎页
-        // 不再创建 Tab::Welcome 作为显式标签页，避免标签栏出现"欢迎"tab
+        // 无项目的新窗口显示欢迎页（空标签栏），不创建新标签页；
+        // 默认新标签页仅在打开项目时创建（open_folder -> ensure_default_new_tab）
         state.editor.tab_bar.active_tab = 0;
 
         // P0.2c: 主窗口启动时自动恢复上次打开的工作区。
@@ -1005,7 +1022,7 @@ impl EditorState {
         // 自动保存：启动周期兜底定时器（防抖定时器由编辑事件按需调度）
         state.start_autosave_periodic();
 
-        // AI 对话持久化：启动温数据归档定时器（每 5s 检查空闲会话并归档进 SQLite）
+        // AI 对话持久化：启动温数据归档定时器（每 5s 检查空闲会话并归档进 AetherDB）
         unsafe {
             let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
                 state.win.hwnd,
@@ -2241,6 +2258,7 @@ mod dialogs;
 mod find;
 mod git;
 mod ime;
+pub(crate) mod scrollbar;
 
 mod ai;
 mod cursor;

@@ -268,7 +268,7 @@ unsafe fn okd_ctrl_view_shortcuts(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                     }
                     st.ui.sidebar_content =
                         crate::layout::SidebarContent::from_view(st.ui.activity_view);
-                    st.ui.status_message = "已切换到资源管理器".to_string();
+                    st.ui.status_message = "已切换到工作区".to_string();
                     invalidate_window(hwnd);
                 }
             });
@@ -546,37 +546,12 @@ unsafe fn okd_ctrl_find_undo(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                             .map(|r| r.timestamp.elapsed().as_secs() < 2)
                             .unwrap_or(false);
                         if recent_delete {
-                            if let Some(path) =
-                                crate::undo_delete::pop_last_delete(&mut st.fs.delete_undo_stack)
-                            {
-                                let name = path
-                                    .file_name()
-                                    .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| path.to_string_lossy().to_string());
-                                if path.exists() {
-                                    st.refresh_file_tree_light();
-                                    st.ui.status_message = format!("已恢复: {}", name);
-                                } else {
-                                    st.ui.status_message =
-                                        format!("已撤销删除: {} (请从回收站还原)", name);
-                                }
-                            }
+                            // 文件暂存回退：优先从内存缓存的标签页内容回写恢复
+                            st.undo_last_file_delete();
                         } else if st.editor.content.history.can_undo() {
                             st.undo();
-                        } else if let Some(path) =
-                            crate::undo_delete::pop_last_delete(&mut st.fs.delete_undo_stack)
-                        {
-                            let name = path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| path.to_string_lossy().to_string());
-                            if path.exists() {
-                                st.refresh_file_tree_light();
-                                st.ui.status_message = format!("已恢复: {}", name);
-                            } else {
-                                st.ui.status_message =
-                                    format!("已撤销删除: {} (请从回收站还原)", name);
-                            }
+                        } else if !st.fs.delete_undo_stack.is_empty() {
+                            st.undo_last_file_delete();
                         }
                     }
                     invalidate_window(hwnd);

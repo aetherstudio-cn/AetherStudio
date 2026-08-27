@@ -27,6 +27,9 @@ pub struct TabContent {
     pub last_known_mtime: Option<std::time::SystemTime>,
     /// 自动保存：检测到外部修改后置位，暂停自动保存；手动保存后复位
     pub auto_save_conflict: bool,
+    /// 文件暂存：文件已从磁盘删除但内容仍缓存在内存中（标签页保留，标题画横线）。
+    /// 手动保存（Ctrl+S）或撤销删除（Ctrl+Z）会清除标记并重建文件。
+    pub deleted_from_disk: bool,
     // 渲染缓存（同crate内可访问）
     // P0-A: 行文本缓存改为滑动窗口（仅覆盖可见行±缓冲），
     // 内存从 O(文件行数) 降到 O(视口行数)；
@@ -64,6 +67,10 @@ pub struct TabContent {
     pub image_data: Option<crate::bitmap_loader::DecodedImage>,
     /// Markdown 预览模式：true 时渲染预览而非编辑器，随标签 swap 恢复
     pub markdown_preview: bool,
+    /// 水平滚动条：文档最长行宽度（字符单元格数）缓存，buffer_version 变化时重算
+    pub(crate) content_width_chars: usize,
+    /// content_width_chars 对应的 buffer_version 快照（u64::MAX = 尚未计算）
+    pub(crate) content_width_version: u64,
 }
 
 impl TabContent {
@@ -82,6 +89,7 @@ impl TabContent {
             last_saved_buffer_version: 0,
             last_known_mtime: None,
             auto_save_conflict: false,
+            deleted_from_disk: false,
             cache_window_start: 0,
             cached_lines: Vec::new(),
             cached_tokens: Vec::new(),
@@ -99,6 +107,8 @@ impl TabContent {
             just_switched: false,
             image_data: None,
             markdown_preview: false,
+            content_width_chars: 0,
+            content_width_version: u64::MAX,
         }
     }
 
@@ -122,6 +132,7 @@ impl TabContent {
             last_saved_buffer_version: 1,
             last_known_mtime,
             auto_save_conflict: false,
+            deleted_from_disk: false,
             cache_window_start: 0,
             cached_lines: Vec::new(),
             cached_tokens: Vec::new(),
@@ -139,6 +150,8 @@ impl TabContent {
             just_switched: false,
             image_data: None,
             markdown_preview: false,
+            content_width_chars: 0,
+            content_width_version: u64::MAX,
         })
     }
 
@@ -170,6 +183,7 @@ impl TabContent {
             last_saved_buffer_version: if is_dirty { 0 } else { buffer_version },
             last_known_mtime: None,
             auto_save_conflict: false,
+            deleted_from_disk: false,
             cache_window_start: 0,
             cached_lines: Vec::new(),
             cached_tokens: Vec::new(),
@@ -187,6 +201,8 @@ impl TabContent {
             just_switched: false,
             image_data: None,
             markdown_preview: false,
+            content_width_chars: 0,
+            content_width_version: u64::MAX,
         }
     }
 
@@ -269,7 +285,7 @@ impl TabContent {
     }
 }
 
-/// 标签页类型 — 支持文件、设置、欢迎、沙盒评测四种标签页
+/// 标签页类型 — 支持文件、设置、欢迎、沙盒评测、终端五种标签页
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum Tab {
@@ -281,6 +297,16 @@ pub enum Tab {
     Welcome,
     /// 智能体沙盒评测标签页
     SandboxEval,
+    /// 终端标签页（智能体模式下替代底部面板）
+    Terminal,
+    /// 浏览器标签页（智能体模式，内嵌 WebView2；参数为浏览器实例 id）
+    Browser(usize),
+    /// 新标签页（浏览器风格起始页：快捷搜索框 + 快捷操作按钮）
+    ///
+    /// bool 标记是否为“默认”新标签页（启动/关闭全部标签时自动创建的占位启动台）：
+    /// 一旦用户打开任何标签或切换活动标签离开它即自动关闭；
+    /// + 按钮主动新建的为 false，不自动关闭。
+    NewTab(bool),
 }
 
 impl Tab {
@@ -314,6 +340,34 @@ impl Tab {
         matches!(self, Tab::SandboxEval)
     }
 
+    /// 判断是否为终端标签页
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Tab::Terminal)
+    }
+
+    /// 判断是否为浏览器标签页
+    pub fn is_browser(&self) -> bool {
+        matches!(self, Tab::Browser(_))
+    }
+
+    /// 判断是否为新标签页
+    pub fn is_new_tab(&self) -> bool {
+        matches!(self, Tab::NewTab(_))
+    }
+
+    /// 判断是否为默认新标签页（启动台占位，离开即自动关闭）
+    pub fn is_default_new_tab(&self) -> bool {
+        matches!(self, Tab::NewTab(true))
+    }
+
+    /// 获取浏览器实例 id（仅 Browser 类型）
+    pub fn browser_id(&self) -> Option<usize> {
+        match self {
+            Tab::Browser(id) => Some(*id),
+            _ => None,
+        }
+    }
+
     /// 获取文件路径（仅 File 类型）
     pub fn file_path(&self) -> Option<&PathBuf> {
         match self {
@@ -329,6 +383,9 @@ impl Tab {
             Tab::Settings => "设置".to_string(),
             Tab::Welcome => "欢迎".to_string(),
             Tab::SandboxEval => "沙盒评测".to_string(),
+            Tab::Terminal => "终端".to_string(),
+            Tab::Browser(_) => "浏览器".to_string(),
+            Tab::NewTab(_) => "新标签页".to_string(),
         }
     }
 
@@ -337,6 +394,21 @@ impl Tab {
         match self {
             Tab::File(content) => content.is_dirty,
             _ => false,
+        }
+    }
+
+    /// 判断文件标签页对应文件是否已从磁盘删除（内容缓存在内存中）
+    pub fn is_deleted(&self) -> bool {
+        match self {
+            Tab::File(content) => content.deleted_from_disk,
+            _ => false,
+        }
+    }
+
+    /// 设置文件标签页的删除标记（仅 File 类型生效）
+    pub fn set_deleted(&mut self, deleted: bool) {
+        if let Tab::File(content) = self {
+            content.deleted_from_disk = deleted;
         }
     }
 
@@ -374,6 +446,9 @@ impl Tab {
             Tab::Settings => "设置".to_string(),
             Tab::Welcome => "欢迎".to_string(),
             Tab::SandboxEval => "沙盒评测".to_string(),
+            Tab::Terminal => "终端".to_string(),
+            Tab::Browser(_) => "浏览器".to_string(),
+            Tab::NewTab(_) => "新标签页".to_string(),
         }
     }
 }
@@ -494,5 +569,29 @@ mod tests {
         tab.mark_dirty();
         assert!(tab.is_dirty());
         assert_eq!(tab.as_file().unwrap().buffer_version, v0 + 1);
+    }
+
+    #[test]
+    fn test_tab_deleted_flag_default_false() {
+        let content = TabContent::new();
+        assert!(!content.deleted_from_disk);
+        let tab = Tab::File(content);
+        assert!(!tab.is_deleted());
+        // 非文件标签页恒为 false
+        assert!(!Tab::Settings.is_deleted());
+        assert!(!Tab::Welcome.is_deleted());
+    }
+
+    #[test]
+    fn test_tab_set_deleted_only_affects_file_tabs() {
+        let mut tab = Tab::File(TabContent::new());
+        tab.set_deleted(true);
+        assert!(tab.is_deleted());
+        tab.set_deleted(false);
+        assert!(!tab.is_deleted());
+        // 非文件标签页设置无效，不 panic
+        let mut settings = Tab::Settings;
+        settings.set_deleted(true);
+        assert!(!settings.is_deleted());
     }
 }

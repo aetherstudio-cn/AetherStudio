@@ -19,6 +19,12 @@ impl EditorState {
             // 文件卡片命中区域每帧重建（P0 可展开预览）；
             // 放在函数开头，历史视图/早退分支下也不会残留旧区域。
             self.ai.ai_panel.file_card_regions.clear();
+            // 对话内文件名链接命中区 / Tab 无障碍焦点区同样每帧重建
+            self.ai.ai_panel.file_link_regions.clear();
+            self.ai.ai_panel.tab_focus_regions.clear();
+            // 询问卡片选项/自定义命中区同样每帧重建
+            self.ai.ai_panel.ask_option_regions.clear();
+            self.ai.ai_panel.ask_custom_regions.clear();
 
             // 确保矢量图标几何已创建（AI 面板工具栏图标）
             self.ui.icons.ensure_created_from_target(target);
@@ -46,6 +52,16 @@ impl EditorState {
                 10.0,
                 DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                 DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+            ) {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+            // 右对齐小字体（文件卡片右侧的 +/- 行数统计）
+            let stats_format = match self.win.render_ctx.text_format_cache.get_format(
+                10.0,
+                DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                DWRITE_TEXT_ALIGNMENT_TRAILING.0 as u32,
                 DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
             ) {
                 Ok(f) => f,
@@ -172,15 +188,14 @@ impl EditorState {
             };
 
             let margin = 10.0f32;
-            // 顶部间距 6px + 标签条 24px = 30px，与资源管理器标题栏(FILE_TREE_HEADER_HEIGHT)、
-            // 编辑器标签栏(TAB_BAR_HEIGHT)高度对齐（逻辑像素，Direct2D 自动处理 DPI 缩放）
+            // 顶部间距 6px（智能体模式下对话标签条移至左侧边栏，此处不再渲染）
             let mut cy = y + 6.0;
 
             // 清空命中区域（每帧重建；必须在注册任何命中区之前调用）
             self.ai.ai_panel.clear_hit_regions();
 
-            // ===== 对话标签条（多会话）=====
-            {
+            // ===== 对话标签条（多会话）：仅开发者模式渲染，智能体模式移至左侧边栏 =====
+            if !self.editor_mode.is_agent() {
                 let tab_h = 24.0f32;
                 let tab_y = cy;
                 let gap = 4.0f32;
@@ -253,13 +268,24 @@ impl EditorState {
                         }
                         title_left = tx + 16.0;
                     }
-                    let tw: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
                     let title_rect = D2D_RECT_F {
                         left: title_left,
                         top: tab_y + 3.0,
                         right: tx + tab_w - close_w - 2.0,
                         bottom: tab_y + tab_h - 2.0,
                     };
+                    // 显示层缩写：标题超出可用宽度时截断加 "…"，避免溢出到关闭按钮
+                    let title = self
+                        .win
+                        .render_ctx
+                        .text_format_cache
+                        .truncate_with_ellipsis(
+                            &title,
+                            10.0,
+                            DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                            title_rect.right - title_rect.left,
+                        );
+                    let tw: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
                     let tcol: &ID2D1SolidColorBrush =
                         if is_active { &white_brush } else { &dim_brush };
                     target.DrawText(
@@ -622,7 +648,7 @@ impl EditorState {
                                             origin,
                                             &layout,
                                             &fg,
-                                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
                                         );
                                     }
                                 }
@@ -675,11 +701,13 @@ impl EditorState {
                             kind,
                             path,
                             content,
+                            old,
                         } => {
                             render_items.push(AiRenderItem::File {
                                 kind: kind.clone(),
                                 path: path.clone(),
                                 content: content.clone(),
+                                old: old.clone(),
                             });
                         }
                         crate::ai_panel::AgentDisplayBlock::Run { cmd } => {
@@ -702,6 +730,12 @@ impl EditorState {
                                 render_items.push(AiRenderItem::Incomplete { path: path.clone() });
                             }
                         }
+                        crate::ai_panel::AgentDisplayBlock::Ask { question, options } => {
+                            render_items.push(AiRenderItem::Ask {
+                                question: question.clone(),
+                                options: options.clone(),
+                            });
+                        }
                     }
                 }
                 if render_items.is_empty() {
@@ -711,39 +745,794 @@ impl EditorState {
                     });
                 }
 
+                // 引导式询问：本消息问题总数与当前活动问题序号（第一个未回答的），
+                // 渲染时按序一次只展示一个，答完自动进入下一个
+                let (ask_total, ask_active_seq) = {
+                    let total = render_items
+                        .iter()
+                        .filter(|i| matches!(i, AiRenderItem::Ask { .. }))
+                        .count();
+                    let active = self
+                        .ai
+                        .ai_panel
+                        .messages
+                        .get(msg_index)
+                        .map(|m| {
+                            if m.ask_answers.is_empty() {
+                                0
+                            } else {
+                                m.ask_answers
+                                    .iter()
+                                    .position(|a| a.is_none())
+                                    .unwrap_or(total)
+                            }
+                        })
+                        .unwrap_or(total);
+                    (total, active)
+                };
+
                 // 消息内 File 卡序号（用于展开状态与命中区域的稳定标识）
                 let mut file_block_seq = 0usize;
+                // 消息内 Ask 卡序号（与 ask_answers 对齐）
+                let mut ask_block_seq = 0usize;
                 for item in &render_items {
                     // AI 文件/命令操作 → 渲染为清晰的操作卡片；其余按文本/代码段渲染
                     let (is_code, seg_text) = match item {
                         AiRenderItem::Seg { is_code, text } => (is_code, text),
-                        _ => {
-                            let card_h = 30.0f32;
-                            // P0: File 卡片可展开预览 —— 计算展开状态与预览区高度
-                            let expand_info = if let AiRenderItem::File { content, .. } = item {
-                                let seq = file_block_seq;
-                                file_block_seq += 1;
-                                if content.trim().is_empty() {
-                                    None
+                        // 询问卡片：问题文本 + 选项按钮 + 自定义回答入口
+                        AiRenderItem::Ask { question, options } => {
+                            let seq = ask_block_seq;
+                            ask_block_seq += 1;
+                            // 回答状态（None = 未回答）与自定义输入等待态：先取数后绘制
+                            let (answered, awaiting_custom) = {
+                                let panel = &self.ai.ai_panel;
+                                let ans = panel
+                                    .messages
+                                    .get(msg_index)
+                                    .and_then(|m| m.ask_answers.get(seq).cloned())
+                                    .flatten();
+                                (ans, panel.pending_ask_custom == Some((msg_index, seq)))
+                            };
+                            // 已回答：折叠为紧凑单行摘要（✓ 问题 —— 答案）
+                            if let Some(ans) = answered.as_deref() {
+                                let row_h = 26.0f32;
+                                if msg_y + row_h >= chat_top && msg_y <= chat_bottom {
+                                    let summary = format!("✓ {} —— {}", question, ans);
+                                    if let Ok(rb) = self
+                                        .win
+                                        .render_ctx
+                                        .brush_cache
+                                        .get_brush(target, &color_f(0.14, 0.15, 0.19, 1.0))
+                                    {
+                                        fill_round_rect(
+                                            target,
+                                            &D2D_RECT_F {
+                                                left: content_left,
+                                                top: msg_y,
+                                                right: content_right,
+                                                bottom: msg_y + row_h,
+                                            },
+                                            5.0,
+                                            &rb,
+                                        );
+                                    }
+                                    if let Ok(sb) = self
+                                        .win
+                                        .render_ctx
+                                        .brush_cache
+                                        .get_brush(target, &color_f(0.62, 0.72, 0.64, 1.0))
+                                    {
+                                        let sw: Vec<u16> =
+                                            summary.encode_utf16().chain(Some(0)).collect();
+                                        target.DrawText(
+                                            &sw,
+                                            &small_format,
+                                            &D2D_RECT_F {
+                                                left: content_left + 12.0,
+                                                top: msg_y,
+                                                right: content_right - 8.0,
+                                                bottom: msg_y + row_h,
+                                            },
+                                            &sb,
+                                            D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                                            DWRITE_MEASURING_MODE_NATURAL,
+                                        );
+                                    }
+                                }
+                                msg_y += row_h + 4.0;
+                                continue;
+                            }
+                            if seq != ask_active_seq {
+                                // 引导顺序：后续问题待当前问题回答后再展示，不占布局高度
+                                continue;
+                            }
+                            let interactive = !self.ai.ai_panel.is_generating;
+
+                            let pad = 10.0f32;
+                            let header_h = if ask_total > 1 { 18.0f32 } else { 0.0 };
+                            let inner_w = (content_right - content_left - pad * 2.0).max(20.0);
+                            let q_wide: Vec<u16> = question.encode_utf16().collect();
+                            let q_h = if let Ok(layout) =
+                                dwrite.CreateTextLayout(&q_wide, &small_format, inner_w, 100000.0)
+                            {
+                                let mut m = windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
+                                if layout.GetMetrics(&mut m).is_ok() {
+                                    m.height.max(14.0)
                                 } else {
-                                    let expanded = self
-                                        .ai
-                                        .ai_panel
-                                        .expanded_file_cards
-                                        .contains(&(msg_index, seq));
-                                    let preview_h = if expanded {
-                                        let lines = content.lines().count() as f32;
-                                        (lines * 16.0 + 12.0).min(200.0)
+                                    14.0
+                                }
+                            } else {
+                                14.0
+                            };
+                            let opt_h = 30.0f32;
+                            let opt_gap = 6.0f32;
+                            let custom_h = 26.0f32;
+                            let opts_total = options.len() as f32 * opt_h
+                                + options.len().saturating_sub(1) as f32 * opt_gap;
+                            let card_h =
+                                pad + header_h + q_h + 8.0 + opts_total + 8.0 + custom_h + pad;
+
+                            if msg_y + card_h >= chat_top && msg_y <= chat_bottom {
+                                // 卡片背景 + 左强调条（与思考块统一紫色视觉）
+                                if let Ok(bg) = self
+                                    .win
+                                    .render_ctx
+                                    .brush_cache
+                                    .get_brush(target, &color_f(0.15, 0.15, 0.20, 1.0))
+                                {
+                                    fill_round_rect(
+                                        target,
+                                        &D2D_RECT_F {
+                                            left: content_left,
+                                            top: msg_y,
+                                            right: content_right,
+                                            bottom: msg_y + card_h,
+                                        },
+                                        6.0,
+                                        &bg,
+                                    );
+                                }
+                                if let Ok(accent) = self
+                                    .win
+                                    .render_ctx
+                                    .brush_cache
+                                    .get_brush(target, &color_f(0.62, 0.55, 0.85, 1.0))
+                                {
+                                    target.FillRectangle(
+                                        &D2D_RECT_F {
+                                            left: content_left,
+                                            top: msg_y + 4.0,
+                                            right: content_left + 3.0,
+                                            bottom: msg_y + card_h - 4.0,
+                                        },
+                                        &accent,
+                                    );
+                                }
+                                // 步骤指示（多问题时）：引导式提问 X / N
+                                if ask_total > 1 {
+                                    if let Ok(hb) = self
+                                        .win
+                                        .render_ctx
+                                        .brush_cache
+                                        .get_brush(target, &color_f(0.62, 0.55, 0.85, 1.0))
+                                    {
+                                        let hlabel: Vec<u16> =
+                                            format!("❓ 引导式提问 {} / {}\0", seq + 1, ask_total)
+                                                .encode_utf16()
+                                                .collect();
+                                        target.DrawText(
+                                            &hlabel,
+                                            &small_format,
+                                            &D2D_RECT_F {
+                                                left: content_left + pad + 4.0,
+                                                top: msg_y + pad,
+                                                right: content_right - pad,
+                                                bottom: msg_y + pad + header_h,
+                                            },
+                                            &hb,
+                                            D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                                            DWRITE_MEASURING_MODE_NATURAL,
+                                        );
+                                    }
+                                }
+                                // 问题文本
+                                if let Ok(qb) = self
+                                    .win
+                                    .render_ctx
+                                    .brush_cache
+                                    .get_brush(target, &color_f(0.88, 0.88, 0.92, 1.0))
+                                {
+                                    let qw: Vec<u16> =
+                                        question.encode_utf16().chain(Some(0)).collect();
+                                    target.DrawText(
+                                        &qw,
+                                        &small_format,
+                                        &D2D_RECT_F {
+                                            left: content_left + pad + 4.0,
+                                            top: msg_y + pad + header_h,
+                                            right: content_right - pad,
+                                            bottom: msg_y + pad + header_h + q_h,
+                                        },
+                                        &qb,
+                                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                        DWRITE_MEASURING_MODE_NATURAL,
+                                    );
+                                }
+                                // 选项按钮（选中高亮 + ✓ 前缀）
+                                let opts_top = msg_y + pad + header_h + q_h + 8.0;
+                                for (oi, opt) in options.iter().enumerate() {
+                                    let oy = opts_top + oi as f32 * (opt_h + opt_gap);
+                                    let selected = answered.as_deref() == Some(opt.as_str());
+                                    let bgc = if selected {
+                                        color_f(0.28, 0.38, 0.58, 1.0)
                                     } else {
-                                        0.0
+                                        color_f(0.19, 0.20, 0.26, 1.0)
                                     };
-                                    Some((seq, expanded, preview_h))
+                                    if let Ok(ob) =
+                                        self.win.render_ctx.brush_cache.get_brush(target, &bgc)
+                                    {
+                                        fill_round_rect(
+                                            target,
+                                            &D2D_RECT_F {
+                                                left: content_left + pad,
+                                                top: oy,
+                                                right: content_right - pad,
+                                                bottom: oy + opt_h,
+                                            },
+                                            5.0,
+                                            &ob,
+                                        );
+                                    }
+                                    let label = if selected {
+                                        format!("✓ {}", opt)
+                                    } else {
+                                        opt.clone()
+                                    };
+                                    let tc = if selected {
+                                        color_f(0.95, 0.97, 1.0, 1.0)
+                                    } else {
+                                        color_f(0.78, 0.80, 0.85, 1.0)
+                                    };
+                                    if let Ok(tb) =
+                                        self.win.render_ctx.brush_cache.get_brush(target, &tc)
+                                    {
+                                        let ow: Vec<u16> =
+                                            label.encode_utf16().chain(Some(0)).collect();
+                                        target.DrawText(
+                                            &ow,
+                                            &small_format,
+                                            &D2D_RECT_F {
+                                                left: content_left + pad + 10.0,
+                                                top: oy,
+                                                right: content_right - pad - 8.0,
+                                                bottom: oy + opt_h,
+                                            },
+                                            &tb,
+                                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                            DWRITE_MEASURING_MODE_NATURAL,
+                                        );
+                                    }
+                                    if interactive {
+                                        self.ai.ai_panel.ask_option_regions.push((
+                                            msg_index,
+                                            seq,
+                                            oi,
+                                            content_left + pad,
+                                            oy,
+                                            content_right - content_left - pad * 2.0,
+                                            opt_h,
+                                        ));
+                                    }
+                                }
+                                // 自定义回答入口（选中时展示回答内容）
+                                let cy = opts_top + opts_total + 8.0;
+                                let custom_selected = answered.is_some()
+                                    && !options
+                                        .iter()
+                                        .any(|o| Some(o.as_str()) == answered.as_deref());
+                                let cbgc = if custom_selected {
+                                    color_f(0.28, 0.38, 0.58, 1.0)
+                                } else {
+                                    color_f(0.16, 0.17, 0.21, 1.0)
+                                };
+                                if let Ok(cb) =
+                                    self.win.render_ctx.brush_cache.get_brush(target, &cbgc)
+                                {
+                                    fill_round_rect(
+                                        target,
+                                        &D2D_RECT_F {
+                                            left: content_left + pad,
+                                            top: cy,
+                                            right: content_right - pad,
+                                            bottom: cy + custom_h,
+                                        },
+                                        5.0,
+                                        &cb,
+                                    );
+                                }
+                                let clabel = if awaiting_custom {
+                                    "✎ 请在下方输入框输入自定义回答并发送".to_string()
+                                } else if custom_selected {
+                                    format!(
+                                        "✓ 自定义回答：{}",
+                                        answered.as_deref().unwrap_or_default()
+                                    )
+                                } else {
+                                    "✎ 自定义回答…".to_string()
+                                };
+                                let ctc = if awaiting_custom || custom_selected {
+                                    color_f(0.95, 0.97, 1.0, 1.0)
+                                } else {
+                                    color_f(0.62, 0.64, 0.70, 1.0)
+                                };
+                                if let Ok(ctb) =
+                                    self.win.render_ctx.brush_cache.get_brush(target, &ctc)
+                                {
+                                    let cw: Vec<u16> =
+                                        clabel.encode_utf16().chain(Some(0)).collect();
+                                    target.DrawText(
+                                        &cw,
+                                        &small_format,
+                                        &D2D_RECT_F {
+                                            left: content_left + pad + 10.0,
+                                            top: cy,
+                                            right: content_right - pad - 8.0,
+                                            bottom: cy + custom_h,
+                                        },
+                                        &ctb,
+                                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                        DWRITE_MEASURING_MODE_NATURAL,
+                                    );
+                                }
+                                if interactive {
+                                    self.ai.ai_panel.ask_custom_regions.push((
+                                        msg_index,
+                                        seq,
+                                        content_left + pad,
+                                        cy,
+                                        content_right - content_left - pad * 2.0,
+                                        custom_h,
+                                    ));
+                                }
+                            }
+                            msg_y += card_h + seg_gap;
+                            continue;
+                        }
+                        AiRenderItem::File {
+                            kind,
+                            path,
+                            content,
+                            old,
+                        } => {
+                            let seq = file_block_seq;
+                            file_block_seq += 1;
+                            let card_h = 30.0f32;
+                            // 展开状态：优先用差异快照（旧 vs 新）；无快照回退原始内容预览
+                            let can_preview = !(content.trim().is_empty() && old.trim().is_empty());
+                            let expanded = can_preview
+                                && self
+                                    .ai
+                                    .ai_panel
+                                    .expanded_file_cards
+                                    .contains(&(msg_index, seq));
+                            let diff_lines = if expanded {
+                                // 差异预览查询（内联字段访问：messages 循环内无法调用
+                                // ai_panel 的 &mut 方法；命中缓存或从快照现算并缓存）
+                                let key = (msg_index, seq);
+                                if let Some(c) = self.ai.ai_panel.diff_preview_cache.get(&key) {
+                                    Some(c.clone())
+                                } else if let Some((_, o, n)) = self
+                                    .ai
+                                    .ai_panel
+                                    .diff_snapshots
+                                    .iter()
+                                    .rev()
+                                    .find(|(p, _, _)| p == path)
+                                {
+                                    let d = crate::ai_panel::diff::line_diff(o, n);
+                                    self.ai.ai_panel.diff_preview_cache.insert(key, d.clone());
+                                    Some(d)
+                                } else {
+                                    None
                                 }
                             } else {
                                 None
                             };
-                            let preview_h = expand_info.map(|(_, _, h)| h).unwrap_or(0.0);
+                            let preview_h = if expanded {
+                                let n = if let Some(d) = &diff_lines {
+                                    d.len() as f32
+                                } else {
+                                    let src = if content.trim().is_empty() {
+                                        old
+                                    } else {
+                                        content
+                                    };
+                                    src.lines().count() as f32
+                                };
+                                (n * 16.0 + 12.0).clamp(24.0, 240.0)
+                            } else {
+                                0.0
+                            };
                             let total_h = card_h + preview_h;
+                            if msg_y + total_h >= chat_top && msg_y <= chat_bottom {
+                                // 操作类型主题色：新建=绿 / 修改=蓝 / 删除=红
+                                let (op_color, op_label) = match kind {
+                                    crate::ai_panel::FileOpKind::Create => {
+                                        (color_f(0.40, 0.80, 0.52, 1.0), "新建")
+                                    }
+                                    crate::ai_panel::FileOpKind::Modify => {
+                                        (color_f(0.40, 0.70, 1.0, 1.0), "修改")
+                                    }
+                                    crate::ai_panel::FileOpKind::Delete => {
+                                        (color_f(0.92, 0.52, 0.52, 1.0), "删除")
+                                    }
+                                };
+                                // 卡片背景（头部 + 预览区整体一个圆角矩形）
+                                if let Ok(cb) = self
+                                    .win
+                                    .render_ctx
+                                    .brush_cache
+                                    .get_brush(target, &color_f(0.16, 0.17, 0.20, 1.0))
+                                {
+                                    fill_round_rect(
+                                        target,
+                                        &D2D_RECT_F {
+                                            left: content_left,
+                                            top: msg_y,
+                                            right: content_right,
+                                            bottom: msg_y + total_h,
+                                        },
+                                        5.0,
+                                        &cb,
+                                    );
+                                }
+                                // 左侧主题色竖条
+                                if let Ok(ab) =
+                                    self.win.render_ctx.brush_cache.get_brush(target, &op_color)
+                                {
+                                    target.FillRectangle(
+                                        &D2D_RECT_F {
+                                            left: content_left,
+                                            top: msg_y,
+                                            right: content_left + 3.0,
+                                            bottom: msg_y + total_h,
+                                        },
+                                        &ab,
+                                    );
+                                }
+                                // 文件图标（按扩展名映射语言图标，未命中回退通用文件图标）
+                                let file_name =
+                                    path.rsplit(['/', '\\']).next().unwrap_or(path.as_str());
+                                let icon_kind = self
+                                    .get_file_vector_icon(file_name)
+                                    .unwrap_or(crate::icons::IconKind::File);
+                                if let Ok(icon_brush) = self
+                                    .win
+                                    .render_ctx
+                                    .brush_cache
+                                    .get_brush(target, &color_f(0.72, 0.76, 0.82, 1.0))
+                                {
+                                    self.ui.icons.draw(
+                                        target,
+                                        icon_kind,
+                                        content_left + 10.0,
+                                        msg_y + (card_h - 16.0) / 2.0,
+                                        16.0,
+                                        16.0,
+                                        &icon_brush,
+                                    );
+                                }
+                                // 文件名（右侧预留统计/徽章位，超长裁剪）
+                                if let Ok(nb) = self
+                                    .win
+                                    .render_ctx
+                                    .brush_cache
+                                    .get_brush(target, &color_f(0.85, 0.87, 0.90, 1.0))
+                                {
+                                    let nw: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+                                    target.DrawText(
+                                        &nw,
+                                        &small_format,
+                                        &D2D_RECT_F {
+                                            left: content_left + 32.0,
+                                            top: msg_y,
+                                            right: content_right - 178.0,
+                                            bottom: msg_y + card_h,
+                                        },
+                                        &nb,
+                                        D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                                        DWRITE_MEASURING_MODE_NATURAL,
+                                    );
+                                }
+                                // 行数统计：+新增 / -删除（基于修改前快照的差异）
+                                let (added, removed) = if old.trim().is_empty() {
+                                    (content.lines().count(), 0)
+                                } else {
+                                    crate::ai_panel::diff::diff_stats(
+                                        &crate::ai_panel::diff::line_diff(old, content),
+                                    )
+                                };
+                                if added + removed > 0 {
+                                    let (stats_text, stats_color) = match kind {
+                                        crate::ai_panel::FileOpKind::Create => {
+                                            (format!("+{}", added), color_f(0.40, 0.80, 0.52, 1.0))
+                                        }
+                                        crate::ai_panel::FileOpKind::Delete => (
+                                            format!("-{}", removed),
+                                            color_f(0.92, 0.52, 0.52, 1.0),
+                                        ),
+                                        crate::ai_panel::FileOpKind::Modify => (
+                                            format!("+{} -{}", added, removed),
+                                            color_f(0.60, 0.68, 0.78, 1.0),
+                                        ),
+                                    };
+                                    if let Ok(sb) = self
+                                        .win
+                                        .render_ctx
+                                        .brush_cache
+                                        .get_brush(target, &stats_color)
+                                    {
+                                        let sw: Vec<u16> =
+                                            stats_text.encode_utf16().chain(Some(0)).collect();
+                                        target.DrawText(
+                                            &sw,
+                                            &stats_format,
+                                            &D2D_RECT_F {
+                                                left: content_right - 178.0,
+                                                top: msg_y,
+                                                right: content_right - 100.0,
+                                                bottom: msg_y + card_h,
+                                            },
+                                            &sb,
+                                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                            DWRITE_MEASURING_MODE_NATURAL,
+                                        );
+                                    }
+                                }
+                                // 操作类型徽章（半透明主题色底 + 主题色文字）
+                                {
+                                    let lw0: Vec<u16> = op_label.encode_utf16().collect();
+                                    let mut text_w = 22.0f32;
+                                    if let Ok(bl) =
+                                        dwrite.CreateTextLayout(&lw0, &small_format, 200.0, 20.0)
+                                    {
+                                        let mut bm = windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
+                                        if bl.GetMetrics(&mut bm).is_ok() {
+                                            text_w = bm.width;
+                                        }
+                                    }
+                                    let badge_w = text_w + 12.0;
+                                    let badge_x = content_right - 30.0 - badge_w;
+                                    let mut badge_bg = op_color;
+                                    badge_bg.a = 0.16;
+                                    if let Ok(bb) =
+                                        self.win.render_ctx.brush_cache.get_brush(target, &badge_bg)
+                                    {
+                                        fill_round_rect(
+                                            target,
+                                            &D2D_RECT_F {
+                                                left: badge_x,
+                                                top: msg_y + 6.0,
+                                                right: badge_x + badge_w,
+                                                bottom: msg_y + card_h - 6.0,
+                                            },
+                                            3.0,
+                                            &bb,
+                                        );
+                                    }
+                                    if let Ok(tb) =
+                                        self.win.render_ctx.brush_cache.get_brush(target, &op_color)
+                                    {
+                                        let lwz: Vec<u16> =
+                                            op_label.encode_utf16().chain(Some(0)).collect();
+                                        target.DrawText(
+                                            &lwz,
+                                            &small_format,
+                                            &D2D_RECT_F {
+                                                left: badge_x + (badge_w - text_w) / 2.0,
+                                                top: msg_y + 6.0,
+                                                right: badge_x + badge_w,
+                                                bottom: msg_y + card_h - 6.0,
+                                            },
+                                            &tb,
+                                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                            DWRITE_MEASURING_MODE_NATURAL,
+                                        );
+                                    }
+                                }
+                                // 展开指示符与预览区（差异可视化：新增=绿半透明/删除=红半透明）
+                                if can_preview {
+                                    if let Ok(ib) = self
+                                        .win
+                                        .render_ctx
+                                        .brush_cache
+                                        .get_brush(target, &color_f(0.60, 0.62, 0.66, 1.0))
+                                    {
+                                        let ind = if expanded { "v" } else { ">" };
+                                        let iw: Vec<u16> =
+                                            ind.encode_utf16().chain(Some(0)).collect();
+                                        target.DrawText(
+                                            &iw,
+                                            &small_format,
+                                            &D2D_RECT_F {
+                                                left: content_right - 22.0,
+                                                top: msg_y,
+                                                right: content_right - 6.0,
+                                                bottom: msg_y + card_h,
+                                            },
+                                            &ib,
+                                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                            DWRITE_MEASURING_MODE_NATURAL,
+                                        );
+                                    }
+                                    if expanded && preview_h > 0.0 {
+                                        let prev_top = msg_y + card_h;
+                                        if let Some(diff) = &diff_lines {
+                                            // 差异预览：逐行按类型着色背景（Direct2D 半透明填充）
+                                            let max_lines = (((preview_h - 12.0) / 16.0).floor()
+                                                as usize)
+                                                .max(1);
+                                            let mut ly = prev_top + 6.0;
+                                            for (i, dl) in diff.iter().enumerate() {
+                                                if i >= max_lines {
+                                                    if let Ok(mb) =
+                                                        self.win.render_ctx.brush_cache.get_brush(
+                                                            target,
+                                                            &color_f(0.55, 0.57, 0.60, 1.0),
+                                                        )
+                                                    {
+                                                        let mw: Vec<u16> = format!(
+                                                            "…（共 {} 行差异）",
+                                                            diff.len()
+                                                        )
+                                                        .encode_utf16()
+                                                        .chain(Some(0))
+                                                        .collect();
+                                                        target.DrawText(
+                                                            &mw,
+                                                            &small_format,
+                                                            &D2D_RECT_F {
+                                                                left: content_left + 10.0,
+                                                                top: ly,
+                                                                right: content_right - 8.0,
+                                                                bottom: ly + 16.0,
+                                                            },
+                                                            &mb,
+                                                            D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                                                            DWRITE_MEASURING_MODE_NATURAL,
+                                                        );
+                                                    }
+                                                    break;
+                                                }
+                                                let (prefix, text_color, bg_color) = match dl.kind {
+                                                    crate::ai_panel::diff::DiffKind::Add => (
+                                                        "+",
+                                                        color_f(0.62, 0.86, 0.62, 1.0),
+                                                        Some(color_f(0.30, 0.65, 0.35, 0.22)),
+                                                    ),
+                                                    crate::ai_panel::diff::DiffKind::Del => (
+                                                        "-",
+                                                        color_f(0.90, 0.62, 0.62, 1.0),
+                                                        Some(color_f(0.85, 0.35, 0.35, 0.25)),
+                                                    ),
+                                                    crate::ai_panel::diff::DiffKind::Same => {
+                                                        (" ", color_f(0.62, 0.64, 0.68, 1.0), None)
+                                                    }
+                                                };
+                                                if let Some(bg) = bg_color {
+                                                    if let Ok(bb2) = self
+                                                        .win
+                                                        .render_ctx
+                                                        .brush_cache
+                                                        .get_brush(target, &bg)
+                                                    {
+                                                        target.FillRectangle(
+                                                            &D2D_RECT_F {
+                                                                left: content_left + 6.0,
+                                                                top: ly,
+                                                                right: content_right - 6.0,
+                                                                bottom: ly + 15.0,
+                                                            },
+                                                            &bb2,
+                                                        );
+                                                    }
+                                                }
+                                                let line_text = format!("{} {}", prefix, dl.text);
+                                                let tw: Vec<u16> = line_text
+                                                    .encode_utf16()
+                                                    .chain(Some(0))
+                                                    .collect();
+                                                if let Ok(tb2) = self
+                                                    .win
+                                                    .render_ctx
+                                                    .brush_cache
+                                                    .get_brush(target, &text_color)
+                                                {
+                                                    target.DrawText(
+                                                        &tw,
+                                                        &small_format,
+                                                        &D2D_RECT_F {
+                                                            left: content_left + 10.0,
+                                                            top: ly,
+                                                            right: content_right - 8.0,
+                                                            bottom: ly + 16.0,
+                                                        },
+                                                        &tb2,
+                                                        D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                                                        DWRITE_MEASURING_MODE_NATURAL,
+                                                    );
+                                                }
+                                                ly += 16.0;
+                                            }
+                                        } else {
+                                            // 无快照：回退纯内容预览（删除卡显示旧内容）
+                                            let src = if content.trim().is_empty() {
+                                                old.as_str()
+                                            } else {
+                                                content.as_str()
+                                            };
+                                            let max_lines = (((preview_h - 12.0) / 16.0).floor()
+                                                as usize)
+                                                .max(1);
+                                            let all: Vec<&str> = src.lines().collect();
+                                            let shown: String = if all.len() > max_lines {
+                                                format!(
+                                                    "{}\n…（共 {} 行）",
+                                                    all[..max_lines.saturating_sub(1)].join("\n"),
+                                                    all.len()
+                                                )
+                                            } else {
+                                                src.to_string()
+                                            };
+                                            if let Ok(tb2) = self
+                                                .win
+                                                .render_ctx
+                                                .brush_cache
+                                                .get_brush(target, &color_f(0.72, 0.76, 0.70, 1.0))
+                                            {
+                                                let cw: Vec<u16> =
+                                                    shown.encode_utf16().chain(Some(0)).collect();
+                                                target.DrawText(
+                                                    &cw,
+                                                    &small_format,
+                                                    &D2D_RECT_F {
+                                                        left: content_left + 10.0,
+                                                        top: prev_top + 6.0,
+                                                        right: content_right - 8.0,
+                                                        bottom: prev_top + preview_h - 4.0,
+                                                    },
+                                                    &tb2,
+                                                    D2D1_DRAW_TEXT_OPTIONS_CLIP
+                                                        | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
+                                                    DWRITE_MEASURING_MODE_NATURAL,
+                                                );
+                                            }
+                                        }
+                                    }
+                                    // 命中区域：点击标题行切换展开；登记 Tab 无障碍焦点
+                                    self.ai.ai_panel.file_card_regions.push((
+                                        msg_index,
+                                        seq,
+                                        content_left,
+                                        msg_y,
+                                        content_right - content_left,
+                                        card_h,
+                                    ));
+                                    self.ai.ai_panel.tab_focus_regions.push((
+                                        content_left,
+                                        msg_y,
+                                        content_right - content_left,
+                                        card_h,
+                                        crate::ai_panel::TabFocusAction::ToggleCard(msg_index, seq),
+                                    ));
+                                }
+                            }
+                            msg_y += total_h + seg_gap;
+                            continue;
+                        }
+                        _ => {
+                            let card_h = 30.0f32;
+                            let total_h = card_h;
                             if msg_y + total_h >= chat_top && msg_y <= chat_bottom {
                                 let (glyph, label, detail, op_color) = agent_op_display(item);
                                 if let Ok(cb) = self
@@ -829,100 +1618,6 @@ impl EditorState {
                                         DWRITE_MEASURING_MODE_NATURAL,
                                     );
                                 }
-                                // P0: 可展开文件卡片 —— 指示符 / 预览区 / 命中区域
-                                if let Some((seq, expanded, ph)) = expand_info {
-                                    // 展开指示符（遵循 '>' / 'v' 图标规范）
-                                    if let Ok(ib) = self
-                                        .win
-                                        .render_ctx
-                                        .brush_cache
-                                        .get_brush(target, &color_f(0.60, 0.62, 0.66, 1.0))
-                                    {
-                                        let ind = if expanded { "v" } else { ">" };
-                                        let iw: Vec<u16> =
-                                            ind.encode_utf16().chain(Some(0)).collect();
-                                        target.DrawText(
-                                            &iw,
-                                            &small_format,
-                                            &D2D_RECT_F {
-                                                left: content_right - 22.0,
-                                                top: msg_y,
-                                                right: content_right - 6.0,
-                                                bottom: msg_y + card_h,
-                                            },
-                                            &ib,
-                                            D2D1_DRAW_TEXT_OPTIONS_NONE,
-                                            DWRITE_MEASURING_MODE_NATURAL,
-                                        );
-                                    }
-                                    // 展开态：绘制内容预览区（限高，超出截断附省略提示）
-                                    if expanded && ph > 0.0 {
-                                        if let AiRenderItem::File { content, .. } = item {
-                                            let prev_top = msg_y + card_h;
-                                            if let Ok(pb) = self
-                                                .win
-                                                .render_ctx
-                                                .brush_cache
-                                                .get_brush(target, &color_f(0.12, 0.12, 0.14, 1.0))
-                                            {
-                                                fill_round_rect(
-                                                    target,
-                                                    &D2D_RECT_F {
-                                                        left: content_left,
-                                                        top: prev_top,
-                                                        right: content_right,
-                                                        bottom: prev_top + ph,
-                                                    },
-                                                    5.0,
-                                                    &pb,
-                                                );
-                                            }
-                                            let max_lines =
-                                                (((ph - 12.0) / 16.0).floor() as usize).max(1);
-                                            let all: Vec<&str> = content.lines().collect();
-                                            let shown: String = if all.len() > max_lines {
-                                                format!(
-                                                    "{}\n…（共 {} 行）",
-                                                    all[..max_lines.saturating_sub(1)].join("\n"),
-                                                    all.len()
-                                                )
-                                            } else {
-                                                content.clone()
-                                            };
-                                            if let Ok(tb2) = self
-                                                .win
-                                                .render_ctx
-                                                .brush_cache
-                                                .get_brush(target, &color_f(0.72, 0.76, 0.70, 1.0))
-                                            {
-                                                let cw: Vec<u16> =
-                                                    shown.encode_utf16().chain(Some(0)).collect();
-                                                target.DrawText(
-                                                    &cw,
-                                                    &small_format,
-                                                    &D2D_RECT_F {
-                                                        left: content_left + 10.0,
-                                                        top: prev_top + 6.0,
-                                                        right: content_right - 8.0,
-                                                        bottom: prev_top + ph - 4.0,
-                                                    },
-                                                    &tb2,
-                                                    windows::Win32::Graphics::Direct2D::D2D1_DRAW_TEXT_OPTIONS_CLIP,
-                                                    DWRITE_MEASURING_MODE_NATURAL,
-                                                );
-                                            }
-                                        }
-                                    }
-                                    // 命中区域：点击标题行切换展开/折叠
-                                    self.ai.ai_panel.file_card_regions.push((
-                                        msg_index,
-                                        seq,
-                                        content_left,
-                                        msg_y,
-                                        content_right - content_left,
-                                        card_h,
-                                    ));
-                                }
                             }
                             msg_y += total_h + seg_gap;
                             continue;
@@ -936,12 +1631,18 @@ impl EditorState {
 
                     // 普通段解析轻量 Markdown；代码段保持原文
                     #[allow(clippy::type_complexity)]
-                    let (layout_wide, bolds, headings): (
+                    let (layout_wide, bolds, headings, codes): (
                         Vec<u16>,
                         Vec<(u32, u32)>,
                         Vec<(u32, u32, f32)>,
+                        Vec<(u32, u32)>,
                     ) = if *is_code {
-                        (seg_text.encode_utf16().collect(), Vec::new(), Vec::new())
+                        (
+                            seg_text.encode_utf16().collect(),
+                            Vec::new(),
+                            Vec::new(),
+                            Vec::new(),
+                        )
                     } else {
                         crate::ai_panel::parse_markdown_segment(seg_text)
                     };
@@ -954,6 +1655,8 @@ impl EditorState {
                                 continue;
                             }
                         };
+                    // 本段内可点击的文件链接范围 (start, len, 路径)（仅普通段）
+                    let mut link_ranges: Vec<(u32, u32, String)> = Vec::new();
                     if !*is_code {
                         for (bs, bl) in &bolds {
                             let _ = layout.SetFontWeight(
@@ -971,6 +1674,27 @@ impl EditorState {
                             };
                             let _ = layout.SetFontSize(*hsize, r);
                             let _ = layout.SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, r);
+                        }
+                        // 行内代码 span：类路径 token 链接化（下划线 + 点击/Tab 命中区）
+                        for &(cs, cl) in &codes {
+                            let s = cs as usize;
+                            let e = ((cs + cl) as usize).min(layout_wide.len());
+                            if e <= s {
+                                continue;
+                            }
+                            let tok = String::from_utf16_lossy(&layout_wide[s..e])
+                                .trim()
+                                .to_string();
+                            if crate::ai_panel::is_path_like_token(&tok) {
+                                let _ = layout.SetUnderline(
+                                    true,
+                                    windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_RANGE {
+                                        startPosition: cs,
+                                        length: cl,
+                                    },
+                                );
+                                link_ranges.push((cs, cl, tok));
+                            }
                         }
                     }
                     let mut m =
@@ -1044,7 +1768,73 @@ impl EditorState {
                         x: seg_left + seg_pad,
                         y: msg_y + seg_pad,
                     };
-                    target.DrawTextLayout(origin, &layout, seg_fg, D2D1_DRAW_TEXT_OPTIONS_NONE);
+                    target.DrawTextLayout(
+                        origin,
+                        &layout,
+                        seg_fg,
+                        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
+                    );
+
+                    // 文件链接：绘制强调色下划线并注册点击命中区 / Tab 焦点区
+                    if !link_ranges.is_empty() {
+                        if let Ok(lb) = self
+                            .win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &color_f(0.45, 0.72, 1.0, 1.0))
+                        {
+                            for (cs, cl, lpath) in &link_ranges {
+                                let mut hit: Vec<
+                                    windows::Win32::Graphics::DirectWrite::DWRITE_HIT_TEST_METRICS,
+                                > = vec![Default::default(); *cl as usize];
+                                let mut actual = 0u32;
+                                if layout
+                                    .HitTestTextRange(
+                                        *cs,
+                                        *cl,
+                                        0.0,
+                                        0.0,
+                                        Some(&mut hit),
+                                        &mut actual,
+                                    )
+                                    .is_ok()
+                                {
+                                    for hm in hit.iter().take(actual as usize) {
+                                        if hm.width <= 0.0 || hm.height <= 0.0 {
+                                            continue;
+                                        }
+                                        let rx = origin.x + hm.left;
+                                        let ry = origin.y + hm.top;
+                                        target.FillRectangle(
+                                            &D2D_RECT_F {
+                                                left: rx,
+                                                top: ry + hm.height - 1.0,
+                                                right: rx + hm.width,
+                                                bottom: ry + hm.height,
+                                            },
+                                            &lb,
+                                        );
+                                        self.ai.ai_panel.file_link_regions.push((
+                                            rx,
+                                            ry,
+                                            hm.width,
+                                            hm.height,
+                                            lpath.clone(),
+                                        ));
+                                        self.ai.ai_panel.tab_focus_regions.push((
+                                            rx,
+                                            ry,
+                                            hm.width,
+                                            hm.height,
+                                            crate::ai_panel::TabFocusAction::OpenFile(
+                                                lpath.clone(),
+                                            ),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     // 代码块添加"保存为文件"按钮（仅 AI 助手消息）
                     if *is_code && !is_user && !is_tool && !seg_text.is_empty() {
@@ -1090,6 +1880,33 @@ impl EditorState {
             }
             // 提交本帧收集的思考块折叠命中区（循环内借用了 messages，无法直接写回，故循环后赋值）
             self.ai.ai_panel.reasoning_toggle_regions = reasoning_regions_local;
+
+            // Tab 无障碍焦点环：高亮当前焦点区域（文件卡/文件链接）
+            if let Some(fi) = self.ai.ai_panel.tab_focus_index {
+                if let Some((fx, fy, fw, fh, _)) = self.ai.ai_panel.tab_focus_regions.get(fi) {
+                    let (fx, fy, fw, fh) = (*fx, *fy, *fw, *fh);
+                    if fy + fh >= chat_top && fy <= chat_bottom {
+                        if let Ok(fb) = self
+                            .win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &color_f(0.45, 0.72, 1.0, 0.9))
+                        {
+                            let _ = target.DrawRectangle(
+                                &D2D_RECT_F {
+                                    left: fx - 1.0,
+                                    top: fy - 1.0,
+                                    right: fx + fw + 1.0,
+                                    bottom: fy + fh + 1.0,
+                                },
+                                &fb,
+                                1.5,
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
 
             // 记录内容高度与最大滚动量（供滚轮/滚动条），并绘制滚动条
             let viewport_h = (chat_bottom - chat_top).max(1.0);
@@ -1489,7 +2306,7 @@ impl EditorState {
                                     &msg_format,
                                     &stream_rect,
                                     &stream_brush,
-                                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                    D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
                                     DWRITE_MEASURING_MODE_NATURAL,
                                 );
                             }
@@ -1553,7 +2370,7 @@ impl EditorState {
                     &msg_format,
                     &input_text_rect,
                     input_color,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
             }
@@ -1593,7 +2410,7 @@ impl EditorState {
                         &msg_format,
                         &comp_rect,
                         &comp_brush,
-                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
                     let comp_width = self
@@ -1730,8 +2547,8 @@ impl EditorState {
                     .map(|m| {
                         let label = if !m.display_name.is_empty() {
                             m.display_name.clone()
-                        } else if !m.model.is_empty() {
-                            m.model.clone()
+                        } else if !m.settings.model.is_empty() {
+                            m.settings.model.clone()
                         } else {
                             "(未命名模型)".to_string()
                         };
@@ -1907,6 +2724,8 @@ enum AiRenderItem {
         kind: crate::ai_panel::FileOpKind,
         path: String,
         content: String,
+        /// 修改前旧内容（search 段），供差异可视化与行数统计
+        old: String,
     },
     Run {
         cmd: String,
@@ -1920,6 +2739,11 @@ enum AiRenderItem {
     /// 未闭合的文件块（流式截断）——渲染为"未落盘"警告卡片
     Incomplete {
         path: String,
+    },
+    /// 询问卡片：需求不清时 AI 提问 + 选项（用户可点选或自定义回答）
+    Ask {
+        question: String,
+        options: Vec<String>,
     },
     /// 流式生成中的文件块（未闭合但仍在生成）——渲染为进行中卡片
     Generating {
@@ -1955,13 +2779,11 @@ fn agent_op_display(
         AiRenderItem::File { kind, path, .. } => {
             let (glyph, label, color) = match kind {
                 crate::ai_panel::FileOpKind::Create => {
-                    ("●", "新建文件", color_f(0.40, 0.80, 0.52, 1.0))
+                    ("+", "新建", color_f(0.40, 0.80, 0.52, 1.0))
                 }
-                crate::ai_panel::FileOpKind::Modify => {
-                    ("●", "修改文件", color_f(0.40, 0.70, 1.0, 1.0))
-                }
+                crate::ai_panel::FileOpKind::Modify => ("~", "修改", color_f(0.40, 0.70, 1.0, 1.0)),
                 crate::ai_panel::FileOpKind::Delete => {
-                    ("●", "删除文件", color_f(0.92, 0.52, 0.52, 1.0))
+                    ("-", "删除", color_f(0.92, 0.52, 0.52, 1.0))
                 }
             };
             (glyph, label, path.clone(), color)
@@ -1989,5 +2811,7 @@ fn agent_op_display(
             ("…", "正在生成", path.clone(), color_f(0.40, 0.70, 1.0, 1.0))
         }
         AiRenderItem::Seg { .. } => ("", "", String::new(), color_f(0.5, 0.5, 0.5, 1.0)),
+        // 询问卡片有专属绘制分支，不会走到此分支
+        AiRenderItem::Ask { .. } => ("?", "提问", String::new(), color_f(0.62, 0.55, 0.85, 1.0)),
     }
 }

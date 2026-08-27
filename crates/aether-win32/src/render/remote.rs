@@ -702,11 +702,17 @@ impl EditorState {
                         );
 
                         // 认证方式
-                        let auth_text: Vec<u16> = match server.auth_type.as_str() {
-                            "key" => format!("🔑 {}", server.key_path),
-                            // P1-2: 密码认证已禁用，加载时已迁移为 agent，此分支仅作兜底
-                            "password" => "密码（已禁用，已迁移为 Agent）".to_string(),
-                            _ => "Agent".to_string(),
+                        let auth_text: Vec<u16> = match server.auth_type {
+                            aether_shared::settings::SshAuthType::Key => {
+                                format!("🔑 {}", server.key_path)
+                            }
+                            // P1-2: 密码认证已禁用，此分支仅作兼容旧配置的兑底
+                            aether_shared::settings::SshAuthType::Password => {
+                                "密码（已禁用，请改用密钥或 Agent）".to_string()
+                            }
+                            aether_shared::settings::SshAuthType::Agent => "Agent".to_string(),
+                            // 未知旧值等同 Agent
+                            aether_shared::settings::SshAuthType::Fallback => "Agent".to_string(),
                         }
                         .encode_utf16()
                         .chain(Some(0))

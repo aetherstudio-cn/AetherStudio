@@ -6,7 +6,7 @@ pub(crate) use aether_render::d2d::glass;
 pub(crate) use windows::Win32::Graphics::Direct2D::Common::{D2D_POINT_2F, D2D_RECT_F};
 pub(crate) use windows::Win32::Graphics::Direct2D::{
     ID2D1SolidColorBrush, D2D1_ANTIALIAS_MODE_ALIASED, D2D1_DRAW_TEXT_OPTIONS_CLIP,
-    D2D1_DRAW_TEXT_OPTIONS_NONE,
+    D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_DRAW_TEXT_OPTIONS_NONE,
 };
 pub(crate) use windows::Win32::Graphics::DirectWrite::{
     IDWriteTextFormat, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL,
@@ -67,6 +67,8 @@ impl EditorState {
         // 多会话并发：轮询所有会话（活动 + 后台），对本帧刚完成的每个会话处理 Agent 动作；
         // 对本帧因错误中断的会话抢救已接收的文件块（不执行 RUN 命令）
         let (ai_completed, ai_interrupted) = self.ai.ai_panel.poll_all_background();
+        // 本帧是否有会话刚结束（完成/中断），用于后续脏标记判断
+        let ai_just_finished = !ai_completed.is_empty() || !ai_interrupted.is_empty();
         self.ai.ai_panel.sync_active_title();
         for conv_idx in ai_completed {
             self.process_ai_agent_actions_for(conv_idx);
@@ -75,19 +77,27 @@ impl EditorState {
             self.salvage_ai_partial_edits(conv_idx);
         }
 
-        // AI 流式生成中：标记右侧面板脏区域，确保新 token 及时渲染。
+        // AI 流式生成中：标记 AI 面板所在区域脏，确保新 token 及时渲染。
         // 若缺少此标记，infer_from_state 返回 None（右侧面板可见性未变），
         // 依赖 on_paint 的全窗口防护导致每帧全量重绘，产生重影和性能浪费。
-        if self.ai.ai_panel.any_generating() && self.ui.layout.right_panel_visible {
-            let rp = self.ui.layout.right_panel_region();
-            if rp.width > 0.0 && rp.height > 0.0 {
-                self.win.dirty_tracker.mark_region(
-                    rp.x,
-                    rp.y,
-                    rp.width,
-                    rp.height,
-                    crate::dirty_rect::DirtyRegionType::RightPanel,
-                );
+        // 智能体模式下生成中 UI（流式文本/停止按钮）在中间列，需标中间区域。
+        // 完成/中断帧同样要标脏：此时 any_generating() 已变 false，若不标，
+        // 思考块自动折叠（块高收缩、后续内容上移）那一帧不会重绘，
+        // 旧的展开思考内容残留在屏幕上形成重影。
+        if self.ai.ai_panel.any_generating() || ai_just_finished {
+            if self.editor_mode.is_agent() {
+                self.mark_ai_panel_dirty();
+            } else if self.ui.layout.right_panel_visible {
+                let rp = self.ui.layout.right_panel_region();
+                if rp.width > 0.0 && rp.height > 0.0 {
+                    self.win.dirty_tracker.mark_region(
+                        rp.x,
+                        rp.y,
+                        rp.width,
+                        rp.height,
+                        crate::dirty_rect::DirtyRegionType::RightPanel,
+                    );
+                }
             }
         }
 
@@ -192,6 +202,10 @@ impl EditorState {
                     .render_ctx
                     .text_format_cache
                     .init_common_formats(font_size);
+                // 预构建 SVG 图标几何：避免在设置页/欢迎页等不渲染图标的页面停留后，
+                // 首次切换回文件标签时由标题栏/活动栏/状态栏的懒加载触发 87 个
+                // PathGeometry 的集中构建，导致该帧卡顿（表现为文件需点两次才打开）。
+                self.ui.icons.ensure_created_from_target(&target);
             }
         }
 
@@ -722,6 +736,15 @@ impl EditorState {
 
         let showing_welcome = self.show_welcome();
 
+        // 欢迎页左栏同步（不修改 visible 用户状态）：进入欢迎页瞬间重置
+        // welcome_left_opened（侧边栏面板默认收起）；欢迎页期间用户可经
+        // 活动栏图标/Ctrl+B/标题栏按钮调起面板；活动栏在欢迎页固定常驻。
+        if showing_welcome && !self.ui.layout.welcome_active {
+            self.ui.layout.welcome_left_opened = false;
+        }
+        self.ui.layout.welcome_active = showing_welcome;
+        let suppress_sidebar = self.ui.layout.welcome_sidebar_suppressed();
+
         // 0. 标题栏（最先渲染，作为背景）
         if self.ui.layout.title_bar_visible {
             self.render_title_bar(&target, &titlebar_region);
@@ -732,18 +755,29 @@ impl EditorState {
             self.render_menu_bar(&item_x_positions, &item_widths, &target, &menu_region);
         }
 
-        // 2. 活动栏（欢迎页不渲染）
-        if self.ui.layout.activity_bar_visible && !showing_welcome {
+        // 2. 活动栏（欢迎页固定常驻：侧边栏功能按钮入口）
+        if self.ui.layout.activity_bar_shown() {
             self.render_activity_bar(&target, &activity_region);
         }
 
-        // 3. 侧边栏（欢迎页不渲染）
-        if self.ui.layout.sidebar_visible && !showing_welcome {
-            self.render_sidebar(&target, &sidebar_region);
+        // 3. 侧边栏（欢迎页面板默认收起，用户可手动调起）
+        // 智能体模式下：左侧渲染对话历史+工作区复合面板
+        if self.ui.layout.sidebar_visible && !suppress_sidebar {
+            if self.editor_mode.is_agent() {
+                self.render_agent_sidebar(
+                    &target,
+                    sidebar_region.x,
+                    sidebar_region.y,
+                    sidebar_region.width,
+                    sidebar_region.height,
+                );
+            } else {
+                self.render_sidebar(&target, &sidebar_region);
+            }
         }
 
-        // 4. 标签栏
-        if show_tab_bar && !showing_welcome {
+        // 4. 标签栏（智能体模式下标签栏在右侧区域渲染，此处跳过）
+        if show_tab_bar && !showing_welcome && !self.editor_mode.is_agent() {
             self.render_tab_bar(
                 &target,
                 tab_region.x,
@@ -753,17 +787,15 @@ impl EditorState {
             );
         }
 
-        // 5. 编辑器内容/欢迎页/空占位页/图片预览/设置页
-        let showing_empty_placeholder = self.show_empty_placeholder();
-        if showing_welcome {
+        // 5. 编辑器内容/欢迎页/图片预览/设置页
+        // 智能体模式下：中间区域渲染 AI 对话面板，右侧区域渲染文件编辑区
+        if showing_welcome && !self.editor_mode.is_agent() {
             tracing::trace!("render: before welcome_page");
-            // 欢迎页：全屏居中，不受侧边栏和活动栏影响
-            // 但当右侧面板或底部面板打开时，欢迎页需要避让
-            let welcome_x = 0.0;
-            let mut welcome_width = self.win.window_width as f32;
-            if self.ui.layout.right_panel_visible {
-                welcome_width -= self.ui.layout.right_panel_width;
-            }
+            // 欢迎页在编辑器区域内居中：默认无左栏时即全屏宽，
+            // 用户调起活动栏/侧边栏后自动避让（editor_region 已扣除左侧与右面板）
+            let editor = self.ui.layout.editor_region();
+            let welcome_x = editor.x;
+            let welcome_width = editor.width;
             let welcome_y = self.ui.layout.top_offset();
             let mut welcome_height = self.win.window_height as f32 - welcome_y;
             if self.ui.layout.status_bar_visible {
@@ -775,10 +807,43 @@ impl EditorState {
             welcome_height = welcome_height.max(200.0);
             self.render_welcome_page(&target, welcome_x, welcome_y, welcome_width, welcome_height);
             tracing::trace!("render: after welcome_page");
-        } else if showing_empty_placeholder {
-            // 空占位页：标签栏为空 + 文件夹已打开时，在编辑区居中显示 logo
-            // 侧边栏/活动栏/状态栏均保持可见
-            self.render_empty_placeholder(
+        } else if self.editor_mode.is_agent() {
+            // 智能体模式：中间区域渲染 AI 对话面板（占据编辑器内容区域，包括欢迎页/空占位页场景）
+            // 智能体模式标签栏在右侧面板渲染，中间区域不预留标签栏高度
+            // 检测 AI 面板超时（与右侧面板路径一致，避免思考模式长等待请求永不收尾）
+            if self.ai.ai_panel.check_timeout() {
+                self.ai.ai_panel.handle_timeout();
+            }
+            let agent_center = self.ui.layout.editor_content_region(false);
+            let text_brush = match self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(&target, &self.win.theme.text_default)
+            {
+                Ok(b) => b,
+                Err(_) => return,
+            };
+            self.render_ai_assistant_sidebar(
+                &target,
+                agent_center.x,
+                agent_center.y,
+                agent_center.width,
+                agent_center.height,
+                &text_brush,
+            );
+        } else if self.active_tab_is_new_tab() {
+            // 新标签页（NTP）：编辑器内容区域渲染快捷搜索框 + 快捷操作按钮
+            self.render_new_tab_page(
+                &target,
+                editor_content_region.x,
+                editor_content_region.y,
+                editor_content_region.width,
+                editor_content_region.height,
+            );
+        } else if self.active_tab_is_browser() {
+            // 浏览器标签：D2D 只画顶部工具栏，网页正文由 WebView2 子窗口覆盖
+            self.render_browser_toolbar(
                 &target,
                 editor_content_region.x,
                 editor_content_region.y,
@@ -841,12 +906,8 @@ impl EditorState {
                 editor_content_region.height,
             );
         }
-
         // 5.4 Markdown 预览切换按钮（编辑区右上角，仅 .md 文件显示）
-        if self.editor.content.language == Language::Markdown
-            && !showing_welcome
-            && !showing_empty_placeholder
-        {
+        if self.editor.content.language == Language::Markdown && !showing_welcome {
             self.render_markdown_toggle_btn(
                 &target,
                 editor_content_region.x,
@@ -868,13 +929,22 @@ impl EditorState {
         }
 
         // 6. 右侧面板（AI面板等）
-        if self.ui.layout.right_panel_visible
-            && right_panel_region.width > 1.0
-            && right_panel_region.height > 1.0
+        // 智能体模式下：右侧区域渲染浏览器风格标签页容器（而非 AI 面板）
         {
-            tracing::trace!(region = ?right_panel_region, "render: before right_panel");
-            self.render_right_panel(&target, &right_panel_region);
-            tracing::trace!("render: after right_panel");
+            if self.editor_mode.is_agent() {
+                let editor_x = right_panel_region.x;
+                let editor_y = right_panel_region.y;
+                let editor_w = right_panel_region.width;
+                let editor_h = right_panel_region.height;
+                self.render_agent_right_panel(&target, editor_x, editor_y, editor_w, editor_h);
+            } else if self.ui.layout.right_panel_visible
+                && right_panel_region.width > 1.0
+                && right_panel_region.height > 1.0
+            {
+                tracing::trace!(region = ?right_panel_region, "render: before right_panel");
+                self.render_right_panel(&target, &right_panel_region);
+                tracing::trace!("render: after right_panel");
+            }
         }
 
         // 7. 底部面板（终端、输出等）
@@ -1001,17 +1071,38 @@ impl EditorState {
             self.win.render_ctx.pop_multi_clip(use_layer);
         }
 
+        // 内置浏览器：同步 WebView2 子窗口边界/显隐（仅智能体模式活动浏览器标签可见）
+        self.sync_browser_webviews();
+
+        // IME 合成/候选窗口跟随当前聚焦输入框（每帧统一同步，覆盖编辑器未渲染场景）
+        self.sync_ime_position();
+
         let mut end_draw_ok = true;
         match self.win.render_ctx.end_draw() {
             Ok(()) => {}
             Err(e) => {
                 end_draw_ok = false;
+                let hr = e.code().0 as u32;
                 tracing::warn!(
-                    hresult = format_args!("{:#010X}", e.code().0 as u32),
+                    hresult = format_args!("{:#010X}", hr),
                     "EndDraw 失败，本帧被丢弃"
                 );
-                // 设备丢失（D2DERR_RECREATE_TARGET = 0x8899000C），需要重建渲染目标
-                if e.code().0 as u32 == 0x8899000C {
+                // 可恢复的渲染目标失效错误，需重建渲染目标：
+                // - 0x8899000C D2DERR_RECREATE_TARGET：设备丢失（驱动重置等）
+                // - 0x88990014 D2DERR_DISPLAY_STATE_INVALID：锁屏/休眠/显示器
+                //   切换后显示状态失效。若不重建，EndDraw 会永久失败，
+                //   整个窗口冻结（点击任何 UI 都没有视觉响应）。
+                let recoverable = hr == 0x8899000C || hr == 0x88990014;
+                // 兜底：连续失败达到阈值时无论错误码都强制重建，
+                // 防止未知错误码导致窗口永久冻结
+                let force_rebuild = self.win.end_draw_fail_streak >= 3;
+                if recoverable || force_rebuild {
+                    if force_rebuild && !recoverable {
+                        tracing::warn!(
+                            streak = self.win.end_draw_fail_streak,
+                            "EndDraw 连续失败，强制重建渲染目标"
+                        );
+                    }
                     self.win.render_ctx.handle_device_lost();
                     // P4-4: 同时清理 IconCache，确保下次绘制时从新 factory 重建几何
                     self.ui.icons.clear();
@@ -1050,6 +1141,8 @@ impl EditorState {
                             .render_ctx
                             .text_format_cache
                             .init_common_formats(font_size);
+                        // 同步预构建图标几何，避免重建后首个文件帧承担懒加载成本
+                        self.ui.icons.ensure_created_from_target(&target);
                     }
                 }
             }
@@ -1107,9 +1200,238 @@ impl EditorState {
             );
         }
     }
+
+    /// 统一同步 IME 合成窗口/候选窗口位置到当前聚焦的输入目标（每帧渲染末尾调用）。
+    ///
+    /// 旧实现仅在 `render_editor` 内设置位置，智能体模式（AI 输入框在中间列、
+    /// 编辑器未渲染）或浏览器/终端标签激活时 IME 窗口会停留在默认位置，
+    /// 不跟随输入框。此处按聚焦优先级统一计算锚点：
+    /// 终端 > 文件树输入 > 浏览器地址栏 > AI 输入框 > 编辑器光标。
+    fn sync_ime_position(&mut self) {
+        let weight = DWRITE_FONT_WEIGHT_NORMAL.0 as u32;
+
+        // 终端聚焦：锚到终端光标（智能体模式终端在右面板标签，经典模式在底部面板）
+        if self.terminal.terminal_panel.focused {
+            let term_region = self.terminal_view_region(&self.ui.layout);
+            let (t_row, t_col) = self.terminal.terminal_panel.cursor_position();
+            let cell_w = self
+                .win
+                .render_ctx
+                .text_format_cache
+                .measure_text_width("M", 11.0, weight)
+                .unwrap_or(7.0);
+            let prefix_x = if let Some(line) = self.terminal.terminal_panel.output_lines.get(t_row)
+            {
+                // t_col 是 cell 制（中文占 2），用 split_line_at_cell 换算前缀，
+                // 与光标方块绘制共用同一换算源
+                let (byte_len, utf16_len, extra_cells) =
+                    crate::terminal::TerminalPanel::split_line_at_cell(line, t_col);
+                let prefix = &line[..byte_len];
+                let base = self
+                    .win
+                    .render_ctx
+                    .text_format_cache
+                    .text_position_x(prefix, utf16_len, 11.0, weight)
+                    .unwrap_or(t_col as f32 * cell_w);
+                base + extra_cells as f32 * cell_w
+            } else {
+                t_col as f32 * cell_w
+            };
+            // 几何与 render_bottom_panel 严格一致：内容区顶部 = 内层标签栏 + 间距，
+            // 行位置必须按可见窗口起始行换算（t_row 是绝对行号，输出超出可视行数时
+            // 直接乘行高会把 IME 窗口锚到屏幕外）
+            let line_h = TERMINAL_LINE_H;
+            let content_top = term_region.y + TERMINAL_CONTENT_TOP;
+            let content_bottom = term_region.y + term_region.height - 6.0;
+            let visible_lines = ((content_bottom - content_top) / line_h).floor().max(1.0) as usize;
+            let total_lines = self.terminal.terminal_panel.output_lines.len();
+            let scroll_off = self.terminal.terminal_panel.scroll_offset;
+            let end_line = total_lines.saturating_sub(scroll_off);
+            let start_line = end_line.saturating_sub(visible_lines);
+            if t_row >= start_line && t_row < end_line {
+                let display_row = t_row - start_line;
+                let tx = term_region.x + TERMINAL_TEXT_LEFT + prefix_x;
+                let ty = content_top + display_row as f32 * line_h;
+                let (comp_x, comp_y) = self.client_to_screen(tx, ty);
+                let (cand_x, cand_y) = self.client_to_screen(tx, ty + line_h);
+                self.ui.ime.set_composition_window_position(comp_x, comp_y);
+                self.ui.ime.set_candidate_window_position(cand_x, cand_y);
+            }
+            return;
+        }
+
+        // 文件树行内输入：锚到树内输入行（几何与渲染共用 file_tree_input_row_geom）
+        if self.fs.file_tree_input.is_some() {
+            let sidebar = self.ui.layout.sidebar_region();
+            if let Some((top_rel, _, text_left_rel)) = self.file_tree_input_row_geom() {
+                let s = self.win.dpi_scale;
+                let row_h = crate::layout::FILE_TREE_ROW_HEIGHT * s;
+                // 估算 value 宽度（近似，IME 候选窗口只需大致位置）
+                let value_chars = self
+                    .fs
+                    .file_tree_input
+                    .as_ref()
+                    .map(|i| i.value.chars().count())
+                    .unwrap_or(0);
+                let ft_x = sidebar.x + text_left_rel + value_chars as f32 * 6.0 * s;
+                let (cand_x, cand_y) = self.client_to_screen(ft_x, sidebar.y + top_rel + row_h);
+                self.ui.ime.set_candidate_window_position(cand_x, cand_y);
+            }
+            return;
+        }
+
+        // 浏览器地址栏编辑中：锚到地址栏文本末尾
+        if let (Some(id), Some(tl)) = (
+            self.active_browser_id(),
+            self.browser.toolbar_layout.clone(),
+        ) {
+            let editing_text = self.browser.get(id).and_then(|inst| {
+                if inst.address_editing {
+                    Some(inst.address_text.clone())
+                } else {
+                    None
+                }
+            });
+            if let Some(text) = editing_text {
+                let tw = self
+                    .win
+                    .render_ctx
+                    .text_format_cache
+                    .measure_text_width(&text, 12.0, weight)
+                    .unwrap_or(0.0);
+                let cx = tl.address.x + 12.0 + tw;
+                let (comp_x, comp_y) = self.client_to_screen(cx, tl.address.y);
+                let (cand_x, cand_y) = self.client_to_screen(cx, tl.address.y + tl.address.height);
+                self.ui.ime.set_composition_window_position(comp_x, comp_y);
+                self.ui.ime.set_candidate_window_position(cand_x, cand_y);
+                return;
+            }
+        }
+
+        // 新标签页快捷搜索框聚焦：锚到搜索框文本末尾（几何与渲染共用 new_tab_page_geom_in）
+        if self.browser.empty_search_focused && self.ntp_active() {
+            let box_region = new_tab_page_geom_in(self.new_tab_page_region(&self.ui.layout));
+            let display = format!(
+                "{}{}",
+                self.browser.empty_search_text,
+                self.browser
+                    .empty_search_composition
+                    .as_deref()
+                    .unwrap_or("")
+            );
+            let tw = self
+                .win
+                .render_ctx
+                .text_format_cache
+                .measure_text_width(&display, 13.0, weight)
+                .unwrap_or(0.0);
+            let cx = box_region.x + 36.0 + tw;
+            let (comp_x, comp_y) = self.client_to_screen(cx, box_region.y);
+            let (cand_x, cand_y) =
+                self.client_to_screen(cx, box_region.y + box_region.height + 2.0);
+            self.ui.ime.set_composition_window_position(comp_x, comp_y);
+            self.ui.ime.set_candidate_window_position(cand_x, cand_y);
+            return;
+        }
+
+        // AI 面板输入框聚焦：锚到输入框光标（智能体模式中间列，经典模式右面板）
+        if self.ai.ai_panel.input_focused {
+            let region = if self.editor_mode.is_agent() {
+                self.ui.layout.editor_content_region(false)
+            } else {
+                self.ui.layout.right_panel_region()
+            };
+            // 几何与 render/ai.rs 输入框渲染保持一致
+            let margin = 10.0f32;
+            let input_margin = 8.0f32;
+            let text_input_h = self.ai.ai_panel.input_computed_height.max(36.0);
+            let input_area_h = text_input_h + 44.0;
+            let input_y = region.y + region.height - input_area_h;
+            let text_input_y = input_y + 6.0;
+            let text_left = region.x + margin + input_margin + 4.0;
+            let caret_prefix = if self.ai.ai_panel.caret_pos <= self.ai.ai_panel.input.len() {
+                self.ai.ai_panel.input[..self.ai.ai_panel.caret_pos].to_string()
+            } else {
+                self.ai.ai_panel.input.clone()
+            };
+            let tw = self
+                .win
+                .render_ctx
+                .text_format_cache
+                .measure_text_width(&caret_prefix, 11.0, weight)
+                .unwrap_or(0.0);
+            // IME 组合中：光标位于预编辑串之后（与 ai.rs 光标渲染一致）
+            let comp_w = if let Some(c) = self
+                .ai
+                .ai_panel
+                .composition
+                .as_ref()
+                .filter(|c| !c.is_empty())
+            {
+                self.win
+                    .render_ctx
+                    .text_format_cache
+                    .measure_text_width(c, 11.0, weight)
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let cx = text_left + tw + comp_w;
+            let (comp_x, comp_y) = self.client_to_screen(cx, text_input_y);
+            let (cand_x, cand_y) = self.client_to_screen(cx, text_input_y + text_input_h);
+            self.ui.ime.set_composition_window_position(comp_x, comp_y);
+            self.ui.ime.set_candidate_window_position(cand_x, cand_y);
+            return;
+        }
+
+        // 默认：编辑器光标（区域按模式区分：智能体模式编辑器在右面板内容区）
+        let line_height = self.win.text_renderer.line_height();
+        let char_width = self.win.text_renderer.char_width();
+        let line_number_width = 40.0;
+        let (ex, ey) = if self.editor_mode.is_agent() {
+            let rp = self.ui.layout.right_panel_region();
+            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+                0.0
+            } else {
+                crate::layout::TAB_BAR_HEIGHT
+            };
+            (rp.x, rp.y + tab_h)
+        } else {
+            let r = self.ui.layout.editor_content_region(self.show_tab_bar());
+            (r.x, r.y)
+        };
+        let (start_line, _) = self.visible_line_range();
+        let cursor_char_col = if let Some(text) = self
+            .editor
+            .content
+            .cached_line(self.editor.content.cursor_line)
+        {
+            let byte_pos = text.floor_char_boundary(self.editor.content.cursor_col.min(text.len()));
+            text[..byte_pos]
+                .chars()
+                .map(unicode_char_width)
+                .sum::<usize>()
+        } else {
+            0
+        };
+        let cursor_x = ex + line_number_width + 5.0 - self.editor.content.scroll_x
+            + cursor_char_col as f32 * char_width;
+        let cursor_y = ey
+            + (self.editor.content.cursor_line.saturating_sub(start_line)) as f32 * line_height
+            - (self.editor.content.scroll_y % line_height);
+        let (comp_x, comp_y) = self.client_to_screen(cursor_x, cursor_y);
+        let (cand_x, cand_y) = self.client_to_screen(cursor_x, cursor_y + line_height);
+        self.ui.ime.set_composition_window_position(comp_x, comp_y);
+        self.ui.ime.set_candidate_window_position(cand_x, cand_y);
+    }
 }
 
 mod account;
+mod agent_right_panel;
+pub(crate) use agent_right_panel::{
+    new_tab_page_geom_in, NEW_TAB_BTN_COUNT, NEW_TAB_BTN_GAP, NEW_TAB_BTN_HEIGHT, NEW_TAB_BTN_WIDTH,
+};
+mod agent_sidebar;
 mod ai;
 mod ai_history_window;
 mod chrome;
@@ -1130,3 +1452,4 @@ mod sidebar_files;
 mod sidebar_scm;
 mod tabs;
 mod terminal;
+pub(crate) use terminal::{TERMINAL_CONTENT_TOP, TERMINAL_LINE_H, TERMINAL_TEXT_LEFT};

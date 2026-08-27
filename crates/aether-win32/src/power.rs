@@ -6,7 +6,7 @@
 //! - 任意输入 / 获焦 / 从最小化恢复 → 退出 Frozen
 //!
 //! Frozen 期间的内存回收：关停 LSP 子进程（rust-analyzer 是最大内存消耗者）、
-//! 裁剪全部标签页渲染缓存、释放 D2D 渲染资源、收缩 SQLite 页缓存、裁剪工作集。
+//! 裁剪全部标签页渲染缓存、释放 D2D 渲染资源、压缩 AetherDB 数据文件、裁剪工作集。
 //! AI 生成与 Agent 终端命令回环通过无头泵（`pump_background_tasks`，由 AI 定时器
 //! 以 [`HEADLESS_PUMP_MS`] 间隔驱动）保活，只消费后台结果不触发重绘。
 
@@ -84,7 +84,7 @@ pub fn log_memory_usage(tag: &str) {
 
 impl EditorState {
     /// 进入冰冻态：落盘 → 定时器管控 → 关停 LSP → 裁剪标签缓存 →
-    /// 释放渲染资源 → 收缩 SQLite → 裁剪工作集
+    /// 释放渲染资源 → 压缩 AetherDB → 裁剪工作集
     pub fn enter_frozen(&mut self) {
         if self.power.frozen {
             return;
@@ -127,7 +127,7 @@ impl EditorState {
         self.win.logo_bitmap = None;
         self.win.image_bitmap = None;
 
-        // 6. 收缩 SQLite 页缓存
+        // 6. 压缩 AetherDB：强制 compaction 回收墓碑垃圾段
         if let Some(warm) = self.ai.ai_panel.warm_data_store.as_ref() {
             warm.shrink_memory();
         }

@@ -1,0 +1,39 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: dev
+nodes_managed: true
+exported_at: "2026-08-23T12:18:27Z"
+modules:
+    "":
+        dir_name: Aether Studio Rust 工作区根
+        title: Aether Studio Rust 工作区根
+        scope:
+            - README.md
+            - LICENSE.txt
+            - CONTRIBUTING.md
+            - AGENT_SPEC.md
+            - TEST_WORKFLOW.md
+            - .gitignore
+            - Cargo.toml
+            - rust-toolchain.toml
+            - .cargo/
+            - .github/
+            - .trae/
+            - 赞助.md
+        source_files: []
+        children:
+            - tests_and_scripts
+        depends_on: []
+        related_to: []
+    tests_and_scripts:
+        dir_name: Aether Studio 测试套件与构建_迁移脚本
+        title: Aether Studio 测试套件与构建/迁移脚本
+        scope:
+            - tests/
+            - scripts/
+            - deliverables/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

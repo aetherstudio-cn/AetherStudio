@@ -110,24 +110,40 @@ impl EditorState {
             return;
         }
 
+        // 结构化任务总结素材（五类：执行的功能/修复的 Bug/代码修改/审计信息/失败项）
+        let mut done_features: Vec<String> = Vec::new();
+        let mut bug_fixes: Vec<String> = Vec::new();
+        let mut code_change_notes: Vec<String> = Vec::new();
+        let mut audit_notes: Vec<String> = Vec::new();
+        let mut failures: Vec<String> = Vec::new();
+        let mut has_delete_op = false;
+
         // 1. 文件操作（创建/修改/删除）
         let edits = crate::ai_panel::parse_edits(&text, None);
-        let mut file_summary: Vec<String> = Vec::new();
         if !edits.is_empty() {
             match self.apply_ai_workspace_edits(&edits) {
                 Ok(paths) => {
-                    for p in &paths {
+                    for (i, p) in paths.iter().enumerate() {
                         let name = self
                             .fs
                             .current_folder
                             .as_ref()
                             .and_then(|root| p.strip_prefix(root).ok())
                             .unwrap_or(p.as_path());
-                        file_summary.push(format!("✓ 已写入 `{}`", name.display()));
+                        let edit = edits.get(i);
+                        let op_desc = if edit.is_some_and(|e| e.is_delete()) {
+                            has_delete_op = true;
+                            "删除文件"
+                        } else if edit.is_some_and(|e| e.search.trim().is_empty()) {
+                            "新建文件"
+                        } else {
+                            "修改文件"
+                        };
+                        done_features.push(format!("`{}` — {}", name.display(), op_desc));
                     }
                 }
                 Err(e) => {
-                    file_summary.push(format!("✕ 文件操作失败: {}", e));
+                    failures.push(format!("文件写入失败: {}", e));
                 }
             }
             // 刷新文件树以显示新文件（轻量刷新，保留展开状态，不重启 LSP）
@@ -136,7 +152,7 @@ impl EditorState {
             }
         }
 
-        // 1.5 精准编辑（增量修改）
+        // 1.5 精准编辑（增量修改，归入「修复的 Bug」类）
         let precise_edits = crate::ai_panel::parse_precise_edits(&text);
         if !precise_edits.is_empty() {
             match self.apply_precise_edits(&precise_edits) {
@@ -148,11 +164,14 @@ impl EditorState {
                             .as_ref()
                             .and_then(|root| p.strip_prefix(root).ok())
                             .unwrap_or(p.as_path());
-                        file_summary.push(format!("✓ 已精准修改 `{}`", name.display()));
+                        bug_fixes.push(format!(
+                            "`{}` — 精准定位修复（函数/行号/关键词定位的增量修改）",
+                            name.display()
+                        ));
                     }
                 }
                 Err(e) => {
-                    file_summary.push(format!("✕ 精准编辑失败: {}", e));
+                    failures.push(format!("精准编辑失败: {}", e));
                 }
             }
             // 刷新文件树以显示修改（轻量刷新，保留展开状态，不重启 LSP）
@@ -208,36 +227,70 @@ impl EditorState {
             tool_feedback = feedback;
         }
 
-        // 4. 反馈汇总到对应会话
-        if !file_summary.is_empty() || !cmd_summary.is_empty() || !tool_display.is_empty() {
-            // 先计算总结信息（在移动前）
-            let file_count = file_summary.len();
-            let cmd_count = cmd_summary.len();
-            let tool_count = tool_display.len();
+        // 4. 结构化任务总结反馈到对应会话（执行的功能/修复的 Bug/代码修改/审计信息/失败项）
+        let has_writes = !done_features.is_empty() || !bug_fixes.is_empty();
+        if has_writes {
+            code_change_notes.insert(
+                0,
+                format!("共变更 {} 个文件", done_features.len() + bug_fixes.len()),
+            );
+            audit_notes.push("所有写操作均限制在当前工作区内（沙箱路径校验）".to_string());
+            audit_notes.push("修改前的历史快照已保存，展开文件卡片可查看红绿差异".to_string());
+        }
+        if has_delete_op {
+            audit_notes.push("删除的文件已移入回收站，支持 Ctrl+Z 恢复".to_string());
+        }
+        code_change_notes.extend(cmd_summary.iter().cloned());
+        audit_notes.extend(tool_display.iter().cloned());
 
+        if has_writes || !code_change_notes.is_empty() || !failures.is_empty() {
             let mut lines = Vec::new();
-            lines.extend(file_summary);
-            lines.extend(cmd_summary);
-            lines.extend(tool_display);
-
-            // 添加操作总结
-            let mut summary_lines = Vec::new();
-            summary_lines.push("".to_string());
-            summary_lines.push("[总结] **操作总结**".to_string());
-            summary_lines.push("".to_string());
-
-            if file_count > 0 {
-                summary_lines.push(format!("[文件] 文件操作：{} 个", file_count));
+            lines.push("## 任务总结".to_string());
+            lines.push(String::new());
+            lines.push("**执行的功能**".to_string());
+            if done_features.is_empty() {
+                lines.push("- （无）".to_string());
+            } else {
+                for f in &done_features {
+                    lines.push(format!("- ✓ {}", f));
+                }
             }
-            if cmd_count > 0 {
-                summary_lines.push(format!("[命令] 命令执行：{} 个", cmd_count));
+            lines.push(String::new());
+            lines.push("**修复的 Bug**".to_string());
+            if bug_fixes.is_empty() {
+                lines.push("- （本轮无 Bug 修复记录）".to_string());
+            } else {
+                for b in &bug_fixes {
+                    lines.push(format!("- ✓ {}", b));
+                }
             }
-            if tool_count > 0 {
-                summary_lines.push(format!("[工具] 工具调用：{} 个", tool_count));
+            lines.push(String::new());
+            lines.push("**代码修改**".to_string());
+            if code_change_notes.is_empty() {
+                lines.push("- （无）".to_string());
+            } else {
+                for c in &code_change_notes {
+                    lines.push(format!("- {}", c));
+                }
             }
-
-            lines.extend(summary_lines);
-
+            lines.push(String::new());
+            lines.push("**审计信息**".to_string());
+            if audit_notes.is_empty() {
+                lines.push("- （无安全相关记录）".to_string());
+            } else {
+                for a in &audit_notes {
+                    lines.push(format!("- {}", a));
+                }
+            }
+            lines.push(String::new());
+            lines.push("**失败项**".to_string());
+            if failures.is_empty() {
+                lines.push("- （全部成功）".to_string());
+            } else {
+                for f in &failures {
+                    lines.push(format!("- ✕ {}", f));
+                }
+            }
             self.ai
                 .ai_panel
                 .add_assistant_message_to(conv_idx, lines.join("\n"));
@@ -247,7 +300,8 @@ impl EditorState {
         // 5. 只读探查结果驱动续跑：仅活动会话，且本轮没有 RUN 命令
         //    （RUN 有自身的异步续跑路径，避免重复触发并发请求；受最大轮次限制）。
         if conv_idx == self.ai.ai_panel.active && commands.is_empty() && !tool_feedback.is_empty() {
-            let settings = self.ui.app_settings.ai.clone();
+            // 续跑必须用激活模型档案（含解密后的 API Key）；旧单一 ai 字段无 key
+            let settings = self.ui.app_settings.active_ai_settings();
             let mode = self.ai.ai_panel.mode;
             if let Err(e) =
                 self.ai
@@ -259,6 +313,103 @@ impl EditorState {
                     .add_assistant_message_to(conv_idx, format!("（{}，如需继续请手动发消息）", e));
             }
         }
+    }
+
+    /// AI 对话内文件名链接点击入口：异步打开对应文件（不阻塞对话滚动）。
+    ///
+    /// - 已在标签页打开 → 直接切换；
+    /// - 文件不存在（已删除等）→ 状态栏 + 对话内提示，不崩溃；
+    /// - 其余 → 后台线程预读内容，经 WM_APP+14 回到 UI 线程建标签页。
+    pub fn open_ai_file_link(&mut self, rel: &str) {
+        let rel = rel.trim();
+        if rel.is_empty() {
+            return;
+        }
+        // 解析为绝对路径（相对工作区根；兼容绝对路径链接）
+        let full_path = if Path::new(rel).is_absolute() {
+            PathBuf::from(rel)
+        } else {
+            match self.fs.current_folder.as_ref() {
+                Some(root) => root.join(rel),
+                None => {
+                    self.ui.status_message = format!("无法打开 {}：尚未打开工作区文件夹", rel);
+                    return;
+                }
+            }
+        };
+
+        // 已在标签页中打开 → 直接切换（含活动标签）
+        if self.editor.content.file_path.as_ref() == Some(&full_path) {
+            self.ui.status_message = format!("已定位到当前文件: {}", rel);
+            return;
+        }
+        if let Some(idx) = self
+            .editor
+            .tab_bar
+            .tabs
+            .iter()
+            .position(|t| t.file_path() == Some(&full_path))
+        {
+            self.switch_tab(idx);
+            return;
+        }
+
+        // 文件不存在：友好提示而非崩溃
+        if !full_path.exists() {
+            let msg = format!("提示：文件不存在（可能已被删除或移动）：`{}`", rel);
+            self.ui.status_message = format!("文件不存在: {}", rel);
+            self.ai.ai_panel.add_assistant_message(msg);
+            self.win.dirty_tracker.mark_full_window();
+            return;
+        }
+
+        // 后台预加载：读文件放到独立线程，避免大文件阻塞对话滚动
+        let hwnd_send = SendHwnd(self.win.hwnd.0 as usize);
+        let path_clone = full_path.clone();
+        std::thread::spawn(move || {
+            let text = std::fs::read_to_string(&path_clone).unwrap_or_default();
+            let payload = Box::new((path_clone, text));
+            unsafe {
+                post_boxed_message_lparam(
+                    windows::Win32::Foundation::HWND(hwnd_send.0 as *mut std::ffi::c_void),
+                    windows::Win32::UI::WindowsAndMessaging::WM_APP + 14,
+                    Box::into_raw(payload),
+                );
+            }
+        });
+        self.ui.status_message = format!("正在打开 {}…", rel);
+    }
+
+    /// WM_APP+14 回调：后台预读完成后用已加载缓冲创建标签页。
+    pub(crate) fn finish_open_ai_file_link(&mut self, path: &Path, text: &str) {
+        // 异步读盘期间若用户已手动打开同一文件，直接切换避免重复标签
+        if self.editor.content.file_path.as_ref() == Some(&path.to_path_buf()) {
+            return;
+        }
+        if let Some(idx) = self
+            .editor
+            .tab_bar
+            .tabs
+            .iter()
+            .position(|t| t.file_path().map(|p| p.as_path()) == Some(path))
+        {
+            self.switch_tab(idx);
+            return;
+        }
+        let lang = Language::from_path(path);
+        let tab = crate::tabs::Tab::File(crate::tabs::TabContent::with_loaded_buffer(
+            Some(path.to_path_buf()),
+            PieceTable::from_string(text.to_string()),
+            lang,
+            false,
+        ));
+        self.open_in_new_tab(tab);
+        // 智能体模式下打开标签需保证右侧编辑区可见
+        if self.editor_mode.is_agent() {
+            self.ui.layout.right_panel_visible = true;
+        }
+        self.ui.status_message = format!("已打开: {}", path.display());
+        self.win.dirty_tracker.mark_full_window();
     }
 
     /// 生成中断（网络断开等）时的文件块抢救：
@@ -370,7 +521,8 @@ impl EditorState {
                         &feedback_output
                     }
                 );
-                let settings = self.ui.app_settings.ai.clone();
+                // 续跑必须用激活模型档案（含解密后的 API Key）；旧单一 ai 字段无 key
+                let settings = self.ui.app_settings.active_ai_settings();
                 let mode = self.ai.ai_panel.mode;
                 if let Err(e) = self
                     .ai
@@ -387,7 +539,7 @@ impl EditorState {
     }
 
     /// 刷新 AI 历史索引。
-    /// 从 SQLite（温数据层）加载元数据到内存 history；可按工作区过滤。
+    /// 从 AetherDB（温数据层）加载元数据到内存 history；可按工作区过滤。
     pub fn refresh_ai_history(&mut self) {
         if let Some(store) = self.ai.ai_panel.warm_data_store.as_ref() {
             let ws_only = self.ai.ai_panel.history_workspace_only;
@@ -440,8 +592,6 @@ impl EditorState {
         self.ui
             .settings_panel
             .sync_to_app_settings(&mut self.ui.app_settings);
-        // 兼容：同时更新旧的单一 ai 字段（作为无模型时的回退）
-        self.ui.app_settings.ai = self.ui.settings_panel.to_ai_settings();
         match self.ui.app_settings.save() {
             Ok(_) => {
                 self.ui.settings_panel.mark_saved();
@@ -724,22 +874,54 @@ impl EditorState {
 
             // 删除文件操作
             if edit.is_delete() {
-                // 关闭对应 tab（如果有）；用户取消则跳过此文件
-                if let Some(idx) = self
-                    .editor
-                    .tab_bar
-                    .tabs
-                    .iter()
-                    .position(|t| t.file_path() == Some(&full_path))
-                {
-                    if !self.close_tab(idx) {
-                        continue;
+                // 文件暂存：不关闭标签页，标记 deleted_from_disk 并缓存内容，
+                // 支持 Ctrl+Z 从内存回写恢复。活动标签页内容在 self.editor.content，
+                // 后台标签页在 tabs 条目中，需分别处理。
+                let active_match = self.editor.content.file_path.as_ref() == Some(&full_path);
+                let snapshot: Option<String> = if active_match {
+                    Some(self.editor.content.buffer.get_all_text())
+                } else {
+                    self.editor.tab_bar.tabs.iter().find_map(|t| {
+                        if t.file_path() == Some(&full_path) {
+                            t.as_file().map(|c| c.buffer.get_all_text())
+                        } else {
+                            None
+                        }
+                    })
+                };
+                let snapshot = snapshot.or_else(|| {
+                    if full_path.is_file() {
+                        std::fs::read_to_string(&full_path).ok()
+                    } else {
+                        None
+                    }
+                });
+                if active_match {
+                    self.editor.content.deleted_from_disk = true;
+                }
+                for tab in self.editor.tab_bar.tabs.iter_mut() {
+                    if tab.file_path() == Some(&full_path) {
+                        tab.set_deleted(true);
                     }
                 }
-                // 从磁盘删除文件
+                // 记录删除以支持 Ctrl+Z 撤销
+                self.fs
+                    .delete_undo_stack
+                    .push(crate::undo_delete::DeleteRecord {
+                        original_path: full_path.clone(),
+                        timestamp: std::time::Instant::now(),
+                        content: snapshot,
+                    });
+                if self.fs.delete_undo_stack.len() > 20 {
+                    let extra = self.fs.delete_undo_stack.len() - 20;
+                    self.fs.delete_undo_stack.drain(0..extra);
+                }
+                // 从磁盘删除文件：优先走回收站，失败时回退永久删除
                 if full_path.exists() {
-                    std::fs::remove_file(&full_path)
-                        .map_err(|e| format!("删除文件 {} 失败: {}", full_path.display(), e))?;
+                    if crate::recycle_bin::move_to_recycle_bin(&full_path).is_err() {
+                        std::fs::remove_file(&full_path)
+                            .map_err(|e| format!("删除文件 {} 失败: {}", full_path.display(), e))?;
+                    }
                 }
                 self.ui.status_message = format!("已删除文件: {}", full_path.display());
                 applied.push(full_path);
@@ -784,6 +966,13 @@ impl EditorState {
                     }
                 }
             };
+
+            // 修改前快照（供差异可视化，键与对话卡片路径一致）
+            self.ai.ai_panel.record_diff_snapshot(
+                &edit.path.to_string_lossy(),
+                old_text.clone(),
+                new_text.clone(),
+            );
 
             // 记录 undo history，使 AI 工作区编辑可通过 Ctrl+Z 逐文件撤销
             let cursor_before = CursorPosition::new(
@@ -862,12 +1051,71 @@ impl EditorState {
                 String::new()
             };
 
+            // Rename 操作：整词重命名标识符，并跨文件同步所有调用点（多文件协同）
+            if let crate::ai_panel::EditOperation::Rename { new_name } = &edit.operation {
+                let old_name = match &edit.location {
+                    crate::ai_panel::PreciseLocation::Function { name } => name.clone(),
+                    crate::ai_panel::PreciseLocation::Keyword { keyword, .. } => keyword.clone(),
+                    _ => {
+                        return Err(
+                            "重命名操作需配合函数名（fn）或关键词（keyword）定位使用".to_string()
+                        )
+                    }
+                };
+                let (new_content, count) =
+                    crate::ai_panel::rename_whole_word(&content, &old_name, new_name);
+                if count == 0 {
+                    return Err(format!(
+                        "未在 {} 中找到标识符 {}",
+                        full_path.display(),
+                        old_name
+                    ));
+                }
+                // 修改前快照（供差异可视化，键与对话卡片路径一致）
+                self.ai.ai_panel.record_diff_snapshot(
+                    &edit.path.to_string_lossy(),
+                    content.clone(),
+                    new_content.clone(),
+                );
+                if let Some(parent) = full_path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return Err(format!("创建目录 {} 失败: {}", parent.display(), e));
+                    }
+                }
+                if let Err(e) = Self::atomic_write(&full_path, new_content.as_bytes()) {
+                    return Err(format!("写入文件 {} 失败: {}", full_path.display(), e));
+                }
+                // 多文件协同：扫描工作区其余源码文件，同步更新所有调用点
+                let related = self.rename_identifier_in_workspace(&full_path, &old_name, new_name);
+                if !related.is_empty() {
+                    self.ui.status_message = format!(
+                        "已重命名 {} → {}（同步更新 {} 个关联文件）",
+                        old_name,
+                        new_name,
+                        related.len()
+                    );
+                    applied.extend(related);
+                } else {
+                    self.ui.status_message =
+                        format!("已重命名 {} → {}（共 {} 处）", old_name, new_name, count);
+                }
+                applied.push(full_path);
+                continue;
+            }
+
             // 根据定位方式查找目标位置
             let (start_pos, end_pos) = self.locate_target_position(&content, &edit.location)?;
 
             // 根据编辑操作应用修改
             let new_content =
                 self.apply_edit_operation(&content, start_pos, end_pos, &edit.operation)?;
+
+            // 修改前快照（供差异可视化，键与对话卡片路径一致）
+            self.ai.ai_panel.record_diff_snapshot(
+                &edit.path.to_string_lossy(),
+                content.clone(),
+                new_content.clone(),
+            );
 
             // 写入文件
             if let Some(parent) = full_path.parent() {
@@ -900,7 +1148,15 @@ impl EditorState {
             crate::ai_panel::PreciseLocation::Keyword {
                 keyword,
                 context_lines,
-            } => self.locate_by_keyword(content, keyword, *context_lines),
+                case_insensitive,
+                whole_word,
+            } => self.locate_by_keyword(
+                content,
+                keyword,
+                *context_lines,
+                *case_insensitive,
+                *whole_word,
+            ),
             crate::ai_panel::PreciseLocation::LineRange {
                 start_line,
                 end_line,
@@ -909,20 +1165,34 @@ impl EditorState {
                 snippet,
                 similarity_threshold,
             } => self.locate_by_code_snippet(content, snippet, *similarity_threshold),
+            crate::ai_panel::PreciseLocation::Function { name } => {
+                // 函数定义搜索：定位 fn/def/func 等定义并覆盖整个函数体
+                let (start_line, end_line) = crate::ai_panel::find_function_span(content, name)
+                    .ok_or_else(|| format!("未找到函数定义: {}", name))?;
+                let lines: Vec<&str> = content.lines().collect();
+                let start_pos: usize = lines[..start_line].iter().map(|l| l.len() + 1).sum();
+                let end_pos: usize = lines[..(end_line + 1).min(lines.len())]
+                    .iter()
+                    .map(|l| l.len() + 1)
+                    .sum();
+                Ok((start_pos, end_pos))
+            }
         }
     }
 
-    /// 关键词搜索定位
+    /// 关键词搜索定位（支持大小写敏感性与全字匹配选项）
     fn locate_by_keyword(
         &self,
         content: &str,
         keyword: &str,
         context_lines: usize,
+        case_insensitive: bool,
+        whole_word: bool,
     ) -> std::result::Result<(usize, usize), String> {
         let lines: Vec<&str> = content.lines().collect();
 
         for (i, line) in lines.iter().enumerate() {
-            if line.contains(keyword) {
+            if Self::line_matches_keyword(line, keyword, case_insensitive, whole_word) {
                 // 计算上下文范围
                 let start_line = i.saturating_sub(context_lines);
                 let end_line = (i + context_lines + 1).min(lines.len());
@@ -936,6 +1206,43 @@ impl EditorState {
         }
 
         Err(format!("未找到关键词: {}", keyword))
+    }
+
+    /// 关键词行匹配：大小写敏感性 + 全字匹配（两侧均非单词字符才命中）
+    fn line_matches_keyword(
+        line: &str,
+        keyword: &str,
+        case_insensitive: bool,
+        whole_word: bool,
+    ) -> bool {
+        let (hay_owned, needle_owned);
+        let (hay, needle): (&str, &str) = if case_insensitive {
+            hay_owned = line.to_lowercase();
+            needle_owned = keyword.to_lowercase();
+            (&hay_owned, &needle_owned)
+        } else {
+            (line, keyword)
+        };
+        if needle.is_empty() {
+            return false;
+        }
+        if !whole_word {
+            return hay.contains(needle);
+        }
+        let mut start = 0usize;
+        while let Some(off) = hay[start..].find(needle) {
+            let abs = start + off;
+            let before_ok =
+                abs == 0 || !crate::ai_panel::is_word_char(hay[..abs].chars().next_back().unwrap());
+            let after_idx = abs + needle.len();
+            let after_ok = after_idx >= hay.len()
+                || !crate::ai_panel::is_word_char(hay[after_idx..].chars().next().unwrap());
+            if before_ok && after_ok {
+                return true;
+            }
+            start = abs + needle.len();
+        }
+        false
     }
 
     /// 行号范围定位
@@ -1015,7 +1322,117 @@ impl EditorState {
                 result.push_str(&content[end_pos..]);
                 Ok(result)
             }
+            crate::ai_panel::EditOperation::Rename { .. } => {
+                // Rename 在 apply_precise_edits 中专门处理（需标识符名与工作区扫描）
+                Err("重命名操作不支持区间应用".to_string())
+            }
         }
+    }
+
+    /// 多文件协同：扫描工作区其余文本文件，整词重命名标识符（同步调用点）。
+    ///
+    /// 安全约束：仅限工作区内、单文件 ≤512KB、最多扫描 2000 个文件，
+    /// 跳过目标文件与隐藏/依赖目录（.git/target/node_modules 等）。
+    fn rename_identifier_in_workspace(
+        &mut self,
+        target_path: &Path,
+        old_name: &str,
+        new_name: &str,
+    ) -> Vec<PathBuf> {
+        let mut updated = Vec::new();
+        let Some(root) = self.fs.current_folder.clone() else {
+            return updated;
+        };
+        const SKIP_DIRS: &[&str] = &[
+            ".git",
+            "target",
+            "node_modules",
+            ".venv",
+            "venv",
+            "__pycache__",
+            "dist",
+            "build",
+        ];
+        let mut stack = vec![root];
+        let mut visited = 0usize;
+        while let Some(dir) = stack.pop() {
+            if visited >= 2000 {
+                break;
+            }
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if visited >= 2000 {
+                    break;
+                }
+                let path = entry.path();
+                if path.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !SKIP_DIRS.contains(&name.as_str()) && !name.starts_with('.') {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                visited += 1;
+                if path == target_path {
+                    continue;
+                }
+                // 仅处理小体积文本源码文件
+                let Ok(meta) = entry.metadata() else {
+                    continue;
+                };
+                if meta.len() == 0 || meta.len() > 512 * 1024 {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue; // 二进制文件 read_to_string 失败，自然跳过
+                };
+                let (new_text, n) = crate::ai_panel::rename_whole_word(&text, old_name, new_name);
+                if n == 0 {
+                    continue;
+                }
+                // 关联文件同样记录快照（供差异可视化）
+                if let Ok(rel) = path.strip_prefix(self.fs.current_folder.as_ref().unwrap()) {
+                    self.ai.ai_panel.record_diff_snapshot(
+                        &rel.to_string_lossy(),
+                        text,
+                        new_text.clone(),
+                    );
+                }
+                if Self::atomic_write(&path, new_text.as_bytes()).is_ok() {
+                    updated.push(path);
+                }
+            }
+        }
+        // 若关联文件已打开在标签页，重新加载磁盘内容保持一致
+        for tab in self.editor.tab_bar.tabs.iter_mut() {
+            if let Some(tp) = tab.file_path().map(|p| p.to_path_buf()) {
+                if updated.contains(&tp) {
+                    if let Ok(text) = std::fs::read_to_string(&tp) {
+                        if let Some(c) = tab.as_file_mut() {
+                            c.buffer = PieceTable::from_string(text);
+                            c.is_dirty = false;
+                        }
+                    }
+                }
+            }
+        }
+        if self
+            .editor
+            .content
+            .file_path
+            .as_ref()
+            .is_some_and(|p| updated.contains(p))
+        {
+            if let Ok(text) =
+                std::fs::read_to_string(self.editor.content.file_path.as_ref().unwrap())
+            {
+                self.editor.content.buffer = PieceTable::from_string(text);
+                self.editor.content.is_dirty = false;
+            }
+        }
+        updated
     }
 
     /// 将工作区相对路径解析为经沙箱校验的绝对路径（仅允许工作区内，禁止逃逸）。

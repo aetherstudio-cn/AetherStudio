@@ -12,6 +12,7 @@ members = [
     "crates/aether-cli",
     "crates/aether-editor",
     "crates/aether-ai-panel",
+    "crates/aether-db",
     "crates/aether-terminal",
     "crates/aether-ui",
     "crates/aether-render-win",

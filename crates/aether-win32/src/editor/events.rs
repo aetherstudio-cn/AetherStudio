@@ -311,10 +311,10 @@ impl EditorState {
                 self.select_all();
             }
             crate::menu_bar::CommandId::ViewToggleSidebar => {
-                self.ui.layout.sidebar_visible = !self.ui.layout.sidebar_visible;
+                self.ui.layout.toggle_sidebar();
             }
             crate::menu_bar::CommandId::ViewToggleActivityBar => {
-                self.ui.layout.activity_bar_visible = !self.ui.layout.activity_bar_visible;
+                self.ui.layout.toggle_activity_bar();
             }
             crate::menu_bar::CommandId::ViewToggleStatusBar => {
                 self.ui.layout.status_bar_visible = !self.ui.layout.status_bar_visible;

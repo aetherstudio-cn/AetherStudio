@@ -67,6 +67,10 @@ pub(super) unsafe fn lbd_activity_bar(
         st.ui.activity_view = view;
         st.ui.layout.sidebar_visible = true;
         st.ui.sidebar_content = crate::layout::SidebarContent::from_view(view);
+        // 欢迎页：点击功能按钮调起侧边栏面板（活动栏固定常驻）
+        if st.ui.layout.welcome_active {
+            st.ui.layout.welcome_left_opened = true;
+        }
     }
     invalidate_window(hwnd);
     Some(LRESULT(0))
@@ -165,6 +169,51 @@ pub(super) unsafe fn lbd_sidebar(
         drop(st);
         return lbd_ssh_manager_panel(hwnd, state, mouse_x, mouse_y);
     }
+
+    // 智能体模式：处理左侧边栏的对话标签页点击
+    if st.editor_mode.is_agent() {
+        // 1. 新会话按钮
+        if let Some((bx, by, bw, bh)) = st.ai.ai_panel.agent_new_chat_region {
+            if mouse_x >= bx && mouse_x < bx + bw && mouse_y >= by && mouse_y < by + bh {
+                st.ai.ai_panel.new_conversation();
+                invalidate_window(hwnd);
+                return Some(LRESULT(0));
+            }
+        }
+        // 2. 对话标签页关闭按钮
+        for &(idx, rx, ry, rw, rh) in &st.ai.ai_panel.agent_tab_close_regions {
+            if mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh {
+                st.ai.ai_panel.snapshot_active_into_slot();
+                st.ai.ai_panel.close_conversation(idx);
+                invalidate_window(hwnd);
+                return Some(LRESULT(0));
+            }
+        }
+        // 3. 对话标签页切换
+        for &(idx, rx, ry, rw, rh) in &st.ai.ai_panel.agent_tab_regions {
+            if mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh {
+                st.ai.ai_panel.switch_to(idx);
+                invalidate_window(hwnd);
+                return Some(LRESULT(0));
+            }
+        }
+        // 4. 对话历史折叠/展开
+        // TODO: 添加对话历史折叠/展开的命中检测
+
+        // 5. 工作区文件列表点击（复用现有逻辑）
+        // 智能体模式下，文件树区域被下移（上面有新会话按钮和对话标签页），
+        // 使用渲染时记录的偏移量调整坐标
+        let sidebar_rel_x = mouse_x - sidebar_region.x;
+        let sidebar_rel_y = mouse_y - sidebar_region.y - st.ai.ai_panel.agent_file_tree_offset_y;
+        if st.handle_sidebar_click(sidebar_rel_x, sidebar_rel_y) {
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+        // 点击已确认在侧边栏区域内，即使未命中任何交互元素也应消费事件
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
     let sidebar_rel_x = mouse_x - sidebar_region.x;
     let sidebar_rel_y = mouse_y - sidebar_region.y;
     // 文件树拖拽候选：按下命中节点名称区域时记录（超过阈值后才进入拖拽，
@@ -292,7 +341,7 @@ unsafe fn lbd_ssh_manager_buttons(
     Some(LRESULT(0))
 }
 
-/// 右侧 AI 面板点击（模式切换 / 上下文附件 / 变更列表 / Apply / 输入框）。
+/// 右侧面板点击（智能体模式：文件编辑区；开发者模式：AI 面板）。
 pub(super) unsafe fn lbd_right_panel(
     hwnd: HWND,
     state: &Rc<RefCell<EditorState>>,
@@ -304,6 +353,17 @@ pub(super) unsafe fn lbd_right_panel(
     if !(layout.right_panel_visible && right_panel_region.contains(mouse_x, mouse_y)) {
         return None;
     }
+
+    // 智能体模式：右侧面板是文件编辑区，处理编辑器光标设置
+    {
+        let st = state.borrow();
+        if st.editor_mode.is_agent() {
+            drop(st);
+            return lbd_agent_right_panel_editor(hwnd, state, mouse_x, mouse_y, layout);
+        }
+    }
+
+    // 开发者模式：右侧面板是 AI 面板
     // 对话标签条：切换 / 关闭 / 新建 / 历史（命中区为渲染时注册的绝对坐标）
     if let Some(result) = lbd_right_panel_tabs(hwnd, state, mouse_x, mouse_y) {
         return Some(result);
@@ -326,6 +386,76 @@ pub(super) unsafe fn lbd_right_panel(
             if let Some(msg) = st.ai.ai_panel.messages.get_mut(i) {
                 msg.reasoning_collapsed = !msg.reasoning_collapsed;
             }
+            // 折叠/展开改变块高，后续内容整体位移：标脏面板整个区域做局部重绘，
+            // 避免依赖 on_paint 的全窗口兜底（性能）或漏标导致的重影
+            st.mark_ai_panel_dirty();
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // 询问卡片：点击选项记录回答；该消息内全部问题回答完毕后自动汇总回传继续生成
+    {
+        let hit = {
+            let st = state.borrow();
+            st.ai
+                .ai_panel
+                .ask_option_regions
+                .iter()
+                .find(|(_, _, _, rx, ry, rw, rh)| {
+                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+                })
+                .map(|(mi, seq, oi, ..)| (*mi, *seq, *oi))
+        };
+        if let Some((mi, seq, oi)) = hit {
+            let mut st = state.borrow_mut();
+            if !st.ai.ai_panel.is_generating {
+                if let Some(opt) = st.ai.ai_panel.ask_option_text(mi, seq, oi) {
+                    let all_done = st.ai.ai_panel.answer_ask(mi, seq, opt);
+                    if all_done {
+                        let settings = st.ui.app_settings.active_ai_settings();
+                        let mode = st.ai.ai_panel.mode;
+                        let attachments = st.ai.ai_panel.attachments.clone();
+                        let context = st.gather_context(&attachments);
+                        match st.ai.ai_panel.send_ask_reply(&settings, mi, mode, context) {
+                            Ok(_) => {
+                                st.ui.status_message = "AI 请求已发送".to_string();
+                                let _ = SetTimer(hwnd, AI_TIMER_ID, AI_REFRESH_MS, None);
+                            }
+                            Err(e) => st.ui.status_message = e,
+                        }
+                    } else {
+                        st.ui.status_message = "已记录回答，请继续回答其余问题".to_string();
+                    }
+                }
+            }
+            st.mark_ai_panel_dirty();
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // 询问卡片：自定义回答——将输入框置为待回答状态，下一条发送的消息作为该问题的答案
+    {
+        let hit = {
+            let st = state.borrow();
+            st.ai
+                .ai_panel
+                .ask_custom_regions
+                .iter()
+                .find(|(_, _, rx, ry, rw, rh)| {
+                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+                })
+                .map(|(mi, seq, ..)| (*mi, *seq))
+        };
+        if let Some((mi, seq)) = hit {
+            let mut st = state.borrow_mut();
+            if !st.ai.ai_panel.is_generating {
+                st.ai.ai_panel.pending_ask_custom = Some((mi, seq));
+                st.ai.ai_panel.input_focused = true;
+                st.ai.ai_panel.caret_pos = st.ai.ai_panel.input.len();
+                st.ui.status_message = "请输入自定义回答并发送".to_string();
+                let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
+            }
+            st.mark_ai_panel_dirty();
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
@@ -508,16 +638,20 @@ unsafe fn lbd_right_panel_tabs(
             }
         };
         if let Some(i) = del_hit {
-            let mut st = state.borrow_mut();
-            let content = st
-                .ai
-                .ai_panel
-                .playbook_items
-                .get(i)
-                .map(|b| b.content.clone())
-                .unwrap_or_default();
-            let msg = format!("确定删除这条策略吗？\n\n{}", content);
+            // 借用内只取内容，释放后再弹确认框，避免模态泵消息重入 panic
+            let msg = {
+                let st = state.borrow();
+                let content = st
+                    .ai
+                    .ai_panel
+                    .playbook_items
+                    .get(i)
+                    .map(|b| b.content.clone())
+                    .unwrap_or_default();
+                format!("确定删除这条策略吗？\n\n{}", content)
+            };
             if crate::dialogs::Dialogs::confirm_yes_no(hwnd, "删除策略条目", &msg) {
+                let mut st = state.borrow_mut();
                 if let Err(e) = st.ai.ai_panel.delete_playbook_item(i) {
                     st.ui.status_message = format!("删除策略失败: {}", e);
                 }
@@ -646,7 +780,8 @@ unsafe fn lbd_right_panel_apply_input(
     if let Some((bx, by, bw, bh)) = state.borrow().ai.ai_panel.continue_button_region {
         if rp_rel_x >= bx && rp_rel_x < bx + bw && rp_rel_y >= by && rp_rel_y < by + bh {
             let mut st = state.borrow_mut();
-            let ai_settings = st.ui.app_settings.ai.clone();
+            // 续跑必须用激活模型档案（含解密后的 API Key）；旧单一 ai 字段无 key
+            let ai_settings = st.ui.app_settings.active_ai_settings();
             match st.ai.ai_panel.continue_truncated_generation(&ai_settings) {
                 Ok(_) => {
                     st.ui.status_message = "继续生成中...".to_string();
@@ -662,7 +797,8 @@ unsafe fn lbd_right_panel_apply_input(
     if let Some((bx, by, bw, bh)) = state.borrow().ai.ai_panel.retry_button_region {
         if rp_rel_x >= bx && rp_rel_x < bx + bw && rp_rel_y >= by && rp_rel_y < by + bh {
             let mut st = state.borrow_mut();
-            let ai_settings = st.ui.app_settings.ai.clone();
+            // 重试必须用激活模型档案（含解密后的 API Key）；旧单一 ai 字段无 key
+            let ai_settings = st.ui.app_settings.active_ai_settings();
             match st.ai.ai_panel.retry_last_request(&ai_settings) {
                 Ok(_) => {
                     st.ui.status_message = "重试中...".to_string();
@@ -672,6 +808,18 @@ unsafe fn lbd_right_panel_apply_input(
             }
             return Some(LRESULT(0));
         }
+    }
+
+    // ===== 对话内文件名链接：点击异步打开对应文件（窗口绝对坐标）=====
+    if let Some(link_path) = state
+        .borrow()
+        .ai
+        .ai_panel
+        .hit_test_file_link(mouse_x, mouse_y)
+    {
+        state.borrow_mut().open_ai_file_link(&link_path);
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
     }
 
     // ===== 文件卡片：点击标题行切换展开/折叠预览（窗口绝对坐标）=====
@@ -709,8 +857,8 @@ unsafe fn lbd_right_panel_apply_input(
                     .map(|m| {
                         let label = if !m.display_name.is_empty() {
                             m.display_name.clone()
-                        } else if !m.model.is_empty() {
-                            m.model.clone()
+                        } else if !m.settings.model.is_empty() {
+                            m.settings.model.clone()
                         } else {
                             "(未命名模型)".to_string()
                         };
@@ -787,6 +935,15 @@ unsafe fn lbd_right_panel_apply_input(
         }
         st.ai.ai_panel.input_focused = true;
         st.ai.ai_panel.caret_visible = true;
+        // 若终端持有焦点则释放，否则低层钩子/字符路由会把按键继续送入终端
+        if st.terminal.terminal_panel.focused {
+            st.terminal.terminal_panel.focused = false;
+            st.set_terminal_ime_bypass(false);
+        }
+        // 释放空状态搜索框焦点，避免键盘路由仍指向它
+        if st.browser.empty_search_focused {
+            st.browser.reset_empty_search();
+        }
         // 点击输入框时将光标移到末尾
         st.ai.ai_panel.caret_pos = st.ai.ai_panel.input.len();
         let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
@@ -891,13 +1048,14 @@ unsafe fn lbd_right_panel_apply_input(
 
 /// 设置页点击（导航标签 / 字段聚焦 / 下拉选择 / 保存 / 测试连接）。
 ///
-/// 设置页渲染在编辑区，各命中区由 render_settings_sidebar 以绝对坐标注册，此处直接命中测试。
+/// 设置页在经典模式渲染于编辑区、智能体模式渲染于右面板内容区，
+/// `region` 为实际渲染区域；各命中区由 render_settings_sidebar 以绝对坐标注册，此处直接命中测试。
 pub(super) unsafe fn lbd_settings_page(
     hwnd: HWND,
     state: &Rc<RefCell<EditorState>>,
     mouse_x: f32,
     mouse_y: f32,
-    layout: &crate::layout::LayoutManager,
+    region: crate::layout::Region,
 ) -> Option<LRESULT> {
     {
         let st = state.borrow();
@@ -905,8 +1063,7 @@ pub(super) unsafe fn lbd_settings_page(
             return None;
         }
     }
-    let editor_region = layout.editor_region();
-    if !editor_region.contains(mouse_x, mouse_y) {
+    if !region.contains(mouse_x, mouse_y) {
         return None;
     }
 
@@ -1033,6 +1190,35 @@ pub(super) unsafe fn lbd_settings_page(
         }
     }
 
+    // 4b2. 通用页：默认启动模式切换（点击切换 开发者/智能体，立即持久化，重启后生效）
+    if st.ui.settings_panel.active_tab == crate::settings::SettingsTab::General {
+        if let Some((rx, ry, rw, rh)) = st.ui.settings_panel.default_mode_toggle_region {
+            if mouse_x >= rx && mouse_x < rx + rw && mouse_y >= ry && mouse_y < ry + rh {
+                let to_agent =
+                    st.ui.app_settings.ui.editor_mode != crate::layout::EditorMode::Agent;
+                st.ui.app_settings.ui.editor_mode = if to_agent {
+                    crate::layout::EditorMode::Agent
+                } else {
+                    crate::layout::EditorMode::Developer
+                };
+                match st.ui.app_settings.save() {
+                    Ok(_) => {
+                        st.ui.status_message = if to_agent {
+                            "默认启动模式已设为：智能体模式（重启后生效）".to_string()
+                        } else {
+                            "默认启动模式已设为：开发者模式（重启后生效）".to_string()
+                        };
+                    }
+                    Err(e) => {
+                        st.ui.status_message = format!("保存设置失败：{}", e);
+                    }
+                }
+                invalidate_window(hwnd);
+                return Some(LRESULT(0));
+            }
+        }
+    }
+
     // 4c. 更新页："立即检查更新"按钮（独立于 AI/模型页的按钮检测门槛）
     if st.ui.settings_panel.active_tab == crate::settings::SettingsTab::Update {
         if let Some(crate::settings::SettingsButton::CheckUpdate) =
@@ -1119,28 +1305,6 @@ pub(super) unsafe fn lbd_settings_page(
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
-        // logprobs 调试开关切换
-        if st
-            .ui
-            .settings_panel
-            .hit_test_logprobs_toggle(mouse_x, mouse_y)
-        {
-            st.ui.settings_panel.logprobs = !st.ui.settings_panel.logprobs;
-            st.ui.settings_panel.active_field = None;
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-        // 流式用量统计开关切换
-        if st
-            .ui
-            .settings_panel
-            .hit_test_include_usage_toggle(mouse_x, mouse_y)
-        {
-            st.ui.settings_panel.include_usage = !st.ui.settings_panel.include_usage;
-            st.ui.settings_panel.active_field = None;
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
         // 频率惩罚滑块：点击轨道即定位，并进入拖拽
         if let Some(v) = st.ui.settings_panel.hit_test_freq_slider(mouse_x, mouse_y) {
             st.ui.settings_panel.frequency_penalty = format!("{:.1}", v);
@@ -1205,7 +1369,7 @@ pub(super) unsafe fn lbd_settings_page(
                 }
                 crate::settings::ModelButton::Edit => {
                     // 编辑：加载该模型字段进表单，不持久化；改动只有点击「保存」后才写入。
-                    let fallback = st.ui.app_settings.ai.clone();
+                    let fallback = st.ui.app_settings.active_ai_settings();
                     st.ui.settings_panel.active_model_id = Some(model_id.clone());
                     st.ui.settings_panel.load_active_model_fields(&fallback);
                     st.ui.settings_panel.model_editing = true;
@@ -1216,7 +1380,7 @@ pub(super) unsafe fn lbd_settings_page(
                         st.ui.settings_panel.active_model_id =
                             st.ui.settings_panel.models.first().map(|m| m.id.clone());
                     }
-                    let fallback = st.ui.app_settings.ai.clone();
+                    let fallback = st.ui.app_settings.active_ai_settings();
                     st.ui.settings_panel.load_active_model_fields(&fallback);
                     st.persist_models();
                 }
@@ -1252,7 +1416,7 @@ pub(super) unsafe fn lbd_settings_page(
         // 点击模型卡片 → 设为激活模型
         if let Some(model_id) = st.ui.settings_panel.hit_test_model_item(mouse_x, mouse_y) {
             st.ui.settings_panel.selected_model_id = Some(model_id.clone());
-            let fallback = st.ui.app_settings.ai.clone();
+            let fallback = st.ui.app_settings.active_ai_settings();
             st.ui.settings_panel.set_active_model(&model_id, &fallback);
             st.persist_models();
             invalidate_window(hwnd);
@@ -1289,13 +1453,13 @@ pub(super) unsafe fn lbd_tab_bar(
     state: &Rc<RefCell<EditorState>>,
     mouse_x: f32,
     mouse_y: f32,
-    layout: &crate::layout::LayoutManager,
+    _layout: &crate::layout::LayoutManager,
 ) -> Option<LRESULT> {
     // 阶段 1：在 borrow_mut() 内处理拖拽预备（标签体命中 → 延迟切换）
     {
         let mut st = state.borrow_mut();
-        let show_tab_bar = st.show_tab_bar();
-        let tab_region = layout.tab_bar_region(show_tab_bar);
+        // 智能体模式下标签栏渲染在右侧面板顶部，需使用实际区域
+        let tab_region = st.effective_tab_bar_region();
         if !tab_region.contains(mouse_x, mouse_y) {
             return None;
         }
@@ -1321,7 +1485,7 @@ pub(super) unsafe fn lbd_tab_bar(
         if !show_tab_bar {
             return None;
         }
-        let tab_region = layout.tab_bar_region(show_tab_bar);
+        let tab_region = st.effective_tab_bar_region();
         let editor_x = tab_region.x;
 
         // "+" 新建按钮
@@ -1492,7 +1656,7 @@ pub(super) unsafe fn lbd_find_panel(
     Some(LRESULT(0))
 }
 
-/// 底部面板点击。
+/// 底部面板点击（经典模式入口）。
 pub(super) unsafe fn lbd_bottom_panel(
     hwnd: HWND,
     state: &Rc<RefCell<EditorState>>,
@@ -1504,13 +1668,27 @@ pub(super) unsafe fn lbd_bottom_panel(
     if !bottom_panel_region.contains(mouse_x, mouse_y) {
         return None;
     }
+    lbd_terminal_view(hwnd, state, mouse_x, mouse_y, bottom_panel_region, false)
+}
+
+/// 终端视图点击：经典模式底部面板与智能体模式右面板终端标签共用。
+/// `region` 为终端视图实际渲染区域（内部标签条/关闭按钮几何相对其计算）；
+/// `agent_tab` 表示智能体模式终端标签（关闭按钮改为关闭标签页）。
+unsafe fn lbd_terminal_view(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+    bottom_panel_region: crate::layout::Region,
+    agent_tab: bool,
+) -> Option<LRESULT> {
     tracing::info!(
         mx = mouse_x,
         my = mouse_y,
-        visible = layout.bottom_panel_visible,
+        agent_tab = agent_tab,
         running = state.borrow().terminal.terminal_panel.running,
         tab = ?state.borrow().terminal.bottom_panel_tab,
-        "lbd_bottom_panel: 点击底部面板"
+        "lbd_terminal_view: 点击终端视图"
     );
 
     // 标签栏 hit test：与 render_bottom_panel 中标签的坐标布局完全一致
@@ -1562,11 +1740,19 @@ pub(super) unsafe fn lbd_bottom_panel(
         && mouse_y >= close_btn_y
         && mouse_y <= close_btn_y + TITLE_BAR_H
     {
-        tracing::info!("lbd_bottom_panel: 点击关闭按钮，关闭底部面板");
         let mut st = state.borrow_mut();
-        st.ui.layout.toggle_terminal_panel();
-        st.terminal.terminal_panel.focused = false;
-        st.set_terminal_ime_bypass(false);
+        if agent_tab {
+            // 智能体模式：关闭按钮关闭终端标签页
+            tracing::info!("lbd_terminal_view: 智能体模式关闭终端标签");
+            st.terminal.terminal_panel.focused = false;
+            st.set_terminal_ime_bypass(false);
+            st.close_current_tab();
+        } else {
+            tracing::info!("lbd_bottom_panel: 点击关闭按钮，关闭底部面板");
+            st.ui.layout.toggle_terminal_panel();
+            st.terminal.terminal_panel.focused = false;
+            st.set_terminal_ime_bypass(false);
+        }
         let _ = KillTimer(hwnd, super::super::super::TERM_TIMER_ID);
         invalidate_window(hwnd);
         return Some(LRESULT(0));
@@ -1633,6 +1819,29 @@ pub(super) unsafe fn lbd_welcome_or_editor(
         return None;
     }
     let mut st = state.borrow_mut();
+    // 智能体模式：中间区域是AI对话面板，不是编辑器，跳过编辑器光标设置
+    if st.editor_mode.is_agent() {
+        // 智能体模式下，AI 对话面板渲染在编辑器内容区域（中间面板），
+        // 输入框/发送按钮/模型下拉等命中检测需基于中间面板坐标（而非右侧面板）
+        // 智能体模式标签栏在右侧面板，中间区域不预留标签栏高度（与渲染一致）
+        let center_panel_region = layout.editor_content_region(false);
+        drop(st);
+        if center_panel_region.contains(mouse_x, mouse_y) {
+            if let Some(result) =
+                lbd_right_panel_apply_input(hwnd, state, mouse_x, mouse_y, &center_panel_region)
+            {
+                return Some(result);
+            }
+        }
+        // 未命中按钮/输入框时消费事件，防止穿透到编辑器区域
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+    // 新标签页（NTP）：快捷搜索框 + 快捷操作按钮，委托共享点击逻辑
+    if st.ntp_active() {
+        drop(st);
+        return lbd_new_tab_page(hwnd, state, mouse_x, mouse_y, layout);
+    }
     if st.show_welcome() {
         let action = st.handle_welcome_click(
             mouse_x,
@@ -1666,7 +1875,17 @@ pub(super) unsafe fn lbd_welcome_or_editor(
             return Some(LRESULT(0));
         }
         let editor_content = layout.editor_content_region(st.show_tab_bar());
+        // 滚动条命中优先于文本光标放置（拖滑块/点轨道不改变光标）
+        if crate::editor::scrollbar::try_begin_drag(&mut st, hwnd, mouse_x, mouse_y) {
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
         st.set_cursor_from_mouse(mouse_x, mouse_y, editor_content.x, editor_content.y);
+        // 若终端持有焦点则释放，避免低层钩子继续拦截按键
+        if st.terminal.terminal_panel.focused {
+            st.terminal.terminal_panel.focused = false;
+            st.set_terminal_ime_bypass(false);
+        }
         // 单击只设置光标位置，不启动选区
         // 选区在鼠标移动时（WM_MOUSEMOVE + is_dragging）启动
         st.clear_selection();
@@ -1990,21 +2209,11 @@ pub(super) unsafe fn lbd_history_window(
         return Some(LRESULT(0));
     }
 
-    // 4. 条目删除按钮（需二次确认；优先于条目点击）
+    // 4. 条目删除按钮（直接删除，不弹确认框；优先于条目点击）
     if let Some(i) = hit(&state.borrow().ai.ai_panel.history_delete_regions) {
         let mut st = state.borrow_mut();
-        let title = st
-            .ai
-            .ai_panel
-            .history
-            .get(i)
-            .map(|m| m.title.clone())
-            .unwrap_or_default();
-        let msg = format!("确定删除这条历史对话吗？\n\n{}", title);
-        if Dialogs::confirm_yes_no(hwnd, "删除历史记录", &msg) {
-            if let Err(e) = st.ai.ai_panel.delete_history_item(i) {
-                st.ui.status_message = format!("删除历史失败: {}", e);
-            }
+        if let Err(e) = st.ai.ai_panel.delete_history_item(i) {
+            st.ui.status_message = format!("删除历史失败: {}", e);
         }
         invalidate_window(hwnd);
         return Some(LRESULT(0));
@@ -2063,10 +2272,14 @@ pub(super) unsafe fn lbd_history_window(
 
     // 7. 清空全部（需二次确认）
     if in_region(state.borrow().ai.ai_panel.history_clear_all_region) {
-        let mut st = state.borrow_mut();
-        let count = st.ai.ai_panel.history.len();
-        let msg = format!("确定清空全部 {} 条历史对话吗？\n\n此操作不可恢复。", count);
+        // 同删除单条：借用内只取条数，释放后再弹确认框，避免模态泵消息重入 panic
+        let msg = {
+            let st = state.borrow();
+            let count = st.ai.ai_panel.history.len();
+            format!("确定清空全部 {} 条历史对话吗？\n\n此操作不可恢复。", count)
+        };
         if Dialogs::confirm_yes_no(hwnd, "清空历史记录", &msg) {
+            let mut st = state.borrow_mut();
             match st.ai.ai_panel.clear_all_history() {
                 Ok(n) => st.ui.status_message = format!("已清空 {} 条历史记录", n),
                 Err(e) => st.ui.status_message = format!("清空历史失败: {}", e),
@@ -2121,4 +2334,214 @@ pub(super) unsafe fn lbd_history_window(
         // 返回 None 让点击继续传递给下层（如编辑器），符合浮窗"点击外部关闭但不拦截"的惯例
         return None;
     }
+}
+
+/// 新标签页（NTP）点击：快捷搜索框聚焦 / 打开本地文件 / 新建文件 / 打开终端。
+///
+/// 经典模式与智能体模式共用；几何取自 new_tab_page_region + new_tab_page_geom_in，
+/// 与渲染/光标/IME 保持一致。
+unsafe fn lbd_new_tab_page(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+    layout: &crate::layout::LayoutManager,
+) -> Option<LRESULT> {
+    let mut st = state.borrow_mut();
+    let search_box = crate::render::new_tab_page_geom_in(st.new_tab_page_region(layout));
+    let btn_height = crate::render::NEW_TAB_BTN_HEIGHT;
+    let btn_gap = crate::render::NEW_TAB_BTN_GAP;
+    for i in 0..crate::render::NEW_TAB_BTN_COUNT {
+        let btn_y = search_box.y + i as f32 * (btn_height + btn_gap);
+        let rect = crate::layout::Region::new(search_box.x, btn_y, search_box.width, btn_height);
+        if rect.contains(mouse_x, mouse_y) {
+            match i {
+                0 => {
+                    // 快捷搜索框：聚焦后可直接输入，回车即搜（无需先进浏览器）
+                    if !st.browser.empty_search_focused {
+                        st.browser.empty_search_focused = true;
+                        st.browser.empty_search_caret_visible = true;
+                    }
+                    let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                        hwnd,
+                        crate::window::CARET_TIMER_ID,
+                        530,
+                        None,
+                    );
+                }
+                1 => {
+                    // 打开本地文件：模态对话框需在释放借用后弹出，避免与对话框消息循环重入冲突
+                    st.browser.reset_empty_search();
+                    drop(st);
+                    if let Some(path) =
+                        crate::dialogs::Dialogs::open_file_dialog(hwnd, "打开文件", &[])
+                    {
+                        state.borrow_mut().load_file(path);
+                    }
+                }
+                2 => {
+                    // 新建文件：原标签栏 + 按钮的行为（新建空白文件标签）
+                    st.browser.reset_empty_search();
+                    st.new_file_tab();
+                    st.ui.status_message = "已新建文件".to_string();
+                }
+                3 => {
+                    // 打开终端：智能体模式新建终端标签，经典模式切换底部终端面板
+                    st.browser.reset_empty_search();
+                    if st.editor_mode.is_agent() {
+                        st.open_terminal_tab();
+                    } else {
+                        st.ui.layout.toggle_terminal_panel();
+                    }
+                }
+                _ => {}
+            }
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // 点击新标签页其他区域：释放搜索框焦点
+    if st.browser.empty_search_focused {
+        st.browser.reset_empty_search();
+    }
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
+}
+
+/// 智能体模式右侧文件编辑区点击。
+///
+/// 智能体模式下，右侧面板是文件编辑区（标签页容器），需要处理编辑器光标设置。
+unsafe fn lbd_agent_right_panel_editor(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+    layout: &crate::layout::LayoutManager,
+) -> Option<LRESULT> {
+    let mut st = state.borrow_mut();
+
+    // 标签栏区域（右侧面板顶部条带）交由 lbd_tab_bar 处理，这里不消费
+    if !st.editor.tab_bar.tabs.is_empty() {
+        let tab_region = st.effective_tab_bar_region();
+        if tab_region.contains(mouse_x, mouse_y) {
+            return None;
+        }
+    }
+
+    // 新标签页（NTP）：快捷搜索框 + 快捷操作按钮，委托共享点击逻辑
+    if st.ntp_active() {
+        drop(st);
+        return lbd_new_tab_page(hwnd, state, mouse_x, mouse_y, layout);
+    }
+
+    // 浏览器标签：仅工具栏需要点击处理（网页正文由 WebView2 子窗口原生接收）
+    if st.active_tab_is_browser() {
+        if let (Some(id), Some(tl)) = (st.active_browser_id(), st.browser.toolbar_layout.clone()) {
+            if tl.back.contains(mouse_x, mouse_y) {
+                if let Some(inst) = st.browser.get(id) {
+                    inst.go_back();
+                }
+            } else if tl.forward.contains(mouse_x, mouse_y) {
+                if let Some(inst) = st.browser.get(id) {
+                    inst.go_forward();
+                }
+            } else if tl.refresh.contains(mouse_x, mouse_y) {
+                if let Some(inst) = st.browser.get(id) {
+                    inst.reload();
+                }
+            } else if tl.address.contains(mouse_x, mouse_y) {
+                // 进入地址栏编辑模式（回车导航/Esc 取消，见键盘路由）
+                if let Some(inst) = st.browser.get_mut(id) {
+                    inst.address_editing = true;
+                }
+            }
+        }
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 终端标签：委托终端视图点击逻辑（区域 = 右面板内容区，与渲染几何一致）
+    if st.active_tab_is_terminal() {
+        let rp = layout.right_panel_region();
+        let tab_h = if st.editor.tab_bar.tabs.is_empty() {
+            0.0
+        } else {
+            crate::layout::TAB_BAR_HEIGHT
+        };
+        let term_region =
+            crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h);
+        drop(st);
+        return lbd_terminal_view(hwnd, state, mouse_x, mouse_y, term_region, true);
+    }
+
+    // 设置标签：委托设置页点击逻辑（区域与渲染几何一致，含导航/字段/按钮等全部交互）
+    if st.active_tab_is_settings() {
+        let region = st.settings_page_region(layout);
+        drop(st);
+        return lbd_settings_page(hwnd, state, mouse_x, mouse_y, region);
+    }
+
+    // 沙盒评测标签：有自己的点击处理逻辑，这里直接消费事件
+    if st.active_tab_is_sandbox_eval() {
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // Markdown 预览模式下点击编辑区不设置光标（预览不可编辑）
+    if st.editor.content.language == aether_core::lexer::Language::Markdown
+        && st.editor.markdown_preview
+    {
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 图片预览模式下不设置光标
+    if st.editor.content.language == aether_core::lexer::Language::Image {
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 计算右侧面板的内容区域（排除标签栏）
+    let right_panel_region = layout.right_panel_region();
+    let tab_bar_height = if st.show_tab_bar() {
+        crate::layout::TAB_BAR_HEIGHT
+    } else {
+        0.0
+    };
+    let content_x = right_panel_region.x;
+    let content_y = right_panel_region.y + tab_bar_height;
+
+    // 滚动条命中优先于文本光标放置（与经典模式共用统一入口）
+    if crate::editor::scrollbar::try_begin_drag(&mut st, hwnd, mouse_x, mouse_y) {
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 设置编辑器光标
+    st.set_cursor_from_mouse(mouse_x, mouse_y, content_x, content_y);
+    // 单击只设置光标位置，不启动选区
+    st.clear_selection();
+    st.editor.is_selecting = false;
+    // 重置光标闪烁状态并启动定时器
+    st.editor.content.caret_visible = true;
+    let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
+
+    // 标记编辑区+状态栏脏区
+    st.win.dirty_tracker.mark_region(
+        content_x,
+        content_y,
+        right_panel_region.width,
+        right_panel_region.height - tab_bar_height,
+        crate::dirty_rect::DirtyRegionType::EditorContent,
+    );
+    let sb = st.ui.layout.status_bar_region();
+    st.win.dirty_tracker.mark_region(
+        sb.x,
+        sb.y,
+        sb.width,
+        sb.height,
+        crate::dirty_rect::DirtyRegionType::StatusBar,
+    );
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
 }

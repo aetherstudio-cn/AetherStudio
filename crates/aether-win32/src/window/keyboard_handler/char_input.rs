@@ -52,6 +52,12 @@ pub(crate) unsafe fn on_char(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
                 return LRESULT(0);
             }
             // 按优先级依次尝试各输入目标，首个匹配的处理器消费字符
+            if let Some(r) = oc_browser_address(hwnd, c) {
+                return r;
+            }
+            if let Some(r) = oc_empty_search(hwnd, c) {
+                return r;
+            }
             if let Some(r) = oc_file_tree_input(hwnd, c) {
                 return r;
             }
@@ -434,6 +440,51 @@ unsafe fn oc_history_window(hwnd: HWND, c: char) -> Option<LRESULT> {
         }
         _ => None,
     }
+}
+
+/// 内置浏览器地址栏编辑中：字符追加到编辑文本（光标固定在末尾）
+unsafe fn oc_browser_address(hwnd: HWND, c: char) -> Option<LRESULT> {
+    let Some(state) = get_and_set_state(hwnd) else {
+        return None;
+    };
+    let mut st = state.borrow_mut();
+    let id = st.active_browser_id()?;
+    let editing = st
+        .browser
+        .get(id)
+        .map(|i| i.address_editing)
+        .unwrap_or(false);
+    if !editing {
+        return None;
+    }
+    if let Some(inst) = st.browser.get_mut(id) {
+        inst.address_text.push(c);
+    }
+    drop(st);
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
+}
+
+/// 新标签页快捷搜索框聚焦时，输入字符进入搜索文本
+unsafe fn oc_empty_search(hwnd: HWND, c: char) -> Option<LRESULT> {
+    let Some(state) = get_and_set_state(hwnd) else {
+        return None;
+    };
+    let focused = state.borrow().browser.empty_search_focused;
+    if !focused {
+        return None;
+    }
+    let mut st = state.borrow_mut();
+    // 兜底：搜索框仅在新标签页交互区可见，离开时释放焦点，防止键盘路由泄漏
+    if !st.ntp_active() {
+        st.browser.reset_empty_search();
+        return None;
+    }
+    st.browser.empty_search_text.push(c);
+    st.browser.empty_search_caret_visible = true;
+    drop(st);
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
 }
 
 /// AI 面板输入框聚焦时，输入字符进入 AI 输入

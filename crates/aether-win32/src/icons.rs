@@ -132,11 +132,13 @@ pub enum IconKind {
     Eye,
     /// 铅笔（Markdown 编辑）
     Pencil,
+    /// 刷新（内置浏览器工具栏）
+    Refresh,
 }
 
 impl IconKind {
     /// 所有图标变体索引（与 SVG_DEFS 数组下标对应）
-    pub const ALL: [IconKind; 86] = [
+    pub const ALL: [IconKind; 87] = [
         IconKind::OpenFolder,
         IconKind::NewFile,
         IconKind::Clone,
@@ -223,6 +225,7 @@ impl IconKind {
         IconKind::Trash,
         IconKind::Eye,
         IconKind::Pencil,
+        IconKind::Refresh,
     ];
 
     /// 索引到 SVG_DEFS 数组下标
@@ -366,7 +369,10 @@ mod tests {
     /// 验证 ALL 数组长度与 SVG_DEFS 一致
     #[test]
     fn all_icons_count_matches() {
-        assert_eq!(IconKind::ALL.len(), 86);
+        assert_eq!(
+            IconKind::ALL.len(),
+            super::super::icons_svg_defs::SVG_DEFS.len()
+        );
     }
 
     /// 验证 ALL 数组中无重复项

@@ -447,6 +447,7 @@ impl EditorState {
             let right_panel_btn_x = tb.right_panel_btn_x;
             let bottom_panel_btn_x = tb.bottom_panel_btn_x;
             let left_sidebar_btn_x = tb.left_sidebar_btn_x;
+            let mode_btn_x = tb.mode_btn_x;
             let divider_x = tb.divider_x;
             let forward_btn_x = tb.forward_btn_x;
             let back_btn_x = tb.back_btn_x;
@@ -941,6 +942,53 @@ impl EditorState {
                 bottom: y + height - 8.0,
             };
             target.FillRectangle(&divider_rect, &divider_brush);
+
+            // 模式切换按钮：显示文字"开发者"/"智能体"
+            let mode_btn_width = 44.0f32; // 文字按钮加宽
+            let mode_btn_rect = D2D_RECT_F {
+                left: mode_btn_x,
+                top: y + (height - tool_btn_size) / 2.0,
+                right: mode_btn_x + mode_btn_width,
+                bottom: y + (height + tool_btn_size) / 2.0,
+            };
+            target.FillRectangle(
+                &mode_btn_rect,
+                if self.win.titlebar_hover_button == Some(10) {
+                    &hover_tool_bg_brush
+                } else {
+                    &default_tool_bg_brush
+                },
+            );
+            let mode_text = if self.editor_mode.is_agent() {
+                "智能体"
+            } else {
+                "开发者"
+            };
+            let mode_text_brush = if self.win.titlebar_hover_button == Some(10) {
+                &active_icon_brush
+            } else {
+                &icon_brush
+            };
+            let mode_format = self
+                .win
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    11.0,
+                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                )
+                .unwrap();
+            let mode_wide: Vec<u16> = mode_text.encode_utf16().chain(Some(0)).collect();
+            target.DrawText(
+                &mode_wide,
+                &mode_format,
+                &mode_btn_rect,
+                mode_text_brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            );
 
             // 左侧边栏按钮：Lucide panel-left 图标
             target.FillRectangle(

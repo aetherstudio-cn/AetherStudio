@@ -123,6 +123,17 @@ pub(crate) unsafe fn on_mouse_move(
         let mut st = state.borrow_mut();
         let editor_content = layout.editor_content_region(st.show_tab_bar());
 
+        // 滚动条：拖拽优先（SetCapture 期间鼠标可能在窗口外）；未拖拽时更新悬停高亮
+        // 经典模式与智能体模式共用统一入口（区域由 active_code_editor_region 裁定）
+        match crate::editor::scrollbar::handle_move(&mut st, mouse_x, mouse_y) {
+            crate::editor::scrollbar::MoveOutcome::Dragged => {
+                invalidate_window(hwnd);
+                return LRESULT(0);
+            }
+            crate::editor::scrollbar::MoveOutcome::HoverChanged => invalidate_window(hwnd),
+            crate::editor::scrollbar::MoveOutcome::Ignored => {}
+        }
+
         // 如果尚未进入选区模式，检查鼠标是否移动了足够距离来启动选区
         if !st.editor.is_selecting {
             // 记录鼠标按下位置（在 WM_LBUTTONDOWN 时设置）
@@ -277,7 +288,7 @@ pub(crate) unsafe fn on_mouse_move(
                 ar.height,
                 crate::dirty_rect::DirtyRegionType::ActivityBar,
             );
-            let tr = layout.tab_bar_region(st.show_tab_bar());
+            let tr = st.effective_tab_bar_region();
             st.win.dirty_tracker.mark_region(
                 tr.x,
                 tr.y,
@@ -297,14 +308,8 @@ pub(crate) unsafe fn on_mouse_move(
             );
         }
         if ai_changed {
-            let rp = layout.right_panel_region();
-            st.win.dirty_tracker.mark_region(
-                rp.x,
-                rp.y,
-                rp.width,
-                rp.height,
-                crate::dirty_rect::DirtyRegionType::RightPanel,
-            );
+            // AI 面板悬停状态变化（智能体模式中间列 / 经典模式右面板）
+            st.mark_ai_panel_dirty();
         }
         if welcome_changed {
             st.win.dirty_tracker.mark_full_window();
@@ -364,6 +369,8 @@ unsafe fn omm_early_returns(
         if let Some(h) = st.ui.menu_bar.hover_index {
             if Some(h) != st.ui.menu_bar.active_index && h < st.ui.menu_bar.items.len() {
                 st.ui.menu_bar.expand(h);
+                // 旧子菜单区域需一并重绘清除，脏矩形增量渲染下否则残影叠加
+                st.win.dirty_tracker.mark_full_window();
             }
         }
         // 子菜单项 hover 追踪
@@ -622,6 +629,8 @@ unsafe fn omm_titlebar_menu_hover(
         let right_panel_btn_x = tb.right_panel_btn_x;
         let bottom_panel_btn_x = tb.bottom_panel_btn_x;
         let left_sidebar_btn_x = tb.left_sidebar_btn_x;
+        let mode_btn_x = tb.mode_btn_x;
+        let mode_btn_width = tb.mode_btn_width;
 
         // 右侧工具按钮组悬停检测（从右往左）
         if mouse_x >= minimize_x {
@@ -642,6 +651,8 @@ unsafe fn omm_titlebar_menu_hover(
             st.win.titlebar_hover_button = Some(6);
         } else if mouse_x >= left_sidebar_btn_x {
             st.win.titlebar_hover_button = Some(7);
+        } else if mouse_x >= mode_btn_x && mouse_x < mode_btn_x + mode_btn_width {
+            st.win.titlebar_hover_button = Some(10);
         } else {
             // 左侧箭头按钮（位置动态计算，从渲染帧缓存读取）
             let back_x = st.win.titlebar_back_btn_x;
@@ -684,6 +695,8 @@ unsafe fn omm_titlebar_menu_hover(
             if let Some(h) = st.ui.menu_bar.hover_index {
                 if h != active_idx && h < st.ui.menu_bar.items.len() {
                     st.ui.menu_bar.expand(h);
+                    // 旧子菜单区域需一并重绘清除，脏矩形增量渲染下否则残影叠加
+                    st.win.dirty_tracker.mark_full_window();
                 }
             }
         }
@@ -723,10 +736,11 @@ unsafe fn omm_activity_tab_hover(
             .activity_bar
             .hit_test(mouse_x, mouse_y, activity_region.y);
     let activity_changed = old_activity_hover != st.ui.activity_bar.hover_index;
-    // 标签栏悬停
+    // 标签栏悬停（智能体模式下标签栏在右侧面板顶部，使用实际区域）
     let editor_content = layout.editor_content_region(st.show_tab_bar());
+    let tab_region = st.effective_tab_bar_region();
     let old_hover = st.editor.tab_bar.hover_tab;
-    st.update_hover_tab(mouse_x, mouse_y, editor_content.x);
+    st.update_hover_tab(mouse_x, mouse_y, tab_region.x, tab_region.y);
     let tab_changed = old_hover != st.editor.tab_bar.hover_tab;
     (activity_changed || tab_changed, editor_content)
 }
@@ -784,7 +798,17 @@ unsafe fn omm_file_tree_hover(
             st.update_git_panel_hover(mouse_x - sidebar_region.x, mouse_y - sidebar_region.y);
             old_hover != st.ui.git.hover_button
         } else {
-            st.update_file_tree_hover(mouse_x - sidebar_region.x, mouse_y - sidebar_region.y)
+            // 智能体模式下，文件树区域被下移（上面有新会话按钮和对话标签页），
+            // 使用渲染时记录的偏移量调整坐标
+            let offset_y = if st.editor_mode.is_agent() {
+                st.ai.ai_panel.agent_file_tree_offset_y
+            } else {
+                0.0
+            };
+            st.update_file_tree_hover(
+                mouse_x - sidebar_region.x,
+                mouse_y - sidebar_region.y - offset_y,
+            )
         }
     } else {
         let old = st.fs.hover_file_node.take();
@@ -818,9 +842,10 @@ unsafe fn omm_settings_hover(
         if st.ui.settings_panel.active_tab == crate::settings::SettingsTab::Models
             && !st.ui.settings_panel.model_editing
         {
-            let editor_region = layout.editor_region();
-            if editor_region.contains(mouse_x, mouse_y) {
-                // 命中区以绝对坐标注册（原点为 editor_content_region），用绝对 mouse_x/mouse_y 命中测试
+            // 命中区以绝对坐标注册；门槛用设置页实际渲染区域（经典=编辑区，智能体=右面板内容区）
+            let settings_region = st.settings_page_region(layout);
+            if settings_region.contains(mouse_x, mouse_y) {
+                // 用绝对 mouse_x/mouse_y 命中测试，与标签栏 / 编辑表单保持一致
                 // 检测模型项悬停
                 let new_hover_id = st.ui.settings_panel.hit_test_model_item(mouse_x, mouse_y);
                 if st.ui.settings_panel.hover_model_id != new_hover_id {
@@ -967,6 +992,32 @@ unsafe fn omm_ai_hover(
         return old_tab_hover != st.ai.ai_panel.hover_tab
             || old_apply_hover != st.ai.ai_panel.hover_apply_button;
     }
+
+    // 智能体模式：处理左侧边栏的对话标签页悬浮
+    if st.editor_mode.is_agent() {
+        let sidebar_region = layout.sidebar_region();
+        if sidebar_region.contains(mouse_x, mouse_y) {
+            // 检查对话标签页悬浮
+            let old_tab_hover = st.ai.ai_panel.hover_tab;
+            st.ai.ai_panel.hover_tab = st
+                .ai
+                .ai_panel
+                .agent_tab_regions
+                .iter()
+                .find(|(_, rx, ry, rw, rh)| {
+                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+                })
+                .map(|(i, ..)| *i);
+            return old_tab_hover != st.ai.ai_panel.hover_tab;
+        } else {
+            // 鼠标不在侧边栏，清除悬浮状态
+            let old_tab_hover = st.ai.ai_panel.hover_tab;
+            st.ai.ai_panel.hover_tab = None;
+            return old_tab_hover.is_some();
+        }
+    }
+
+    // 开发者模式：右侧面板是 AI 面板
     let right_panel_region = layout.right_panel_region();
     if layout.right_panel_visible && right_panel_region.contains(mouse_x, mouse_y) {
         // Apply 按钮悬停
@@ -1502,8 +1553,8 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
         let editor_region = layout.editor_region();
         let editor_content = layout.editor_content_region(st.show_tab_bar());
 
-        // 6. 标签栏 hover → Hand
-        let tab_bar_region = layout.tab_bar_region(st.show_tab_bar());
+        // 6. 标签栏 hover → Hand（智能体模式下标签栏在右侧面板顶部）
+        let tab_bar_region = st.effective_tab_bar_region();
         if tab_bar_region.contains(mouse_x, mouse_y) && st.editor.tab_bar.hover_tab.is_some() {
             return CursorType::Hand;
         }
@@ -1575,8 +1626,16 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
 
         // 11. AI 面板输入框 → IBeam
         // 几何与 lbd_right_panel_apply_input 的输入框命中检测保持一致
-        if layout.right_panel_visible {
-            let rp = layout.right_panel_region();
+        // 智能体模式：AI 面板渲染在中间编辑器内容区；开发者模式：右侧面板
+        // 智能体模式标签栏在右侧面板，中间区域不预留标签栏高度（与渲染一致）
+        let ai_region = if st.editor_mode.is_agent() {
+            Some(layout.editor_content_region(false))
+        } else if layout.right_panel_visible {
+            Some(layout.right_panel_region())
+        } else {
+            None
+        };
+        if let Some(rp) = ai_region {
             if rp.contains(mouse_x, mouse_y) {
                 let rp_rel_x = mouse_x - rp.x;
                 let rp_rel_y = mouse_y - rp.y;
@@ -1596,10 +1655,52 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
             }
         }
 
+        // 11b. 新标签页（NTP）：快捷搜索框 → IBeam，其余快捷按钮 → Hand
+        // 几何与渲染/点击共用 new_tab_page_region + new_tab_page_geom_in
+        if st.ntp_active() {
+            let search_box = crate::render::new_tab_page_geom_in(st.new_tab_page_region(&layout));
+            let btn_height = crate::render::NEW_TAB_BTN_HEIGHT;
+            let btn_gap = crate::render::NEW_TAB_BTN_GAP;
+            for i in 0..crate::render::NEW_TAB_BTN_COUNT {
+                let btn_y = search_box.y + i as f32 * (btn_height + btn_gap);
+                let rect =
+                    crate::layout::Region::new(search_box.x, btn_y, search_box.width, btn_height);
+                if rect.contains(mouse_x, mouse_y) {
+                    return if i == 0 {
+                        CursorType::IBeam
+                    } else {
+                        CursorType::Hand
+                    };
+                }
+            }
+        }
+
+        // 11c. 终端区域：内层标签栏（终端/问题）→ Hand，终端内容区 → IBeam
+        // 区域与 render_bottom_panel / terminal_view_region 几何一致
+        let term_region = if st.editor_mode.is_agent() && st.active_tab_is_terminal() {
+            Some(st.terminal_view_region(&layout))
+        } else if !st.editor_mode.is_agent()
+            && layout.bottom_panel_visible
+            && st.terminal.bottom_panel_tab == crate::editor::BottomPanelTab::Terminal
+        {
+            Some(layout.bottom_panel_region())
+        } else {
+            None
+        };
+        if let Some(tr) = term_region {
+            if tr.contains(mouse_x, mouse_y) {
+                return if mouse_y < tr.y + crate::render::TERMINAL_CONTENT_TOP {
+                    CursorType::Hand
+                } else {
+                    CursorType::IBeam
+                };
+            }
+        }
+
         // 12. 编辑器内容区
         if editor_content.contains(mouse_x, mouse_y) {
-            // 欢迎页/空占位页：非文本区域 → Arrow（欢迎页可点项已在步骤 2 返回 Hand）
-            if st.show_welcome() || st.show_empty_placeholder() {
+            // 欢迎页/新标签页：非文本区域 → Arrow（可点项已在步骤 2/11b 返回 Hand）
+            if st.show_welcome() || st.ntp_active() {
                 return CursorType::Arrow;
             }
             // 设置页：仅文本输入字段 → IBeam（Provider 为下拉选择，保持 Arrow）

@@ -16,8 +16,6 @@ pub enum SettingsField {
     SystemPrompt,
     /// 停止序列（逗号分隔，开发者参数）
     Stop,
-    /// top_logprobs 候选数（0-20，开发者参数）
-    TopLogprobs,
     /// 业务侧用户标识（开发者参数）
     UserId,
 }
@@ -125,7 +123,6 @@ pub struct ModelConfig {
     pub name: String,
     pub display_name: String,
     pub provider: String,
-    pub description: String,
     pub enabled: bool,
     // 多模型：完整配置字段
     pub api_key: String,
@@ -147,12 +144,6 @@ pub struct ModelConfig {
     pub stop: String,
     /// 响应格式（"text"/"json_object"）
     pub response_format: String,
-    /// 流式用量统计开关
-    pub include_usage: bool,
-    /// logprobs 调试开关
-    pub logprobs: bool,
-    /// top_logprobs 候选数（0-20，空=不下发）
-    pub top_logprobs: String,
     /// 业务侧用户标识（空=不下发）
     pub user_id: String,
 }
@@ -163,107 +154,99 @@ impl ModelConfig {
         AiModelProfile {
             id: self.id.clone(),
             display_name: self.display_name.clone(),
-            provider: self.provider.clone(),
-            api_key: self.api_key.clone(),
-            base_url: if self.base_url.is_empty() {
-                None
-            } else {
-                Some(self.base_url.clone())
-            },
-            model: self.name.clone(),
-            temperature: self.temperature.trim().parse().ok(),
-            top_p: self.top_p.trim().parse().ok(),
-            max_tokens: self.max_tokens.trim().parse().ok(),
-            max_input_tokens: self.max_input_tokens.trim().parse().ok(),
-            system_prompt: if self.system_prompt.is_empty() {
-                None
-            } else {
-                Some(self.system_prompt.clone())
-            },
             enabled: self.enabled,
-            thinking: Some(self.thinking),
-            reasoning_effort: if self.reasoning_effort.is_empty() {
-                None
-            } else {
-                Some(self.reasoning_effort.clone())
-            },
-            frequency_penalty: self.frequency_penalty.trim().parse().ok(),
-            presence_penalty: self.presence_penalty.trim().parse().ok(),
-            stop: parse_stop_sequences(&self.stop),
-            response_format: if self.response_format == "json_object" {
-                Some("json_object".to_string())
-            } else {
-                None
-            },
-            include_usage: if self.include_usage { Some(true) } else { None },
-            logprobs: if self.logprobs { Some(true) } else { None },
-            top_logprobs: if self.logprobs {
-                self.top_logprobs.trim().parse().ok()
-            } else {
-                None
-            },
-            user_id: if self.user_id.trim().is_empty() {
-                None
-            } else {
-                Some(self.user_id.trim().to_string())
+            settings: AiSettings {
+                provider: self.provider.clone(),
+                api_key: self.api_key.clone(),
+                base_url: if self.base_url.is_empty() {
+                    None
+                } else {
+                    Some(self.base_url.clone())
+                },
+                model: self.name.clone(),
+                temperature: self.temperature.trim().parse().ok(),
+                top_p: self.top_p.trim().parse().ok(),
+                max_tokens: self.max_tokens.trim().parse().ok(),
+                max_input_tokens: self.max_input_tokens.trim().parse().ok(),
+                system_prompt: if self.system_prompt.is_empty() {
+                    None
+                } else {
+                    Some(self.system_prompt.clone())
+                },
+                thinking: Some(self.thinking),
+                reasoning_effort: if self.reasoning_effort.is_empty() {
+                    None
+                } else {
+                    Some(self.reasoning_effort.clone())
+                },
+                frequency_penalty: self.frequency_penalty.trim().parse().ok(),
+                presence_penalty: self.presence_penalty.trim().parse().ok(),
+                stop: parse_stop_sequences(&self.stop),
+                response_format: if self.response_format == "json_object" {
+                    Some("json_object".to_string())
+                } else {
+                    None
+                },
+                user_id: if self.user_id.trim().is_empty() {
+                    None
+                } else {
+                    Some(self.user_id.trim().to_string())
+                },
             },
         }
     }
 
     /// 从持久化的 AiModelProfile 构造
     pub fn from_profile(p: &AiModelProfile) -> Self {
+        let s = &p.settings;
         Self {
             id: p.id.clone(),
-            name: p.model.clone(),
+            name: s.model.clone(),
             display_name: if p.display_name.is_empty() {
-                p.model.clone()
+                s.model.clone()
             } else {
                 p.display_name.clone()
             },
-            provider: p.provider.clone(),
-            description: String::new(),
+            provider: s.provider.clone(),
             enabled: p.enabled,
-            api_key: p.api_key.clone(),
-            base_url: p.base_url.clone().unwrap_or_default(),
-            temperature: p
+            api_key: s.api_key.clone(),
+            base_url: s.base_url.clone().unwrap_or_default(),
+            temperature: s
                 .temperature
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "0.7".to_string()),
-            top_p: p
+            top_p: s
                 .top_p
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "1.0".to_string()),
-            max_tokens: p
+            max_tokens: s
                 .max_tokens
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| "8192".to_string()),
-            max_input_tokens: p
+            max_input_tokens: s
                 .max_input_tokens
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| "24000".to_string()),
-            system_prompt: p.system_prompt.clone().unwrap_or_default(),
-            thinking: p.thinking.unwrap_or(true),
-            reasoning_effort: p
+            system_prompt: s.system_prompt.clone().unwrap_or_default(),
+            thinking: s.thinking.unwrap_or(true),
+            reasoning_effort: s
                 .reasoning_effort
                 .clone()
                 .unwrap_or_else(|| "high".to_string()),
-            frequency_penalty: p
+            frequency_penalty: s
                 .frequency_penalty
                 .map(|v| format!("{:.1}", v))
                 .unwrap_or_else(|| "0.0".to_string()),
-            presence_penalty: p
+            presence_penalty: s
                 .presence_penalty
                 .map(|v| format!("{:.1}", v))
                 .unwrap_or_else(|| "0.0".to_string()),
-            stop: p.stop.as_ref().map(|s| s.join(", ")).unwrap_or_default(),
-            response_format: p
+            stop: s.stop.as_ref().map(|sq| sq.join(", ")).unwrap_or_default(),
+            response_format: s
                 .response_format
                 .clone()
                 .unwrap_or_else(|| "text".to_string()),
-            include_usage: p.include_usage.unwrap_or(false),
-            logprobs: p.logprobs.unwrap_or(false),
-            top_logprobs: p.top_logprobs.map(|n| n.to_string()).unwrap_or_default(),
-            user_id: p.user_id.clone().unwrap_or_default(),
+            user_id: s.user_id.clone().unwrap_or_default(),
         }
     }
 }
@@ -399,22 +382,14 @@ pub struct SettingsPanel {
     pub response_format_regions: Vec<(&'static str, f32, f32, f32, f32)>,
     /// 响应格式分段悬停态
     pub hover_response_format: Option<&'static str>,
-    /// 流式用量统计开关
-    pub include_usage: bool,
-    /// 流式用量统计开关命中区
-    pub include_usage_toggle_region: Option<(f32, f32, f32, f32)>,
-    /// logprobs 调试开关
-    pub logprobs: bool,
-    /// logprobs 开关命中区
-    pub logprobs_toggle_region: Option<(f32, f32, f32, f32)>,
-    /// top_logprobs 候选数（0-20，字符串编辑态，空=不下发）
-    pub top_logprobs: String,
     /// 业务侧用户标识（空=不下发）
     pub user_id: String,
     /// 打开设置面板时的 AI 配置快照，用于"未保存更改"检测
     pub baseline_ai: Option<AiSettings>,
     /// 外观页：最大化时显示任务栏开关命中区
     pub taskbar_toggle_region: Option<(f32, f32, f32, f32)>,
+    /// 通用页：默认启动模式行命中区（点击切换 开发者/智能体，持久化后重启生效）
+    pub default_mode_toggle_region: Option<(f32, f32, f32, f32)>,
 }
 
 impl SettingsPanel {
@@ -490,45 +465,40 @@ impl SettingsPanel {
             response_format: "text".to_string(),
             response_format_regions: Vec::new(),
             hover_response_format: None,
-            include_usage: false,
-            include_usage_toggle_region: None,
-            logprobs: false,
-            logprobs_toggle_region: None,
-            top_logprobs: String::new(),
             user_id: String::new(),
             baseline_ai: None,
             taskbar_toggle_region: None,
+            default_mode_toggle_region: None,
         }
     }
 
     pub fn from_settings(settings: &AppSettings) -> Self {
+        // 旧 ai 已转为迁移专用：初始字段一律取激活模型配置（无模型时为空默认值，
+        // 后续 apply_settings 会按模型列表重新加载）
+        let ai = settings.active_ai_settings();
         Self {
-            provider: settings.ai.provider.clone(),
-            api_key: settings.ai.api_key.clone(),
-            base_url: settings.ai.base_url.clone().unwrap_or_default(),
-            model: settings.ai.model.clone(),
+            provider: ai.provider.clone(),
+            api_key: ai.api_key.clone(),
+            base_url: ai.base_url.clone().unwrap_or_default(),
+            model: ai.model.clone(),
             display_name: String::new(),
-            temperature: settings
-                .ai
+            temperature: ai
                 .temperature
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "0.7".to_string()),
-            top_p: settings
-                .ai
+            top_p: ai
                 .top_p
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "1.0".to_string()),
-            max_tokens: settings
-                .ai
+            max_tokens: ai
                 .max_tokens
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| "8192".to_string()),
-            max_input_tokens: settings
-                .ai
+            max_input_tokens: ai
                 .max_input_tokens
                 .map(|m| m.to_string())
                 .unwrap_or_else(|| "24000".to_string()),
-            system_prompt: settings.ai.system_prompt.clone().unwrap_or_default(),
+            system_prompt: ai.system_prompt.clone().unwrap_or_default(),
             active_field: None,
             hover_button: None,
             test_status: String::new(),
@@ -571,11 +541,10 @@ impl SettingsPanel {
             temp_slider_dragging: false,
             top_p_slider_region: None,
             top_p_slider_dragging: false,
-            thinking: settings.ai.thinking.unwrap_or(true),
+            thinking: ai.thinking.unwrap_or(true),
             thinking_toggle_region: None,
             hover_thinking_toggle: false,
-            reasoning_effort: settings
-                .ai
+            reasoning_effort: ai
                 .reasoning_effort
                 .clone()
                 .unwrap_or_else(|| "high".to_string()),
@@ -583,45 +552,29 @@ impl SettingsPanel {
             hover_effort: None,
             dev_params_expanded: false,
             dev_params_toggle_region: None,
-            frequency_penalty: settings
-                .ai
+            frequency_penalty: ai
                 .frequency_penalty
                 .map(|v| format!("{:.1}", v))
                 .unwrap_or_else(|| "0.0".to_string()),
             freq_slider_region: None,
             freq_slider_dragging: false,
-            presence_penalty: settings
-                .ai
+            presence_penalty: ai
                 .presence_penalty
                 .map(|v| format!("{:.1}", v))
                 .unwrap_or_else(|| "0.0".to_string()),
             pres_slider_region: None,
             pres_slider_dragging: false,
-            stop: settings
-                .ai
-                .stop
-                .as_ref()
-                .map(|s| s.join(", "))
-                .unwrap_or_default(),
-            response_format: settings
-                .ai
+            stop: ai.stop.as_ref().map(|s| s.join(", ")).unwrap_or_default(),
+            response_format: ai
                 .response_format
                 .clone()
                 .unwrap_or_else(|| "text".to_string()),
             response_format_regions: Vec::new(),
             hover_response_format: None,
-            include_usage: settings.ai.include_usage.unwrap_or(false),
-            include_usage_toggle_region: None,
-            logprobs: settings.ai.logprobs.unwrap_or(false),
-            logprobs_toggle_region: None,
-            top_logprobs: settings
-                .ai
-                .top_logprobs
-                .map(|n| n.to_string())
-                .unwrap_or_default(),
-            user_id: settings.ai.user_id.clone().unwrap_or_default(),
+            user_id: ai.user_id.clone().unwrap_or_default(),
             baseline_ai: None,
             taskbar_toggle_region: None,
+            default_mode_toggle_region: None,
         }
     }
 
@@ -658,13 +611,6 @@ impl SettingsPanel {
             } else {
                 None
             },
-            include_usage: if self.include_usage { Some(true) } else { None },
-            logprobs: if self.logprobs { Some(true) } else { None },
-            top_logprobs: if self.logprobs {
-                self.top_logprobs.trim().parse().ok()
-            } else {
-                None
-            },
             user_id: if self.user_id.trim().is_empty() {
                 None
             } else {
@@ -687,8 +633,9 @@ impl SettingsPanel {
             .clone()
             .filter(|id| self.models.iter().any(|m| &m.id == id))
             .or_else(|| self.models.first().map(|m| m.id.clone()));
-        // 加载激活模型（或回退旧单一配置）到 AI 页字段
-        self.load_active_model_fields(&settings.ai);
+        // 加载激活模型到 AI 页字段（无模型时回退激活配置，迁移后通常为空默认）
+        let fallback = settings.active_ai_settings();
+        self.load_active_model_fields(&fallback);
         // 记录打开时的快照，作为未保存更改检测的基准
         self.baseline_ai = Some(self.to_ai_settings());
     }
@@ -717,9 +664,6 @@ impl SettingsPanel {
             self.presence_penalty = m.presence_penalty;
             self.stop = m.stop;
             self.response_format = m.response_format;
-            self.include_usage = m.include_usage;
-            self.logprobs = m.logprobs;
-            self.top_logprobs = m.top_logprobs;
             self.user_id = m.user_id;
         } else {
             self.provider = fallback_ai.provider.clone();
@@ -766,12 +710,6 @@ impl SettingsPanel {
                 .response_format
                 .clone()
                 .unwrap_or_else(|| "text".to_string());
-            self.include_usage = fallback_ai.include_usage.unwrap_or(false);
-            self.logprobs = fallback_ai.logprobs.unwrap_or(false);
-            self.top_logprobs = fallback_ai
-                .top_logprobs
-                .map(|n| n.to_string())
-                .unwrap_or_default();
             self.user_id = fallback_ai.user_id.clone().unwrap_or_default();
         }
     }
@@ -799,7 +737,6 @@ impl SettingsPanel {
                 name: String::new(),
                 display_name: String::new(),
                 provider: "deepseek".to_string(),
-                description: String::new(),
                 enabled: true,
                 api_key: String::new(),
                 base_url: String::new(),
@@ -814,9 +751,6 @@ impl SettingsPanel {
                 presence_penalty: "0.0".to_string(),
                 stop: String::new(),
                 response_format: "text".to_string(),
-                include_usage: false,
-                logprobs: false,
-                top_logprobs: String::new(),
                 user_id: String::new(),
             });
             self.active_model_id = Some(new_id);
@@ -837,9 +771,6 @@ impl SettingsPanel {
         let presence_penalty = self.presence_penalty.clone();
         let stop = self.stop.clone();
         let response_format = self.response_format.clone();
-        let include_usage = self.include_usage;
-        let logprobs = self.logprobs;
-        let top_logprobs = self.top_logprobs.clone();
         let user_id = self.user_id.clone();
         if let Some(id) = self.active_model_id.clone() {
             if let Some(m) = self.models.iter_mut().find(|m| m.id == id) {
@@ -858,9 +789,6 @@ impl SettingsPanel {
                 m.presence_penalty = presence_penalty;
                 m.stop = stop;
                 m.response_format = response_format;
-                m.include_usage = include_usage;
-                m.logprobs = logprobs;
-                m.top_logprobs = top_logprobs;
                 m.user_id = user_id;
                 // 用户自定义名称优先；为空时回退为模型 ID
                 if !display_name.is_empty() {
@@ -892,7 +820,6 @@ impl SettingsPanel {
             name: String::new(),
             display_name: "新模型".to_string(),
             provider: "deepseek".to_string(),
-            description: String::new(),
             enabled: true,
             api_key: String::new(),
             base_url: "https://api.deepseek.com/v1".to_string(),
@@ -907,9 +834,6 @@ impl SettingsPanel {
             presence_penalty: "0.0".to_string(),
             stop: String::new(),
             response_format: "text".to_string(),
-            include_usage: false,
-            logprobs: false,
-            top_logprobs: String::new(),
             user_id: String::new(),
         });
         self.active_model_id = Some(id.clone());
@@ -955,9 +879,6 @@ impl SettingsPanel {
         self.presence_penalty = "0.0".to_string();
         self.stop = String::new();
         self.response_format = "text".to_string();
-        self.include_usage = false;
-        self.logprobs = false;
-        self.top_logprobs = String::new();
         self.user_id = String::new();
     }
 
@@ -984,6 +905,12 @@ impl SettingsPanel {
         "新模型".to_string()
     }
 
+    /// 内嵌表单是否处于「添加模型」模式（草稿态，未关联已有模型）；
+    /// false 表示编辑已有模型（active_model_id 指向列表中的模型）
+    pub fn is_adding_model(&self) -> bool {
+        self.active_model_id.is_none()
+    }
+
     pub fn clear_regions(&mut self) {
         self.field_regions.clear();
         self.button_regions.clear();
@@ -1000,8 +927,6 @@ impl SettingsPanel {
         self.freq_slider_region = None;
         self.pres_slider_region = None;
         self.response_format_regions.clear();
-        self.include_usage_toggle_region = None;
-        self.logprobs_toggle_region = None;
     }
 
     pub fn add_field_region(&mut self, field: SettingsField, x: f32, y: f32, w: f32, h: f32) {
@@ -1014,6 +939,17 @@ impl SettingsPanel {
 
     pub fn add_tab_region(&mut self, tab: SettingsTab, x: f32, y: f32, w: f32, h: f32) {
         self.tab_regions.push((tab, x, y, w, h));
+        // 同步注册语义命中区，供测试框架/辅助点击按名称定位（如 settings_tab:general）
+        let name = match tab {
+            SettingsTab::General => "general",
+            SettingsTab::Ai => "ai",
+            SettingsTab::Appearance => "appearance",
+            SettingsTab::Remote => "remote",
+            SettingsTab::Models => "models",
+            SettingsTab::Playbook => "playbook",
+            SettingsTab::Update => "update",
+        };
+        crate::hit_test::register_hit_region(format!("settings_tab:{}", name), x, y, w, h);
     }
 
     /// 命中检测：标签页
@@ -1057,7 +993,6 @@ impl SettingsPanel {
                 SettingsField::MaxInputTokens => self.max_input_tokens.push(ch),
                 SettingsField::SystemPrompt => self.system_prompt.push(ch),
                 SettingsField::Stop => self.stop.push(ch),
-                SettingsField::TopLogprobs => self.top_logprobs.push(ch),
                 SettingsField::UserId => self.user_id.push(ch),
             }
         }
@@ -1077,7 +1012,6 @@ impl SettingsPanel {
                 SettingsField::MaxInputTokens => self.max_input_tokens.push_str(text),
                 SettingsField::SystemPrompt => self.system_prompt.push_str(text),
                 SettingsField::Stop => self.stop.push_str(text),
-                SettingsField::TopLogprobs => self.top_logprobs.push_str(text),
                 SettingsField::UserId => self.user_id.push_str(text),
             }
         }
@@ -1117,9 +1051,6 @@ impl SettingsPanel {
                 SettingsField::Stop => {
                     self.stop.pop();
                 }
-                SettingsField::TopLogprobs => {
-                    self.top_logprobs.pop();
-                }
                 SettingsField::UserId => {
                     self.user_id.pop();
                 }
@@ -1141,7 +1072,6 @@ impl SettingsPanel {
                 SettingsField::MaxInputTokens => self.max_input_tokens.clear(),
                 SettingsField::SystemPrompt => self.system_prompt.clear(),
                 SettingsField::Stop => self.stop.clear(),
-                SettingsField::TopLogprobs => self.top_logprobs.clear(),
                 SettingsField::UserId => self.user_id.clear(),
             }
         }
@@ -1164,9 +1094,6 @@ impl SettingsPanel {
         // 开发者参数区展开时，其文本字段加入 Tab 循环
         if self.dev_params_expanded {
             fields.push(SettingsField::Stop);
-            if self.logprobs {
-                fields.push(SettingsField::TopLogprobs);
-            }
             fields.push(SettingsField::UserId);
         }
         fields
@@ -1231,12 +1158,6 @@ impl SettingsPanel {
     /// 存在惩罚是否合法（-2.0 ~ 2.0）
     pub fn presence_penalty_valid(&self) -> bool {
         matches!(self.presence_penalty.trim().parse::<f32>(), Ok(v) if (-2.0..=2.0).contains(&v))
-    }
-
-    /// top_logprobs 是否合法（空=不下发，或 0-20 的整数）
-    pub fn top_logprobs_valid(&self) -> bool {
-        let t = self.top_logprobs.trim();
-        t.is_empty() || matches!(t.parse::<u32>(), Ok(v) if v <= 20)
     }
 
     /// Max Tokens 是否合法（1..=1_000_000 的正整数）
@@ -1361,24 +1282,6 @@ impl SettingsPanel {
     /// 命中：开发者参数区标题（展开/折叠）
     pub fn hit_test_dev_params_toggle(&self, x: f32, y: f32) -> bool {
         if let Some((rx, ry, rw, rh)) = self.dev_params_toggle_region {
-            x >= rx && x < rx + rw && y >= ry && y < ry + rh
-        } else {
-            false
-        }
-    }
-
-    /// 命中：流式用量统计开关
-    pub fn hit_test_include_usage_toggle(&self, x: f32, y: f32) -> bool {
-        if let Some((rx, ry, rw, rh)) = self.include_usage_toggle_region {
-            x >= rx && x < rx + rw && y >= ry && y < ry + rh
-        } else {
-            false
-        }
-    }
-
-    /// 命中：logprobs 调试开关
-    pub fn hit_test_logprobs_toggle(&self, x: f32, y: f32) -> bool {
-        if let Some((rx, ry, rw, rh)) = self.logprobs_toggle_region {
             x >= rx && x < rx + rw && y >= ry && y < ry + rh
         } else {
             false

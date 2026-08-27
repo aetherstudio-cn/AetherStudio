@@ -319,7 +319,11 @@ impl EditorState {
                 bottom: cy + card_h,
             };
             target.FillRectangle(&accent_rect, &accent_brush);
-            let info_text = "配置 API 密钥后，AI 助手可在 Agent 模式下新建、修改、删除文件。点击「保存」时会自动验证密钥有效性并保存；新建的模型只有点击「保存」后才会真正保存。";
+            let info_text = if self.ui.settings_panel.is_adding_model() {
+                "配置 API 密钥后，AI 助手可在 Agent 模式下新建、修改、删除文件。点击「保存」时会自动验证密钥有效性并保存；新建的模型只有点击「保存」后才会真正保存。"
+            } else {
+                "配置 API 密钥后，AI 助手可在 Agent 模式下新建、修改、删除文件。点击「保存」时会自动验证密钥有效性，并将更改写入当前模型。"
+            };
             let info_color = color_f(0.72, 0.74, 0.78, 1.0);
             let info_brush = self
                 .win
@@ -344,11 +348,15 @@ impl EditorState {
             );
             cy += card_h + gap;
 
-            // 当前编辑模型指示（AI 页编辑的是当前激活模型；在「模型」页可切换/新建）
-            let model_hint = format!(
-                "正在编辑：{}",
-                self.ui.settings_panel.active_model_display()
-            );
+            // 当前编辑模型指示（添加模式显示草稿提示；编辑模式显示目标模型名）
+            let model_hint = if self.ui.settings_panel.is_adding_model() {
+                "正在添加：新模型".to_string()
+            } else {
+                format!(
+                    "正在编辑：{}",
+                    self.ui.settings_panel.active_model_display()
+                )
+            };
             let hint_wide: Vec<u16> = model_hint.encode_utf16().chain(Some(0)).collect();
             let hint_color = color_f(0.60, 0.78, 0.95, 1.0);
             let hint_brush = self
@@ -1626,58 +1634,6 @@ impl EditorState {
                         .push((val, seg_x, cy, fmt_seg_w, fmt_seg_h));
                 }
                 cy += fmt_seg_h + gap;
-
-                // logprobs 调试开关
-                let logprobs_on = self.ui.settings_panel.logprobs;
-                let logprobs_region = self.render_pill_switch(
-                    target,
-                    x + margin,
-                    cy,
-                    logprobs_on,
-                    "logprobs  返回输出 token 概率（调试用）",
-                    &label_format,
-                    text_brush,
-                );
-                self.ui.settings_panel.logprobs_toggle_region = Some(logprobs_region);
-                cy += 20.0 + gap;
-
-                // top_logprobs（仅 logprobs 开启时显示）
-                if logprobs_on {
-                    let top_lp_valid = self.ui.settings_panel.top_logprobs_valid();
-                    let top_lp_value = self.ui.settings_panel.top_logprobs.clone();
-                    let top_lp_bottom = self.render_dev_text_input(
-                        target,
-                        x,
-                        margin,
-                        input_w,
-                        label_h,
-                        input_h,
-                        cy,
-                        "top_logprobs（每位置候选 token 数 0-20，可选）",
-                        &top_lp_value,
-                        "（不下发）",
-                        crate::settings::SettingsField::TopLogprobs,
-                        top_lp_valid,
-                        &label_format,
-                        &input_format,
-                        text_brush,
-                    );
-                    cy = top_lp_bottom + gap;
-                }
-
-                // 流式用量统计开关
-                let usage_on = self.ui.settings_panel.include_usage;
-                let usage_region = self.render_pill_switch(
-                    target,
-                    x + margin,
-                    cy,
-                    usage_on,
-                    "流式用量统计  末尾返回 token 用量（stream_options）",
-                    &label_format,
-                    text_brush,
-                );
-                self.ui.settings_panel.include_usage_toggle_region = Some(usage_region);
-                cy += 20.0 + gap;
 
                 // 用户标识 user_id
                 let user_id_value = self.ui.settings_panel.user_id.clone();

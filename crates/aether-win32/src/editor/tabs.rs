@@ -26,10 +26,6 @@ impl EditorState {
     pub fn show_tab_bar(&self) -> bool {
         !self.editor.tab_bar.tabs.is_empty() && !self.active_tab_is_welcome()
     }
-    /// 是否显示空占位页（tabs 为空时的默认状态）
-    pub fn show_empty_placeholder(&self) -> bool {
-        self.editor.tab_bar.tabs.is_empty()
-    }
     /// 当前活动标签页是否是文件 tab
     pub fn active_tab_is_file(&self) -> bool {
         self.editor
@@ -65,6 +61,52 @@ impl EditorState {
             .get(self.editor.tab_bar.active_tab)
             .map(|t| t.is_sandbox_eval())
             .unwrap_or(false)
+    }
+    /// 当前活动标签页是否是终端 tab
+    pub fn active_tab_is_terminal(&self) -> bool {
+        self.editor
+            .tab_bar
+            .tabs
+            .get(self.editor.tab_bar.active_tab)
+            .map(|t| t.is_terminal())
+            .unwrap_or(false)
+    }
+    /// 当前活动标签页是否是浏览器 tab
+    pub fn active_tab_is_browser(&self) -> bool {
+        self.editor
+            .tab_bar
+            .tabs
+            .get(self.editor.tab_bar.active_tab)
+            .map(|t| t.is_browser())
+            .unwrap_or(false)
+    }
+    /// 当前活动标签页是否是新标签页（浏览器风格起始页）
+    pub fn active_tab_is_new_tab(&self) -> bool {
+        self.editor
+            .tab_bar
+            .tabs
+            .get(self.editor.tab_bar.active_tab)
+            .map(|t| t.is_new_tab())
+            .unwrap_or(false)
+    }
+    /// 新标签页交互区当前是否生效：
+    /// 经典模式要求活动标签为新标签页；智能体模式标签栏为空时右面板始终保留 NTP 区域
+    /// （渲染/点击/键盘/IME 共用，保证空标签场景行为一致）
+    pub fn ntp_active(&self) -> bool {
+        self.active_tab_is_new_tab()
+            || (self.editor_mode.is_agent() && self.editor.tab_bar.tabs.is_empty())
+    }
+    /// 打开项目后若标签栏为空则创建默认新标签页；
+    /// 无项目的新窗口显示欢迎页，不创建新标签页
+    pub fn ensure_default_new_tab(&mut self) {
+        if self.fs.current_folder.is_some() && self.editor.tab_bar.tabs.is_empty() {
+            self.editor
+                .tab_bar
+                .tabs
+                .push(crate::tabs::Tab::NewTab(true));
+            self.editor.tab_bar.active_tab = 0;
+            self.emit_event(crate::events::EditorEvent::TabChanged);
+        }
     }
     /// 当前活动文件标签页的文件路径
     pub fn active_file_path(&self) -> Option<&std::path::PathBuf> {
@@ -106,6 +148,54 @@ impl EditorState {
             .iter()
             .position(|t| t.is_sandbox_eval())
     }
+    /// 查找终端 tab 的索引
+    pub fn find_terminal_tab(&self) -> Option<usize> {
+        self.editor
+            .tab_bar
+            .tabs
+            .iter()
+            .position(|t| t.is_terminal())
+    }
+    /// 打开终端标签页（作为通用 tab 插入到标签栏）
+    pub fn open_terminal_tab(&mut self) {
+        if let Some(idx) = self.find_terminal_tab() {
+            self.switch_tab(idx);
+        } else {
+            // 保存当前文件 tab 的内容到 tabs[active_tab]（如果是文件 tab）
+            self.swap_tab_content(self.editor.tab_bar.active_tab);
+            self.editor.tab_bar.tabs.push(crate::tabs::Tab::Terminal);
+            self.editor.tab_bar.active_tab = self.editor.tab_bar.tabs.len() - 1;
+            // 终端 tab 无 content，self.editor.content 保持空即可
+            self.editor.content = crate::tabs::TabContent::new();
+            self.ai.ai_panel.input_focused = false;
+            self.ui.status_message = "已打开终端".to_string();
+            self.emit_event(crate::events::EditorEvent::TabChanged);
+            self.dismiss_default_new_tab();
+        }
+        // 确保终端已启动
+        if !self.terminal.terminal_panel.running {
+            let _ = self.terminal.terminal_panel.start();
+        }
+        self.terminal.terminal_panel.focused = true;
+    }
+    /// 智能体模式下终端仅在终端标签激活时可见；切换/关闭标签后若终端不可见，
+    /// 释放焦点并恢复 IME，避免低层钩子继续拦截 Backspace 等按键。
+    pub fn sync_terminal_focus_with_visibility(&mut self) {
+        if !self.editor_mode.is_agent() {
+            return;
+        }
+        let terminal_active = self
+            .editor
+            .tab_bar
+            .tabs
+            .get(self.editor.tab_bar.active_tab)
+            .map(|t| t.is_terminal())
+            .unwrap_or(false);
+        if !terminal_active && self.terminal.terminal_panel.focused {
+            self.terminal.terminal_panel.focused = false;
+            self.set_terminal_ime_bypass(false);
+        }
+    }
     /// 打开沙盒评测标签页（作为通用 tab 插入到标签栏）
     pub fn open_sandbox_eval_tab(&mut self) {
         if let Some(idx) = self.find_sandbox_eval_tab() {
@@ -120,7 +210,51 @@ impl EditorState {
             self.ai.ai_panel.input_focused = false;
             self.ui.status_message = "已打开智能体沙盒评测".to_string();
             self.emit_event(crate::events::EditorEvent::TabChanged);
+            self.dismiss_default_new_tab();
         }
+    }
+    /// 打开浏览器标签页（内嵌 WebView2，每次调用新开一个实例）
+    pub fn open_browser_tab(&mut self, url: &str) {
+        // 保存当前文件 tab 的内容到 tabs[active_tab]（如果是文件 tab）
+        self.swap_tab_content(self.editor.tab_bar.active_tab);
+        let id = self.browser.add_instance(url);
+        self.editor.tab_bar.tabs.push(crate::tabs::Tab::Browser(id));
+        self.editor.tab_bar.active_tab = self.editor.tab_bar.tabs.len() - 1;
+        // 浏览器 tab 无 content，self.editor.content 保持空即可
+        self.editor.content = crate::tabs::TabContent::new();
+        self.ai.ai_panel.input_focused = false;
+        // 异步初始化 WebView2 环境与控制器
+        self.browser.ensure_environment(self.win.hwnd);
+        self.browser.request_controller(id, self.win.hwnd);
+        self.ui.status_message = "已打开浏览器".to_string();
+        self.emit_event(crate::events::EditorEvent::TabChanged);
+        self.dismiss_default_new_tab();
+    }
+    /// 标签关闭操作后清理不再被任何标签引用的浏览器实例（销毁 WebView2 控制器）
+    pub fn cleanup_browser_instances(&mut self) {
+        self.browser.retain_referenced(&self.editor.tab_bar.tabs);
+    }
+    /// 默认新标签页是占位启动台：用户打开任何标签、或切换活动标签离开它后自动关闭
+    /// （+ 主动新建的新标签页不受影响）；默认新标签页自身为活动标签时不动作。
+    pub fn dismiss_default_new_tab(&mut self) {
+        let active = self.editor.tab_bar.active_tab;
+        let Some(pos) = self
+            .editor
+            .tab_bar
+            .tabs
+            .iter()
+            .position(|t| t.is_default_new_tab())
+        else {
+            return;
+        };
+        if pos == active {
+            return;
+        }
+        self.editor.tab_bar.tabs.remove(pos);
+        if active > pos {
+            self.editor.tab_bar.active_tab = active - 1;
+        }
+        self.emit_event(crate::events::EditorEvent::TabChanged);
     }
     /// 切换到指定标签页
     pub fn switch_tab(&mut self, index: usize) {
@@ -130,6 +264,11 @@ impl EditorState {
             self.editor.tab_bar.active_tab = index;
             self.swap_tab_content(self.editor.tab_bar.active_tab);
             self.editor.is_selecting = false;
+            self.sync_terminal_focus_with_visibility();
+            // 快捷搜索框仅在无标签的空状态可见，切换标签后释放焦点，防止键盘路由泄漏
+            if self.browser.empty_search_focused {
+                self.browser.reset_empty_search();
+            }
 
             // 无感切换优化：预先计算新标签页的可见范围并更新缓存签名，
             // 避免切换后第一帧因签名不匹配而强制重建缓存。
@@ -190,6 +329,8 @@ impl EditorState {
             let title = self.editor.tab_bar.tabs[self.editor.tab_bar.active_tab].title();
             self.ui.status_message = format!("切换到: {}", title);
             self.emit_event(crate::events::EditorEvent::TabChanged);
+            // 离开默认新标签页后自动关闭它（启动台占位使命完成）
+            self.dismiss_default_new_tab();
             // 显式标记局部脏区域，避免标签切换触发全窗口重绘导致卡顿
             let editor_region = self.ui.layout.editor_region();
             let tab_region = self.ui.layout.tab_bar_region(self.show_tab_bar());
@@ -230,7 +371,7 @@ impl EditorState {
     /// 关闭当前标签页，返回是否还有标签页
     pub fn close_current_tab(&mut self) -> bool {
         if self.editor.tab_bar.tabs.len() <= 1 {
-            // 最后一个标签页：保存内容并清空 tabs（渲染层根据 tabs.is_empty() 显示欢迎页/空占位页）
+            // 最后一个标签页：保存内容后重建为单个新标签页（与启动状态一致，标签栏永不消失）
             // 文件 tab 才需要保存 last_closed_tab；设置/欢迎等不保存
             if self.active_tab_is_file() {
                 self.editor.tab_bar.last_closed_tab = Some(std::mem::replace(
@@ -239,8 +380,17 @@ impl EditorState {
                 ));
             }
             self.editor.tab_bar.tabs.clear();
+            // 有项目：重建默认新标签页；无项目：回到欢迎页（空标签栏）
+            if self.fs.current_folder.is_some() {
+                self.editor
+                    .tab_bar
+                    .tabs
+                    .push(crate::tabs::Tab::NewTab(true));
+            }
             self.editor.tab_bar.active_tab = 0;
             self.editor.is_selecting = false;
+            self.cleanup_browser_instances();
+            self.sync_terminal_focus_with_visibility();
             self.ui.status_message = "已关闭".to_string();
             return true;
         }
@@ -264,6 +414,8 @@ impl EditorState {
         // swap 后文件 tabs[active_tab].content 持有空 TabContent（安全，不会被误匹配路径）
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         self.editor.is_selecting = false;
+        self.cleanup_browser_instances();
+        self.sync_terminal_focus_with_visibility();
         self.ui.status_message =
             format!("已关闭，剩余 {} 个标签页", self.editor.tab_bar.tabs.len());
         !self.editor.tab_bar.tabs.is_empty()
@@ -339,6 +491,8 @@ impl EditorState {
         if index < self.editor.tab_bar.active_tab {
             self.editor.tab_bar.active_tab -= 1;
         }
+        self.cleanup_browser_instances();
+        self.sync_terminal_focus_with_visibility();
         self.ui.status_message =
             format!("已关闭，剩余 {} 个标签页", self.editor.tab_bar.tabs.len());
         true
@@ -372,6 +526,8 @@ impl EditorState {
             self.editor.content = TabContent::new();
         }
         self.editor.is_selecting = false;
+        self.cleanup_browser_instances();
+        self.sync_terminal_focus_with_visibility();
         self.ui.status_message = "已关闭其他标签页".to_string();
         true
     }
@@ -413,9 +569,11 @@ impl EditorState {
             "已关闭右侧标签页，剩余 {} 个标签页",
             self.editor.tab_bar.tabs.len()
         );
+        self.cleanup_browser_instances();
+        self.sync_terminal_focus_with_visibility();
         true
     }
-    /// SubTask 9.4: 关闭所有标签页，并创建一个新的空标签页。
+    /// SubTask 9.4: 关闭所有标签页，并创建一个新的新标签页。
     pub fn close_all_tabs(&mut self) {
         // 保存 self.editor.content 中的最新内容（文件 tab 才需要）以支持 Ctrl+Shift+T 恢复
         if self.active_tab_is_file() {
@@ -425,11 +583,19 @@ impl EditorState {
             ));
         }
         self.editor.tab_bar.tabs.clear();
-        self.editor.tab_bar.tabs.push(Tab::new());
+        // 有项目：重建默认新标签页；无项目：回到欢迎页（空标签栏）
+        if self.fs.current_folder.is_some() {
+            self.editor
+                .tab_bar
+                .tabs
+                .push(crate::tabs::Tab::NewTab(true));
+        }
         self.editor.tab_bar.active_tab = 0;
-        // self.editor.content 已空，tabs[0] 也是空，swap 保持架构一致
+        // self.editor.content 已空，NewTab 无内容，swap 是 no-op，保持架构一致
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         self.editor.is_selecting = false;
+        self.cleanup_browser_instances();
+        self.sync_terminal_focus_with_visibility();
         self.ui.status_message = "已关闭所有标签页".to_string();
     }
     /// Task 13.3: 恢复最后关闭的标签页（Ctrl+Shift+T）。
@@ -449,11 +615,24 @@ impl EditorState {
         self.editor.tab_bar.active_tab = self.editor.tab_bar.tabs.len() - 1;
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         self.editor.is_selecting = false;
+        self.dismiss_default_new_tab();
         self.ui.status_message = "已恢复最后关闭的标签".to_string();
         true
     }
-    /// 新建标签页
+    /// 新建标签页（新标签页/浏览器风格起始页，标签栏 + 按钮的行为）
     pub fn new_tab(&mut self) -> usize {
+        // REQ-P1-09: save current state to old tab, push new (empty) tab, swap it in
+        self.swap_tab_content(self.editor.tab_bar.active_tab);
+        let tab = crate::tabs::Tab::NewTab(false);
+        self.editor.tab_bar.tabs.push(tab);
+        self.editor.tab_bar.active_tab = self.editor.tab_bar.tabs.len() - 1;
+        self.swap_tab_content(self.editor.tab_bar.active_tab);
+        self.editor.is_selecting = false;
+        self.dismiss_default_new_tab();
+        self.editor.tab_bar.active_tab
+    }
+    /// 新建文件标签页（原 + 按钮行为：新建空白文件；现为新标签页上的"新建文件"按钮）
+    pub fn new_file_tab(&mut self) -> usize {
         // REQ-P1-09: save current state to old tab, push new (empty) tab, swap it in
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         let tab = Tab::new();
@@ -461,6 +640,7 @@ impl EditorState {
         self.editor.tab_bar.active_tab = self.editor.tab_bar.tabs.len() - 1;
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         self.editor.is_selecting = false;
+        self.dismiss_default_new_tab();
         self.editor.tab_bar.active_tab
     }
     /// 切换到下一个标签页
@@ -526,7 +706,7 @@ impl EditorState {
         false
     }
     /// 更新鼠标悬停标签
-    pub fn update_hover_tab(&mut self, mouse_x: f32, mouse_y: f32, editor_x: f32) {
+    pub fn update_hover_tab(&mut self, mouse_x: f32, mouse_y: f32, editor_x: f32, tab_y: f32) {
         // P3-2: 使用 layout 常量而非硬编码 30.0
         let tab_bar_height = if self.show_tab_bar() {
             TAB_BAR_HEIGHT
@@ -539,7 +719,10 @@ impl EditorState {
             on_plus = mouse_x >= pl && mouse_x < pr && mouse_y >= pt && mouse_y < pb;
         }
         self.editor.tab_bar.plus_button_hover = on_plus;
-        if tab_bar_height == 0.0 || mouse_y < 0.0 || mouse_y > tab_bar_height || mouse_x < editor_x
+        if tab_bar_height == 0.0
+            || mouse_y < tab_y
+            || mouse_y >= tab_y + tab_bar_height
+            || mouse_x < editor_x
         {
             self.editor.tab_bar.hover_tab = None;
             return;
@@ -552,6 +735,76 @@ impl EditorState {
             }
         }
         self.editor.tab_bar.hover_tab = None;
+    }
+    /// 标签栏实际渲染区域：智能体模式下位于右侧面板顶部，开发者模式下位于编辑器区域顶部。
+    ///
+    /// 所有标签栏交互（点击/悬停/滚轮/拖拽）必须基于该区域计算坐标，
+    /// 否则智能体模式下点击位置与渲染位置不一致。
+    pub fn effective_tab_bar_region(&self) -> crate::layout::Region {
+        let show = self.show_tab_bar();
+        if self.editor_mode.is_agent() && self.ui.layout.right_panel_visible {
+            let rp = self.ui.layout.right_panel_region();
+            let h = if show { TAB_BAR_HEIGHT } else { 0.0 };
+            crate::layout::Region::new(rp.x, rp.y, rp.width, h)
+        } else {
+            self.ui.layout.tab_bar_region(show)
+        }
+    }
+    /// 设置页渲染区域：经典模式占据编辑器区域，智能体模式占据右面板内容区（标签栏下方）。
+    ///
+    /// 设置页的点击/悬停命中必须以该区域为门槛，与 render_agent_right_panel 的
+    /// 内容区几何保持一致，否则智能体模式下设置页交互会失效。
+    pub fn settings_page_region(
+        &self,
+        layout: &crate::layout::LayoutManager,
+    ) -> crate::layout::Region {
+        if self.editor_mode.is_agent() {
+            let rp = layout.right_panel_region();
+            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+                0.0
+            } else {
+                TAB_BAR_HEIGHT
+            };
+            crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+        } else {
+            layout.editor_region()
+        }
+    }
+    /// 新标签页（NTP）内容区域：经典模式占据编辑器内容区（标签栏下方），
+    /// 智能体模式占据右面板内容区（标签栏下方）。渲染/点击/光标/IME 共用。
+    pub fn new_tab_page_region(
+        &self,
+        layout: &crate::layout::LayoutManager,
+    ) -> crate::layout::Region {
+        if self.editor_mode.is_agent() {
+            let rp = layout.right_panel_region();
+            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+                0.0
+            } else {
+                TAB_BAR_HEIGHT
+            };
+            crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+        } else {
+            layout.editor_content_region(self.show_tab_bar())
+        }
+    }
+    /// 终端视图区域：智能体模式为右面板内容区（标签栏下方），经典模式为底部面板区。
+    /// 渲染/IME 定位/光标共用，保证坐标一致。
+    pub fn terminal_view_region(
+        &self,
+        layout: &crate::layout::LayoutManager,
+    ) -> crate::layout::Region {
+        if self.editor_mode.is_agent() {
+            let rp = layout.right_panel_region();
+            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+                0.0
+            } else {
+                TAB_BAR_HEIGHT
+            };
+            crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+        } else {
+            layout.bottom_panel_region()
+        }
     }
     /// Task 8.2: 命中检测——返回鼠标所在标签体的索引。
     ///
@@ -674,6 +927,10 @@ impl EditorState {
 
     /// 打开设置标签页（作为通用 tab 插入到标签栏）
     pub fn open_settings_tab(&mut self) {
+        // 智能体模式：标签页内容渲染在右侧面板，需确保其可见（弹窗方式已取消）
+        if self.editor_mode.is_agent() && !self.ui.layout.right_panel_visible {
+            self.ui.layout.toggle_right_panel();
+        }
         self.ui.settings_panel.apply_settings(&self.ui.app_settings);
         if let Some(idx) = self.find_settings_tab() {
             self.switch_tab(idx);
@@ -687,6 +944,7 @@ impl EditorState {
             self.ai.ai_panel.input_focused = false;
             self.ui.status_message = "已打开设置标签页".to_string();
             self.emit_event(crate::events::EditorEvent::TabChanged);
+            self.dismiss_default_new_tab();
         }
     }
     /// 关闭设置标签页

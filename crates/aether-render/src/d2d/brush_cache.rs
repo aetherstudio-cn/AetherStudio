@@ -340,6 +340,60 @@ impl TextFormatCache {
         }
     }
 
+    /// 显示层缩写：将文本截断到指定宽度并在末尾追加 "…"
+    ///
+    /// 全文宽度在 `max_width` 内时原样返回；否则二分收缩字符数，
+    /// 直到 `前缀 + "…"` 能放下。测量失败时按每字符约 0.62em 估算兜底。
+    /// 用于标题等渲染层省略场景，存储层保留完整文本不受影响。
+    pub fn truncate_with_ellipsis(
+        &self,
+        text: &str,
+        font_size: f32,
+        font_weight: u32,
+        max_width: f32,
+    ) -> String {
+        if text.is_empty() {
+            return String::new();
+        }
+        if max_width <= 0.0 {
+            return "…".to_string();
+        }
+        // 全文放得下：原样返回（大多数短标题走这条快路径）
+        if self
+            .measure_text_width(text, font_size, font_weight)
+            .is_some_and(|w| w <= max_width)
+        {
+            return text.to_string();
+        }
+        let ellipsis_w = self
+            .measure_text_width("…", font_size, font_weight)
+            .unwrap_or(font_size * 0.62);
+        let budget = max_width - ellipsis_w;
+        if budget <= 0.0 {
+            return "…".to_string();
+        }
+        // 二分查找最长前缀，使其宽度不超过预算（预留省略号位）
+        let estimate = |n: usize| n as f32 * font_size * 0.62;
+        let chars: Vec<char> = text.chars().collect();
+        let mut lo = 0usize;
+        let mut hi = chars.len();
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2;
+            let prefix: String = chars[..mid].iter().collect();
+            let w = self
+                .measure_text_width(&prefix, font_size, font_weight)
+                .unwrap_or_else(|| estimate(mid));
+            if w <= budget {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        let mut out: String = chars[..lo].iter().collect();
+        out.push('…');
+        out
+    }
+
     /// 测量文本中指定 UTF-16 位置处的 x 坐标（逻辑像素）
     ///
     /// 使用 DirectWrite TextLayout::HitTestTextPosition 获取渲染后光标应处的精确位置。

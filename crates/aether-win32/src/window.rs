@@ -387,6 +387,12 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             msg if msg == WM_APP + 10 => on_wm_app_10(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 11 => on_wm_app_11(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 12 => on_wm_app_12(hwnd, msg, wparam, lparam),
+            // AI 对话内文件名链接异步预读完成 → 建标签页
+            msg if msg == WM_APP + 14 => on_wm_app_14(hwnd, msg, wparam, lparam),
+            // 内置浏览器：WebView2 异步回调动作排空（环境/控制器就绪、导航事件）
+            msg if msg == crate::browser::WM_BROWSER_EVENT => {
+                on_browser_event(hwnd, msg, wparam, lparam)
+            }
             msg if msg == crate::updater::WM_UPDATE_CHECK_DONE => {
                 on_wm_app_8(hwnd, msg, wparam, lparam)
             }
