@@ -237,17 +237,19 @@ impl EditorState {
                 // 文件的内容，若直接用 self.editor.content.file_name() 会导致活动的“设置”标签
                 // 错误显示成某个文件名。故非文件标签一律用标签自身标题。
                 // SubTask 7.4: 不再在文件名中拼接 "●"，改为独立小圆点
-                let (name, is_dirty) = if is_active {
+                // 文件暂存：is_deleted 表示文件已从磁盘删除、内容缓存在内存中
+                let (name, is_dirty, is_deleted) = if is_active {
                     if tab.is_file() {
                         (
                             self.editor.content.file_name(),
                             self.editor.content.is_dirty,
+                            self.editor.content.deleted_from_disk,
                         )
                     } else {
-                        (tab.title(), false)
+                        (tab.title(), false, false)
                     }
                 } else {
-                    (tab.file_name(), tab.is_dirty())
+                    (tab.file_name(), tab.is_dirty(), tab.is_deleted())
                 };
                 let name_wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
                 let text_rect = D2D_RECT_F {
@@ -272,6 +274,37 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
+
+                // 文件暂存：已删除文件的标签标题画一条横线（删除线），
+                // 提示文件已从磁盘移除但内容仍缓存在内存中
+                if is_deleted {
+                    let max_w = text_rect.right - text_rect.left;
+                    // 按实际文本宽度画线，避免短文件名横线过长
+                    let strike_w = self
+                        .win
+                        .render_ctx
+                        .text_format_cache
+                        .measure_text_width(&name, 12.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
+                        .map(|w| w.min(max_w))
+                        .unwrap_or(max_w);
+                    if strike_w > 1.0 {
+                        let strike_y = y + height / 2.0;
+                        let strike_rect = D2D_RECT_F {
+                            left: text_rect.left,
+                            top: strike_y - 0.5,
+                            right: text_rect.left + strike_w,
+                            bottom: strike_y + 0.5,
+                        };
+                        target.FillRectangle(
+                            &strike_rect,
+                            if is_active {
+                                &active_text_brush
+                            } else {
+                                &text_brush
+                            },
+                        );
+                    }
+                }
 
                 // SubTask 7.4: dirty 状态独立小圆点（6x6 填充椭圆，金黄色）
                 // 位置：文件名右侧、关闭按钮左侧

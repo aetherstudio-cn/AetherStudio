@@ -506,14 +506,27 @@ impl EditorState {
                     }
                 } else {
                     // 正常态：标题 + 相对时间
-                    let title_text: Vec<u16> = hmeta.title.encode_utf16().chain(Some(0)).collect();
+                    let title_left = item_rect.left + 8.0;
+                    let title_right = item_rect.right - del_w - 8.0;
+                    // 显示层缩写：标题超出可用宽度时截断加 "…"，完整标题保留在存储层
+                    let title_shown = self
+                        .win
+                        .render_ctx
+                        .text_format_cache
+                        .truncate_with_ellipsis(
+                            &hmeta.title,
+                            11.0,
+                            DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+                            title_right - title_left,
+                        );
+                    let title_text: Vec<u16> = title_shown.encode_utf16().chain(Some(0)).collect();
                     target.DrawText(
                         &title_text,
                         &text_format,
                         &D2D_RECT_F {
-                            left: item_rect.left + 8.0,
+                            left: title_left,
                             top: iy + 4.0,
-                            right: item_rect.right - del_w - 8.0,
+                            right: title_right,
                             bottom: iy + 22.0,
                         },
                         &white_brush,

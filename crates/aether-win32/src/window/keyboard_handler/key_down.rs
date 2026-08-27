@@ -89,6 +89,9 @@ pub(crate) unsafe fn on_key_down(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
     if let Some(r) = okd_command_palette(hwnd, vk) {
         return r;
     }
+    if let Some(r) = okd_ai_tab_focus(hwnd, vk, shift) {
+        return r;
+    }
 
     if ctrl {
         // 文件树输入框激活时，吞掉所有 Ctrl 快捷键防止编辑器误响应
@@ -179,6 +182,66 @@ pub(crate) unsafe fn on_key_down(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
 
     super::key_down_edit::okd_edit_dispatch(hwnd, vk, shift);
     LRESULT(0)
+}
+
+/// AI 面板无障碍导航：Tab 在文件卡片/文件名链接间循环聚焦，
+/// Enter/Space 激活当前焦点（展开卡片 / 打开文件），Esc 清除焦点。
+unsafe fn okd_ai_tab_focus(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) -> Option<LRESULT> {
+    let is_tab = vk == VK_TAB;
+    let is_enter = vk == VK_RETURN || vk == VK_SPACE;
+    let is_esc = vk == VK_ESCAPE;
+    if !is_tab && !is_enter && !is_esc {
+        return None;
+    }
+    // 仅 AI 面板可见时接管；输入框/历史搜索聚焦时保持原有按键行为
+    let should_handle = EDITOR_STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|state| {
+                let st = state.borrow();
+                st.ai.ai_panel.visible
+                    && !st.ai.ai_panel.input_focused
+                    && !st.ai.ai_panel.history_search_focused
+                    && (is_tab || st.ai.ai_panel.tab_focus_index.is_some())
+            })
+            .unwrap_or(false)
+    });
+    if !should_handle {
+        return None;
+    }
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            let mut st = state.borrow_mut();
+            if is_esc {
+                if st.ai.ai_panel.tab_focus_index.is_some() {
+                    st.ai.ai_panel.clear_tab_focus();
+                    st.win.dirty_tracker.mark_full_window();
+                    invalidate_window(hwnd);
+                }
+            } else if is_tab {
+                if st.ai.ai_panel.tab_focus_advance(shift).is_some() {
+                    st.win.dirty_tracker.mark_full_window();
+                    invalidate_window(hwnd);
+                }
+            } else {
+                // Enter/Space：激活当前焦点区域
+                let action = st.ai.ai_panel.tab_focus_action();
+                if let Some(action) = action {
+                    match action {
+                        crate::ai_panel::TabFocusAction::ToggleCard(mi, bi) => {
+                            st.ai.ai_panel.toggle_file_card_expand(mi, bi);
+                        }
+                        crate::ai_panel::TabFocusAction::OpenFile(path) => {
+                            st.open_ai_file_link(&path);
+                        }
+                    }
+                    st.win.dirty_tracker.mark_full_window();
+                    invalidate_window(hwnd);
+                }
+            }
+        }
+    });
+    Some(LRESULT(0))
 }
 
 /// SubTask 13.4: Alt+Left/Right 导航（返回/前进）。

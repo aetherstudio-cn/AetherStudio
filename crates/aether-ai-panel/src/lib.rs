@@ -8,6 +8,7 @@ pub mod ai_hot_data;
 pub mod ai_panel;
 pub mod ai_prompt;
 pub mod ai_warm_data;
+pub mod diff;
 pub mod embedding;
 pub mod memory_store;
 pub mod reflector;

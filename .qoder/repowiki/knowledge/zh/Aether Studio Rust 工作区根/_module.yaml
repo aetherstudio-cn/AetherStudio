@@ -1,0 +1,19 @@
+schema_version: 1
+module_path: ""
+title: Aether Studio Rust 工作区根
+scope:
+    - README.md
+    - LICENSE.txt
+    - CONTRIBUTING.md
+    - AGENT_SPEC.md
+    - TEST_WORKFLOW.md
+    - .gitignore
+    - Cargo.toml
+    - rust-toolchain.toml
+    - .cargo/
+    - .github/
+    - .trae/
+    - 赞助.md
+source_files: []
+depends_on: []
+related_to: []

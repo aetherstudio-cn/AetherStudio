@@ -123,6 +123,17 @@ pub(crate) unsafe fn on_mouse_move(
         let mut st = state.borrow_mut();
         let editor_content = layout.editor_content_region(st.show_tab_bar());
 
+        // 滚动条：拖拽优先（SetCapture 期间鼠标可能在窗口外）；未拖拽时更新悬停高亮
+        // 经典模式与智能体模式共用统一入口（区域由 active_code_editor_region 裁定）
+        match crate::editor::scrollbar::handle_move(&mut st, mouse_x, mouse_y) {
+            crate::editor::scrollbar::MoveOutcome::Dragged => {
+                invalidate_window(hwnd);
+                return LRESULT(0);
+            }
+            crate::editor::scrollbar::MoveOutcome::HoverChanged => invalidate_window(hwnd),
+            crate::editor::scrollbar::MoveOutcome::Ignored => {}
+        }
+
         // 如果尚未进入选区模式，检查鼠标是否移动了足够距离来启动选区
         if !st.editor.is_selecting {
             // 记录鼠标按下位置（在 WM_LBUTTONDOWN 时设置）

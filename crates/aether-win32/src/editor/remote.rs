@@ -317,7 +317,7 @@ pub fn connect_ssh_server(state: &mut EditorState, index: usize) {
     }
     let config = &servers[index];
     // P0-2: 认证凭证预检——密码认证不支持，在启动后台连接前拦截
-    if config.auth_type.as_str() == "password" {
+    if config.auth_type.is_password() {
         state.remote.ssh_manager_panel.error_message = Some(
             "密码认证在 shell out 模式下不支持（无 tty 无法交互输入密码），请编辑该服务器配置为密钥认证或 Agent 认证。".to_string(),
         );

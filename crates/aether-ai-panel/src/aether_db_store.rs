@@ -50,7 +50,7 @@ impl AetherDbMemoryStore {
 
     /// 是否为空库（无会话/条目等任何记录）
     pub fn is_empty(&self) -> bool {
-        self.db.lock().unwrap().is_empty()
+        self.db().is_empty()
     }
 
     fn check_dim(&self, embedding: &[f32]) -> Result<(), String> {
@@ -62,6 +62,15 @@ impl AetherDbMemoryStore {
             ));
         }
         Ok(())
+    }
+
+    /// 获取 DB 锁（投毒容忍）
+    ///
+    /// 后台归档线程与 UI 线程共享此锁；若 worker 持锁期间 panic，
+    /// `lock().unwrap()` 会让之后所有历史操作（打开/删除/恢复）级联 panic 闪退，
+    /// 这里恢复内部数据继续服务，避免单点故障扩散。
+    fn db(&self) -> std::sync::MutexGuard<'_, AetherDb> {
+        self.db.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -93,7 +102,7 @@ impl MemoryStore for AetherDbMemoryStore {
     }
 
     fn list_conversations(&self, limit: usize) -> Result<Vec<Conversation>, String> {
-        let db = self.db.lock().unwrap();
+        let db = self.db();
         let mut convs: Vec<Conversation> = db
             .scan(kind::CONVERSATION)
             .into_iter()
@@ -105,7 +114,7 @@ impl MemoryStore for AetherDbMemoryStore {
     }
 
     fn delete_conversation(&self, conv_id: &str) -> Result<(), String> {
-        let mut db = self.db.lock().unwrap();
+        let mut db = self.db();
         // 级联：先删该会话的全部消息（含向量索引），再删会话元数据
         db.delete_by_tag(kind::MESSAGE, conv_id)
             .map_err(|e| format!("删除会话消息失败: {}", e))?;
@@ -115,7 +124,7 @@ impl MemoryStore for AetherDbMemoryStore {
     }
 
     fn rename_conversation(&self, conv_id: &str, new_title: &str) -> Result<(), String> {
-        let mut db = self.db.lock().unwrap();
+        let mut db = self.db();
         let rec = db
             .get(kind::CONVERSATION, conv_id)
             .ok_or_else(|| format!("会话不存在: {}", conv_id))?;
@@ -151,7 +160,7 @@ impl MemoryStore for AetherDbMemoryStore {
     }
 
     fn get_messages(&self, conv_id: &str) -> Result<Vec<ChatMessage>, String> {
-        let db = self.db.lock().unwrap();
+        let db = self.db();
         let mut msgs: Vec<ChatMessage> = db
             .scan_by_tag(kind::MESSAGE, conv_id)
             .into_iter()
@@ -167,7 +176,7 @@ impl MemoryStore for AetherDbMemoryStore {
         if let Some(emb) = &bullet.embedding {
             self.check_dim(emb)?;
         }
-        let mut db = self.db.lock().unwrap();
+        let mut db = self.db();
         // 冲突合并：保留既有计数器与 created_at，只更新 section/content/updated_at
         let merged = match db.get(kind::BULLET, &bullet.id) {
             Some(rec) => {
@@ -193,7 +202,7 @@ impl MemoryStore for AetherDbMemoryStore {
     }
 
     fn bullet_feedback(&self, bullet_id: &str, helpful: bool) -> Result<(), String> {
-        let mut db = self.db.lock().unwrap();
+        let mut db = self.db();
         let Some(rec) = db.get(kind::BULLET, bullet_id) else {
             // 条目不存在时静默成功（反馈针对已删除条目不应报错）
             return Ok(());
@@ -217,7 +226,7 @@ impl MemoryStore for AetherDbMemoryStore {
     }
 
     fn list_bullets(&self, section: Option<&str>) -> Result<Vec<PlaybookBullet>, String> {
-        let db = self.db.lock().unwrap();
+        let db = self.db();
         let recs = match section {
             Some(s) => db.scan_by_tag(kind::BULLET, s),
             None => db.scan(kind::BULLET),
@@ -231,7 +240,7 @@ impl MemoryStore for AetherDbMemoryStore {
     }
 
     fn delete_bullet(&self, bullet_id: &str) -> Result<(), String> {
-        let mut db = self.db.lock().unwrap();
+        let mut db = self.db();
         if !db
             .delete(kind::BULLET, bullet_id)
             .map_err(|e| format!("删除条目失败: {}", e))?
@@ -250,7 +259,7 @@ impl MemoryStore for AetherDbMemoryStore {
         k: usize,
     ) -> Result<Vec<(ChatMessage, f32)>, String> {
         self.check_dim(query_embedding)?;
-        let db = self.db.lock().unwrap();
+        let db = self.db();
         let hits = db.knn(kind::MESSAGE, query_embedding, k, conv_id);
         let mut results = Vec::with_capacity(hits.len());
         for hit in hits {
@@ -269,7 +278,7 @@ impl MemoryStore for AetherDbMemoryStore {
         k: usize,
     ) -> Result<Vec<(PlaybookBullet, f32)>, String> {
         self.check_dim(query_embedding)?;
-        let db = self.db.lock().unwrap();
+        let db = self.db();
         let hits = db.knn(kind::BULLET, query_embedding, k, None);
         let mut results = Vec::with_capacity(hits.len());
         for hit in hits {
@@ -310,7 +319,7 @@ impl MemoryStore for AetherDbMemoryStore {
     ) -> Result<Vec<(ChatMessage, f32)>, String> {
         self.check_dim(query_embedding)?;
         const RRF_K: f32 = 60.0;
-        let db = self.db.lock().unwrap();
+        let db = self.db();
 
         // 候选池（conv 过滤在 knn 与关键词扫描里分别做）
         let fetch = (k * 4).max(k);
@@ -383,7 +392,7 @@ impl MemoryStore for AetherDbMemoryStore {
     // ---- grow-and-refine 剪枝 ----
 
     fn prune_bullets(&self, config: &PruneConfig) -> Result<PruneReport, String> {
-        let mut db = self.db.lock().unwrap();
+        let mut db = self.db();
         let candidates: Vec<PlaybookBullet> = db
             .scan(kind::BULLET)
             .into_iter()
@@ -430,7 +439,7 @@ impl MemoryStore for AetherDbMemoryStore {
     }
 
     fn list_prune_log(&self, limit: usize) -> Result<Vec<PruneLogEntry>, String> {
-        let db = self.db.lock().unwrap();
+        let db = self.db();
         let mut entries: Vec<PruneLogEntry> = db
             .scan(kind::PRUNE_LOG)
             .into_iter()

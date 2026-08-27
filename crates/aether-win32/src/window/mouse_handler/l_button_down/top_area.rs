@@ -253,7 +253,7 @@ unsafe fn lbd_titlebar_controls(
             crate::layout::EditorMode::Agent => crate::layout::EditorMode::Developer,
         };
         // 持久化到设置
-        st.ui.app_settings.ui.editor_mode = st.editor_mode.as_str().to_string();
+        st.ui.app_settings.ui.editor_mode = st.editor_mode;
         st.ui.status_message = if st.editor_mode.is_agent() {
             "已切换到智能体模式".to_string()
         } else {

@@ -559,6 +559,9 @@ impl EditorState {
             // 配对弹出编辑区整体裁剪
             target.PopAxisAlignedClip();
         }
+
+        // 覆盖式滚动条：浮于文本之上，仅在内容溢出时显示
+        self.render_scrollbars(target, x, y, width, height);
     }
 
     /// P3.2: 渲染内联补全幽灵文本

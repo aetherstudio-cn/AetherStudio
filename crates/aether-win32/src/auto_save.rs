@@ -154,6 +154,13 @@ impl EditorState {
         if path.to_str().is_some_and(|s| s.starts_with("remote:")) {
             return;
         }
+        // 文件暂存：检测外部删除/还原（活动标签页 + 后台标签页）
+        self.sync_deleted_marks();
+        // 已删除文件不参与自动保存，避免静默重建用户刚删除的文件；
+        // 用户可通过 Ctrl+S 手动重建或 Ctrl+Z 撤销删除
+        if self.editor.content.deleted_from_disk {
+            return;
+        }
         // 未修改：跳过
         if !self.editor.content.is_dirty {
             return;
@@ -186,6 +193,8 @@ impl EditorState {
     pub(crate) fn note_save_succeeded(&mut self) {
         self.editor.content.last_saved_buffer_version = self.editor.content.buffer_version;
         self.editor.content.auto_save_conflict = false;
+        // 文件暂存：保存成功即文件已（重新）落盘，清除删除标记
+        self.editor.content.deleted_from_disk = false;
         self.editor.content.last_known_mtime =
             self.editor.content.file_path.as_ref().and_then(|p| {
                 // 仅本地文件有 mtime；远程文件（remote: 前缀）跳过
@@ -217,6 +226,54 @@ impl EditorState {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// 文件暂存机制：轮询检测文件的外部删除/外部还原。
+    ///
+    /// - 曾存在（`last_known_mtime` 有基线）且现在不存在 → 置位 `deleted_from_disk`，
+    ///   内容继续缓存在内存中（标签页保留、标题画横线）；
+    /// - 已标记删除但文件重新出现（如从回收站还原）→ 清除标记。
+    ///
+    /// 仅对本地文件生效（remote: 前缀跳过）；未落盘过的新建文件无基线，不误判。
+    fn sync_deleted_marks(&mut self) {
+        // 活动标签页内容存放在 self.editor.content
+        if let Some(path) = self.editor.content.file_path.clone() {
+            let local = !path.to_str().is_some_and(|s| s.starts_with("remote:"));
+            if local && self.editor.content.last_known_mtime.is_some() {
+                let exists = path.exists();
+                if !exists && !self.editor.content.deleted_from_disk {
+                    self.editor.content.deleted_from_disk = true;
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    self.ui.status_message =
+                        format!("{} 已被外部删除，内容已缓存在内存中（Ctrl+S 可重建）", name);
+                } else if exists && self.editor.content.deleted_from_disk {
+                    self.editor.content.deleted_from_disk = false;
+                }
+            }
+        }
+        // 后台标签页（活动标签条目内容已被 swap 空，file_path 为 None，自然跳过）
+        for tab in self.editor.tab_bar.tabs.iter_mut() {
+            let Some(content) = tab.as_file_mut() else {
+                continue;
+            };
+            let Some(path) = content.file_path.clone() else {
+                continue;
+            };
+            if path.to_str().is_some_and(|s| s.starts_with("remote:"))
+                || content.last_known_mtime.is_none()
+            {
+                continue;
+            }
+            let exists = path.exists();
+            if !exists && !content.deleted_from_disk {
+                content.deleted_from_disk = true;
+            } else if exists && content.deleted_from_disk {
+                content.deleted_from_disk = false;
+            }
         }
     }
 }

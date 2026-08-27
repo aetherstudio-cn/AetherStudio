@@ -20,6 +20,9 @@ Thumbs.db
 *.pdb
 *.ilk
 
+# 安装包模型暂存目录（CI 打包前从 HuggingFace 拉取，勿提交 90MB 二进制）
+release/models/
+
 # Logs
 *.log
 cargo_check_err.txt

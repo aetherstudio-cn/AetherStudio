@@ -54,6 +54,11 @@ pub(crate) unsafe fn on_l_button_up(
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             let mut st = state.borrow_mut();
+            // 结束滚动条拖拽并释放鼠标捕获
+            if st.editor.scrollbar_drag.is_some() {
+                st.editor.scrollbar_drag = None;
+                let _ = windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture();
+            }
             st.end_selection();
             // 结束面板拖拽
             st.ui.layout.right_panel_resizing = false;
@@ -302,8 +307,9 @@ pub(crate) unsafe fn on_mouse_wheel(
                     }
                 }
             }
-            // 检查光标是否在右侧 AI 面板区域内
-            if state.ui.layout.right_panel_visible {
+            // 检查光标是否在右侧 AI 面板区域内（仅经典模式；
+            // 智能体模式下右面板是文件编辑器，由下方 active_code_editor_region 分支处理）
+            if !state.editor_mode.is_agent() && state.ui.layout.right_panel_visible {
                 let right_panel = state.ui.layout.right_panel_region();
                 if right_panel.contains(cursor_x, cursor_y) {
                     let chat_top = 52.0f32;
@@ -342,6 +348,33 @@ pub(crate) unsafe fn on_mouse_wheel(
                         .max(0.0);
                     state.ui.sandbox_eval.scroll_y =
                         (state.ui.sandbox_eval.scroll_y - delta * 0.5).clamp(0.0, max_scroll);
+                    invalidate_window(hwnd);
+                    return;
+                }
+            }
+
+            // 智能体模式：中间区域是 AI 对话面板 → 滚动对话（与经典右面板 AI 滚动同口径）
+            if state.editor_mode.is_agent() {
+                let center = state.ui.layout.editor_content_region(false);
+                if center.contains(cursor_x, cursor_y) {
+                    let scroll_amount = delta * 2.0;
+                    state.ai.ai_panel.scroll_y = (state.ai.ai_panel.scroll_y - scroll_amount)
+                        .clamp(0.0, state.ai.ai_panel.content_height.max(0.0));
+                    state.ai.ai_panel.stick_to_bottom = false;
+                    invalidate_window(hwnd);
+                    return;
+                }
+            }
+
+            // 代码编辑器区域（经典中间区 / 智能体右侧标签面板）→ 编辑器滚动
+            if let Some(region) = state.active_code_editor_region() {
+                if region.contains(cursor_x, cursor_y) {
+                    if shift {
+                        let char_width = state.win.text_renderer.char_width();
+                        state.scroll_horizontal(-delta * char_width);
+                    } else {
+                        state.scroll(-delta);
+                    }
                     invalidate_window(hwnd);
                     return;
                 }

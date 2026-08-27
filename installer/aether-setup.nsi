@@ -32,6 +32,9 @@
 !ifndef OUTPUT_EXE
   !define OUTPUT_EXE "aether-setup.exe"
 !endif
+; 语义检索模型的暂存目录（CI 在打包前从 HuggingFace 拉取到这里）。
+; 文件存在时才生成可选组件，本地无模型时打包不受影响。
+!define MODEL_STAGING "..\release\models\bge-small-zh-v1.5"
 
 Unicode true
 SetCompressor /SOLID lzma
@@ -59,7 +62,7 @@ VIAddVersionKey "LegalCopyright"  "MIT License"
 !define MUI_ICON   "..\crates\aether-win32\resources\app_icons\aether.ico"
 !define MUI_UNICON "..\crates\aether-win32\resources\app_icons\aether.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
-!define MUI_FINISHPAGE_RUN_TEXT "Launch ${APP_NAME}"
+!define MUI_FINISHPAGE_RUN_TEXT "$(FINISH_RUN)"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
@@ -73,6 +76,47 @@ VIAddVersionKey "LegalCopyright"  "MIT License"
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
 
+; ---- 语言选择：跟随系统语言默认（中文系统默认简体中文），并记住用户选择 ----
+!define MUI_LANGDLL_REGISTRY_ROOT "HKCU"
+!define MUI_LANGDLL_REGISTRY_KEY "Software\${APP_ID}"
+!define MUI_LANGDLL_REGISTRY_VALUENAME "InstallerLanguage"
+
+Function .onInit
+  !insertmacro MUI_LANGDLL_DISPLAY
+FunctionEnd
+
+Function un.onInit
+  !insertmacro MUI_LANGDLL_DISPLAY
+FunctionEnd
+
+; 安装向导关闭时保存所选语言，下次安装/卸载直接沿用
+Function .onGUIEnd
+  WriteRegStr "${MUI_LANGDLL_REGISTRY_ROOT}" "${MUI_LANGDLL_REGISTRY_KEY}" \
+      "${MUI_LANGDLL_REGISTRY_VALUENAME}" $LANGUAGE
+FunctionEnd
+
+Function un.onGUIEnd
+  WriteRegStr "${MUI_LANGDLL_REGISTRY_ROOT}" "${MUI_LANGDLL_REGISTRY_KEY}" \
+      "${MUI_LANGDLL_REGISTRY_VALUENAME}" $LANGUAGE
+FunctionEnd
+
+; ---- 组件名称与描述（按语言区分，向用户说明每个组件是做什么的）----
+LangString FINISH_RUN ${LANG_SIMPCHINESE} "运行 ${APP_NAME}"
+LangString FINISH_RUN ${LANG_ENGLISH} "Launch ${APP_NAME}"
+LangString NAME_SecMain ${LANG_SIMPCHINESE} "Aether Studio（核心程序）"
+LangString NAME_SecMain ${LANG_ENGLISH} "Aether Studio (core)"
+LangString NAME_SecDesktop ${LANG_SIMPCHINESE} "桌面快捷方式"
+LangString NAME_SecDesktop ${LANG_ENGLISH} "Desktop Shortcut"
+LangString NAME_SecModel ${LANG_SIMPCHINESE} "AI 语义记忆模型（约 90MB）"
+LangString NAME_SecModel ${LANG_ENGLISH} "AI Semantic Memory Model (~90MB)"
+
+LangString DESC_SecMain ${LANG_SIMPCHINESE} "编辑器核心程序文件（必选）。"
+LangString DESC_SecMain ${LANG_ENGLISH} "Core application files (required)."
+LangString DESC_SecDesktop ${LANG_SIMPCHINESE} "在桌面创建启动快捷方式。"
+LangString DESC_SecDesktop ${LANG_ENGLISH} "Create a shortcut on the desktop."
+LangString DESC_SecModel ${LANG_SIMPCHINESE} "让 AI 助手拥有长期记忆：按含义搜索历史对话（模糊描述也能找到相关记录），并让 AI 回答更连贯。模型全程本地运行，不上传任何数据。不安装不影响基本使用（历史检索退化为关键词匹配）。"
+LangString DESC_SecModel ${LANG_ENGLISH} "Gives the AI assistant long-term memory: search chat history by meaning (fuzzy descriptions work) and get more coherent answers. Runs fully offline, no data is uploaded. Optional - without it, history search falls back to keyword matching."
+
 ; ---- 安装/升级前关闭正在运行的实例 ----
 !macro CloseRunningApp
   ; 忽略不存在进程时的错误，静默强制结束
@@ -81,7 +125,7 @@ VIAddVersionKey "LegalCopyright"  "MIT License"
   Sleep 500
 !macroend
 
-Section "!${APP_NAME}" SecMain
+Section "!$(NAME_SecMain)" SecMain
   SectionIn RO
 
   !insertmacro CloseRunningApp
@@ -98,7 +142,6 @@ Section "!${APP_NAME}" SecMain
   ; TODO: 后续需要安装更多内容时，在这里追加，例如：
   ;   SetOutPath "$INSTDIR\plugins"
   ;   File /r "..\plugins\*.*"
-  ; 或新增可选组件 Section（见下方桌面快捷方式写法）。
   ; ============================================================
 
   ; 注册表：版本信息 + Windows「应用和功能」卸载入口
@@ -135,14 +178,29 @@ Section "!${APP_NAME}" SecMain
   Exec "$INSTDIR\${APP_EXE}"
 SectionEnd
 
-Section "Desktop Shortcut" SecDesktop
+Section "$(NAME_SecDesktop)" SecDesktop
   CreateShortcut "$DESKTOP\${APP_NAME}.lnk" \
       "$INSTDIR\${APP_EXE}" "" "$INSTDIR\resources\app_icons\aether.ico"
 SectionEnd
 
+; ---- 可选组件：语义检索嵌入模型（bge-small-zh-v1.5，约 90MB）----
+; 仅在暂存目录存在模型文件时生成该组件（见 release-main.yml 拉取步骤）。
+; 安装到 $INSTDIR\resources\models\，运行时优先于用户配置目录查找。
+!if /FileExists "${MODEL_STAGING}\model.onnx"
+Section "$(NAME_SecModel)" SecModel
+  AddSize 95000
+  SetOutPath "$INSTDIR\resources\models\bge-small-zh-v1.5"
+  File "${MODEL_STAGING}\model.onnx"
+  File "${MODEL_STAGING}\tokenizer.json"
+SectionEnd
+!endif
+
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecMain}    "Core application files (required)."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "Create a shortcut on the desktop."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecMain}    $(DESC_SecMain)
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} $(DESC_SecDesktop)
+  !if /FileExists "${MODEL_STAGING}\model.onnx"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecModel}   $(DESC_SecModel)
+  !endif
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
@@ -152,6 +210,11 @@ Section "Uninstall"
   Delete "$INSTDIR\${APP_UNINST}"
   Delete "$INSTDIR\resources\app_icons\aether.ico"
   RMDir  "$INSTDIR\resources\app_icons"
+  ; 可选组件：语义检索模型（未安装时 Delete/RMDir 静默失败，无副作用）
+  Delete "$INSTDIR\resources\models\bge-small-zh-v1.5\model.onnx"
+  Delete "$INSTDIR\resources\models\bge-small-zh-v1.5\tokenizer.json"
+  RMDir  "$INSTDIR\resources\models\bge-small-zh-v1.5"
+  RMDir  "$INSTDIR\resources\models"
   RMDir  "$INSTDIR\resources"
   RMDir  "$INSTDIR"
 

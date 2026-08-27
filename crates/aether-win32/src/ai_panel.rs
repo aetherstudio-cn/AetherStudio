@@ -8,6 +8,7 @@ pub use aether_ai_panel::ai_hot_data::*;
 pub use aether_ai_panel::ai_panel::*;
 pub use aether_ai_panel::ai_prompt::*;
 pub use aether_ai_panel::ai_warm_data::*;
+pub use aether_ai_panel::diff;
 pub use aether_ai_panel::embedding::*;
 pub use aether_ai_panel::memory_store::*;
 pub use aether_ai_panel::reflector::*;

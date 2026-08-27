@@ -77,6 +77,32 @@ jobs:
           New-Item -ItemType Directory -Force -Path release
           Copy-Item target\x86_64-pc-windows-msvc\release\aether-app.exe release\aether-app.exe
 
+      - name: Download embedding model for installer component
+        # 拉取 bge-small-zh-v1.5 到暂存目录，NSIS 检测到文件后自动生成可选组件；
+        # 下载失败不阻断发布（安装包退化为不含模型组件）。
+        continue-on-error: true
+        run: |
+          $dir = "release\models\bge-small-zh-v1.5"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $files = @{
+            "tokenizer.json" = "tokenizer.json"
+            "model.onnx"     = "onnx/model.onnx"
+          }
+          foreach ($entry in $files.GetEnumerator()) {
+            $out = Join-Path $dir $entry.Key
+            $urls = @(
+              "https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/main/$($entry.Value)",
+              "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/main/$($entry.Value)"
+            )
+            $ok = $false
+            foreach ($u in $urls) {
+              curl.exe -fsSL --retry 2 -o $out $u
+              if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            }
+            if (-not $ok) { throw "download failed: $($entry.Key)" }
+          }
+          Write-Host "Model staged at $dir"
+
       - name: Build NSIS installer
         env:
           VERSION: ${{ steps.version.outputs.version }}

@@ -107,7 +107,7 @@ pub struct AiMessage {
     /// "深度思考"内容（DeepSeek reasoner 的 reasoning_content）；None 表示无思考。
     /// 与 content 分离存储，UI 上作为独立的"思考过程"分类展示。
     pub reasoning: Option<String>,
-    /// 思考块是否折叠（默认展开，生成完成后自动折叠；用户可点击标题切换）
+    /// 思考块是否折叠（默认折叠：思考内容到达即收起，仅显示标题；用户可点击标题展开）
     #[serde(default)]
     pub reasoning_collapsed: bool,
     /// 思考耗时（毫秒）；None 表示无思考或仍在思考中（旧持久化数据也为 None）
@@ -116,6 +116,9 @@ pub struct AiMessage {
     /// 思考开始时刻（Unix 毫秒），仅运行期计时用，不持久化
     #[serde(skip)]
     pub reasoning_started_ms: Option<u64>,
+    /// 询问卡片（AETHER_ASK）回答：按消息内 ASK 块出现顺序对齐，None = 未回答
+    #[serde(default)]
+    pub ask_answers: Vec<Option<String>>,
 }
 
 impl AiMessage {
@@ -124,9 +127,10 @@ impl AiMessage {
             role,
             content,
             reasoning: None,
-            reasoning_collapsed: false,
+            reasoning_collapsed: true,
             reasoning_ms: None,
             reasoning_started_ms: None,
+            ask_answers: Vec::new(),
         }
     }
 
@@ -422,7 +426,7 @@ impl AiConversation {
             }
             if done {
                 self.is_generating = false;
-                // 生成完成：自动折叠思考块，保持界面整洁
+                // 生成完成：恢复思考块折叠（默认即折叠，用户流式中手动展开时在此收起）
                 if let Some(last) = self.messages.last_mut() {
                     last.stop_reasoning_timer();
                     // 修复：当 content 为空但 reasoning 非空时（DeepSeek 思考模式简单问答场景），
@@ -549,6 +553,15 @@ pub struct AgentPipeline {
     pub created_files: Vec<String>,
     /// 未成功写入的文件任务（worker 输出未闭合/应用失败），收尾时如实汇报
     pub failed_files: Vec<String>,
+}
+
+/// Tab 键无障碍导航的焦点动作（文件卡展开 / 文件链接打开）
+#[derive(Clone, Debug, PartialEq)]
+pub enum TabFocusAction {
+    /// 切换文件卡片展开/折叠 (msg_idx, block_seq)
+    ToggleCard(usize, usize),
+    /// 打开文件链接（相对路径）
+    OpenFile(String),
 }
 
 /// AI 助手面板状态
@@ -704,6 +717,16 @@ pub struct AiPanel {
     pub expanded_file_cards: std::collections::HashSet<(usize, usize)>,
     /// 文件卡片命中区域 (msg_idx, block_seq, x, y, w, h)，渲染每帧更新
     pub file_card_regions: Vec<(usize, usize, f32, f32, f32, f32)>,
+    /// 修改前历史快照：(相对路径, 旧内容, 新内容)，供差异可视化；上限 32 条
+    pub diff_snapshots: Vec<(String, String, String)>,
+    /// 差异预览缓存：key = (消息下标, File 卡序号)，快照更新时清空
+    pub diff_preview_cache: std::collections::HashMap<(usize, usize), Vec<crate::diff::DiffLine>>,
+    /// 对话内可点击文件名命中区 (x, y, w, h, 路径)，渲染每帧更新
+    pub file_link_regions: Vec<(f32, f32, f32, f32, String)>,
+    /// Tab 键无障碍导航焦点区（文件卡/文件链接），渲染每帧重建
+    pub tab_focus_regions: Vec<(f32, f32, f32, f32, TabFocusAction)>,
+    /// 当前 Tab 焦点下标（None = 未聚焦）
+    pub tab_focus_index: Option<usize>,
     /// "浏览并选择文件夹"按钮命中区 (x, y, w, h)
     pub browse_folder_region: Option<(f32, f32, f32, f32)>,
     /// 是否正在进行问题扩写（扩写结果写回输入框而非聊天区）
@@ -724,6 +747,15 @@ pub struct AiPanel {
     pub agent_tab_close_regions: Vec<(usize, f32, f32, f32, f32)>,
     /// 智能体模式左侧边栏：文件树区域 y 偏移量（相对于侧边栏顶部）
     pub agent_file_tree_offset_y: f32,
+    /// 在途请求是否启用深度思考（思考模式首包延迟显著更高，超时看门狗阈值相应放宽）
+    pub in_flight_thinking: bool,
+    /// 询问卡片选项命中区 (msg_idx, ask_seq, opt_idx, x, y, w, h)，渲染每帧更新
+    pub ask_option_regions: Vec<(usize, usize, usize, f32, f32, f32, f32)>,
+    /// 询问卡片“自定义回答”命中区 (msg_idx, ask_seq, x, y, w, h)，渲染每帧更新
+    pub ask_custom_regions: Vec<(usize, usize, f32, f32, f32, f32)>,
+    /// 当前等待自定义输入的询问卡片 (msg_idx, ask_seq)：用户点“自定义回答”后，
+    /// 输入框下一条消息将作为该问题的自定义回答而非普通提问
+    pub pending_ask_custom: Option<(usize, usize)>,
 }
 
 /// 在后台线程发起一次流式 AI 请求，把事件写入共享 stream_state。
@@ -915,6 +947,11 @@ impl AiPanel {
             agent_pipeline: None,
             expanded_file_cards: std::collections::HashSet::new(),
             file_card_regions: Vec::new(),
+            diff_snapshots: Vec::new(),
+            diff_preview_cache: std::collections::HashMap::new(),
+            file_link_regions: Vec::new(),
+            tab_focus_regions: Vec::new(),
+            tab_focus_index: None,
             browse_folder_region: None,
             is_expanding: false,
             expand_anim_phase: ExpandAnimPhase::None,
@@ -925,6 +962,10 @@ impl AiPanel {
             agent_tab_regions: Vec::new(),
             agent_tab_close_regions: Vec::new(),
             agent_file_tree_offset_y: 0.0,
+            in_flight_thinking: false,
+            ask_option_regions: Vec::new(),
+            ask_custom_regions: Vec::new(),
+            pending_ask_custom: None,
         };
         panel.restore_latest_conversation();
         panel
@@ -1370,17 +1411,27 @@ impl AiPanel {
         }
     }
 
-    /// 检测当前会话是否超时（30秒无响应）
+    /// 请求发起时记录在途请求是否启用深度思考（供超时看门狗放宽阈值）
+    fn note_in_flight_thinking(&mut self, settings: &AiSettings) {
+        self.in_flight_thinking =
+            aether_ai::AiConfig::from_settings(settings).deepseek_thinking_active();
+    }
+
+    /// 检测当前会话是否超时（首包阈值内无任何响应）
     /// 返回 true 表示已超时且尚未收到任何响应
+    ///
+    /// 思考模式（如 DeepSeek v4 + reasoning_effort=max）的 prefill+思考启动
+    /// 首包延迟常超过 30s，阈值放宽到 180s；非思考模式保持 30s。
     pub fn check_timeout(&self) -> bool {
         if !self.is_generating {
             return false;
         }
+        let limit_secs = if self.in_flight_thinking { 180 } else { 30 };
 
         if let Ok(s) = self.stream_state.lock() {
             if let Some(start_time) = s.start_time {
-                // 超过30秒且未收到任何响应
-                if start_time.elapsed().as_secs() > 30 && !s.received_first_response {
+                // 超过阈值且未收到任何响应
+                if start_time.elapsed().as_secs() > limit_secs && !s.received_first_response {
                     return true;
                 }
             }
@@ -1689,6 +1740,21 @@ impl AiPanel {
         context: String,
         mode: AiMode,
     ) -> Result<String, String> {
+        // 询问卡片自定义回答：输入框文本作为待回答问题的答案而非普通提问。
+        // 若目标卡片已失效（消息被裁剪/会话切换），则降级为普通发送。
+        if let Some((mi, seq)) = self.pending_ask_custom.take() {
+            if !self.ask_blocks_of(mi).is_empty() {
+                let text = self.input.trim().to_string();
+                if text.is_empty() {
+                    return Err("请先输入自定义回答再发送".to_string());
+                }
+                let all_done = self.answer_ask(mi, seq, text);
+                if !all_done {
+                    return Ok("已记录回答，请继续回答其余问题".to_string());
+                }
+                return self.send_ask_reply(settings, mi, mode, context);
+            }
+        }
         self.agent_iter_count = 0;
         self.agent_pipeline = None;
         self.send_message_internal(settings, self.input.clone(), mode, Some(context))
@@ -1721,6 +1787,7 @@ impl AiPanel {
         // 工具结果以 Tool 角色记录（不显示为用户气泡）
         self.add_tool_message(feedback.clone());
         self.is_generating = true;
+        self.note_in_flight_thinking(settings);
         self.should_stop.store(false, Ordering::SeqCst);
         if let Ok(mut s) = self.stream_state.lock() {
             *s = AiStreamState::default();
@@ -1747,6 +1814,7 @@ impl AiPanel {
     /// 完成后由编排器（editor::advance_agent_pipeline）落盘并推进下一任务。
     pub fn stream_focused(&mut self, settings: &AiSettings, system: String, user: String) {
         self.is_generating = true;
+        self.note_in_flight_thinking(settings);
         self.should_stop.store(false, Ordering::SeqCst);
         if let Ok(mut s) = self.stream_state.lock() {
             *s = AiStreamState::default();
@@ -1786,6 +1854,7 @@ impl AiPanel {
 
         self.is_generating = true;
         self.is_expanding = true;
+        self.note_in_flight_thinking(settings);
         self.should_stop.store(false, Ordering::SeqCst);
         if let Ok(mut s) = self.stream_state.lock() {
             *s = AiStreamState::default();
@@ -1851,12 +1920,189 @@ impl AiPanel {
         }
     }
 
+    /// 记录文件修改前/后快照（供差异可视化）。单条内容超 20 万字符截断，总量超 32 条淘汰最旧。
+    pub fn record_diff_snapshot(&mut self, path: &str, old: String, new: String) {
+        const MAX_CHARS: usize = 200_000;
+        let trunc = |s: String| {
+            if s.chars().count() <= MAX_CHARS {
+                s
+            } else {
+                s.chars().take(MAX_CHARS).collect()
+            }
+        };
+        self.diff_snapshots.retain(|(p, _, _)| p != path);
+        self.diff_snapshots
+            .push((path.to_string(), trunc(old), trunc(new)));
+        if self.diff_snapshots.len() > 32 {
+            let extra = self.diff_snapshots.len() - 32;
+            self.diff_snapshots.drain(0..extra);
+        }
+        // 快照变化使所有缓存的差异预览失效
+        self.diff_preview_cache.clear();
+    }
+
+    /// 查询指定路径的最新快照 (旧内容, 新内容)
+    pub fn diff_snapshot(&self, path: &str) -> Option<(String, String)> {
+        self.diff_snapshots
+            .iter()
+            .rev()
+            .find(|(p, _, _)| p == path)
+            .map(|(_, o, n)| (o.clone(), n.clone()))
+    }
+
+    /// 获取文件卡片的差异预览行（带缓存）：无快照时返回 None（渲染回退为原文预览）
+    pub fn diff_preview_for(
+        &mut self,
+        key: (usize, usize),
+        path: &str,
+    ) -> Option<Vec<crate::diff::DiffLine>> {
+        if let Some(c) = self.diff_preview_cache.get(&key) {
+            return Some(c.clone());
+        }
+        let (old, new) = self.diff_snapshot(path)?;
+        let diff = crate::diff::line_diff(&old, &new);
+        self.diff_preview_cache.insert(key, diff.clone());
+        Some(diff)
+    }
+
+    /// 命中测试对话内可点击文件名，返回路径
+    pub fn hit_test_file_link(&self, x: f32, y: f32) -> Option<String> {
+        self.file_link_regions
+            .iter()
+            .rev()
+            .find(|(rx, ry, rw, rh, _)| x >= *rx && x <= rx + rw && y >= *ry && y <= ry + rh)
+            .map(|(_, _, _, _, p)| p.clone())
+    }
+
+    /// Tab 焦点移动到下一/上一可交互元素，返回焦点动作克隆
+    pub fn tab_focus_advance(&mut self, reverse: bool) -> Option<TabFocusAction> {
+        let n = self.tab_focus_regions.len();
+        if n == 0 {
+            self.tab_focus_index = None;
+            return None;
+        }
+        let next = match self.tab_focus_index {
+            None if reverse => n - 1,
+            None => 0,
+            Some(i) if reverse => i.saturating_add(n - 1) % n,
+            Some(i) => (i + 1) % n,
+        };
+        self.tab_focus_index = Some(next);
+        self.tab_focus_regions
+            .get(next)
+            .map(|(_, _, _, _, a)| a.clone())
+    }
+
+    /// 当前 Tab 焦点对应的动作（Enter/Space 激活用）
+    pub fn tab_focus_action(&self) -> Option<TabFocusAction> {
+        self.tab_focus_index
+            .and_then(|i| self.tab_focus_regions.get(i))
+            .map(|(_, _, _, _, a)| a.clone())
+    }
+
+    /// 清除 Tab 焦点（Esc / 面板隐藏时）
+    pub fn clear_tab_focus(&mut self) {
+        self.tab_focus_index = None;
+    }
+
     /// 命中测试文件卡片，返回 (msg_idx, block_seq)
     pub fn hit_test_file_card(&self, x: f32, y: f32) -> Option<(usize, usize)> {
         self.file_card_regions
             .iter()
             .find(|(_, _, rx, ry, rw, rh)| x >= *rx && x <= rx + rw && y >= *ry && y <= ry + rh)
             .map(|(mi, bi, ..)| (*mi, *bi))
+    }
+
+    /// 提取指定消息内的全部询问块（ASK），按展示顺序返回（问题, 选项）列表
+    pub fn ask_blocks_of(&self, msg_idx: usize) -> Vec<(String, Vec<String>)> {
+        self.messages
+            .get(msg_idx)
+            .map(|m| {
+                crate::ai_agent::parse_display_blocks(&m.content)
+                    .into_iter()
+                    .filter_map(|b| match b {
+                        crate::ai_agent::AgentDisplayBlock::Ask { question, options } => {
+                            Some((question, options))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// 获取询问卡片指定选项的文本（下标越界返回 None）
+    pub fn ask_option_text(
+        &self,
+        msg_idx: usize,
+        ask_seq: usize,
+        opt_idx: usize,
+    ) -> Option<String> {
+        self.ask_blocks_of(msg_idx)
+            .into_iter()
+            .nth(ask_seq)
+            .and_then(|(_, options)| options.into_iter().nth(opt_idx))
+    }
+
+    /// 记录询问卡片的回答并清空输入框；返回该消息内全部问题是否已回答完毕
+    pub fn answer_ask(&mut self, msg_idx: usize, ask_seq: usize, answer: String) -> bool {
+        let answer = answer.trim().to_string();
+        if answer.is_empty() {
+            return false;
+        }
+        let total = self.ask_blocks_of(msg_idx).len();
+        if total == 0 || ask_seq >= total {
+            return false;
+        }
+        let Some(msg) = self.messages.get_mut(msg_idx) else {
+            return false;
+        };
+        if msg.ask_answers.len() < total {
+            msg.ask_answers.resize(total, None);
+        }
+        msg.ask_answers[ask_seq] = Some(answer);
+        let all_done = msg.ask_answers.iter().all(|a| a.is_some());
+        self.input.clear();
+        self.caret_pos = 0;
+        self.pending_ask_custom = None;
+        self.sync_hot_data();
+        all_done
+    }
+
+    /// 汇总指定消息内全部问题的回答，生成回传给模型的用户消息文本
+    pub fn build_ask_reply(&self, msg_idx: usize) -> Option<String> {
+        let msg = self.messages.get(msg_idx)?;
+        let blocks = self.ask_blocks_of(msg_idx);
+        if blocks.is_empty() {
+            return None;
+        }
+        let mut out = String::from("【用户对你提问的回答】\n");
+        for (i, (question, _)) in blocks.iter().enumerate() {
+            let answer = msg
+                .ask_answers
+                .get(i)
+                .and_then(|a| a.as_deref())
+                .unwrap_or("未回答");
+            out.push_str(&format!("Q: {}\nA: {}\n", question, answer));
+        }
+        out.push_str("请根据以上回答继续执行。");
+        Some(out)
+    }
+
+    /// 把指定消息的汇总回答作为用户消息发送并继续生成（走普通发送管线）
+    pub fn send_ask_reply(
+        &mut self,
+        settings: &AiSettings,
+        msg_idx: usize,
+        mode: AiMode,
+        context: String,
+    ) -> Result<String, String> {
+        let reply = self
+            .build_ask_reply(msg_idx)
+            .ok_or_else(|| "未找到可发送的回答".to_string())?;
+        self.agent_iter_count = 0;
+        self.agent_pipeline = None;
+        self.send_message_internal(settings, reply, mode, Some(context))
     }
 
     fn send_message_internal(
@@ -1891,6 +2137,7 @@ impl AiPanel {
         self.input.clear();
         self.caret_pos = 0;
         self.is_generating = true;
+        self.note_in_flight_thinking(settings);
         self.should_stop.store(false, Ordering::SeqCst);
         // 重置流式状态
         if let Ok(mut s) = self.stream_state.lock() {
@@ -2301,7 +2548,7 @@ impl AiPanel {
             }
             if done {
                 self.is_generating = false;
-                // 生成完成：自动折叠思考块，保持界面整洁
+                // 生成完成：恢复思考块折叠（默认即折叠，用户流式中手动展开时在此收起）
                 if let Some(last) = self.messages.last_mut() {
                     last.stop_reasoning_timer();
                     // 修复：当 content 为空但 reasoning 非空时（DeepSeek 思考模式简单问答场景），
@@ -2863,6 +3110,17 @@ impl AiPanel {
             warm.delete_conversation(&meta.id)?;
         }
         self.history.remove(hist_idx);
+        // 取消同 id 标签的在途休眠握手：DB 记录已删，若回执到达后仍卸载消息体，
+        // 下次唤醒会因读不到记录退化为欢迎语占位，导致对话内容丢失
+        for conv in self.conversations.iter_mut() {
+            if conv.id == meta.id {
+                conv.hibernate_pending_at = None;
+            }
+        }
+        // 清理被删条目的残留编辑态，避免提交时报"会话不存在"
+        if self.history_editing_id.as_deref() == Some(meta.id.as_str()) {
+            self.cancel_history_edit();
+        }
         if self.history_detail_id.as_deref() == Some(meta.id.as_str()) {
             self.close_history_detail();
         }
@@ -2880,6 +3138,11 @@ impl AiPanel {
         self.history.clear();
         self.history_page = 0;
         self.close_history_detail();
+        self.cancel_history_edit();
+        // 清空后所有在途休眠握手均失去落点：清 pending，防卸载后唤醒读不到记录丢消息
+        for conv in self.conversations.iter_mut() {
+            conv.hibernate_pending_at = None;
+        }
         // 重置筛选状态，避免清空后筛选条件残留导致困惑
         self.history_time_filter = HistoryTimeFilter::All;
         self.history_type_filter = None;
@@ -2947,15 +3210,23 @@ impl AiPanel {
     }
 }
 
-/// 解析段落内的轻量 Markdown：标题(`#`/`##`/`###`)、无序列表(`-`/`*`/`+`)、粗体(`**`)。
+/// 解析段落内的轻量 Markdown：标题(`#`/`##`/`###`)、无序列表(`-`/`*`/`+`)、粗体(`**`)、行内代码(`` ` ``)。
 ///
-/// 返回 `(清洗后的 UTF-16 文本, 粗体范围, 标题范围[start,len,字号])`，
+/// 返回 `(清洗后的 UTF-16 文本, 粗体范围, 标题范围[start,len,字号], 行内代码范围)`，
 /// 范围以 UTF-16 code unit 为单位，直接供 `IDWriteTextLayout` 的 range 样式使用。
 #[allow(clippy::type_complexity)]
-pub fn parse_markdown_segment(text: &str) -> (Vec<u16>, Vec<(u32, u32)>, Vec<(u32, u32, f32)>) {
+pub fn parse_markdown_segment(
+    text: &str,
+) -> (
+    Vec<u16>,
+    Vec<(u32, u32)>,
+    Vec<(u32, u32, f32)>,
+    Vec<(u32, u32)>,
+) {
     let mut clean: Vec<u16> = Vec::new();
     let mut bolds: Vec<(u32, u32)> = Vec::new();
     let mut headings: Vec<(u32, u32, f32)> = Vec::new();
+    let mut codes: Vec<(u32, u32)> = Vec::new();
 
     for (li, line) in text.lines().enumerate() {
         if li > 0 {
@@ -2990,10 +3261,28 @@ pub fn parse_markdown_segment(text: &str) -> (Vec<u16>, Vec<(u32, u32)>, Vec<(u3
             }
         }
 
-        // 行内粗体 **text**
+        // 行内粗体 **text** 与行内代码 `code`
         let chars: Vec<char> = content.chars().collect();
         let mut i = 0;
         while i < chars.len() {
+            // 行内代码：`...`（去掉反引号，记录范围供链接化/样式使用）
+            if chars[i] == '`' {
+                if let Some(end) = chars[i + 1..].iter().position(|&c| c == '`') {
+                    let end = i + 1 + end;
+                    if end > i + 1 {
+                        let c_start = clean.len() as u32;
+                        for &c in &chars[i + 1..end] {
+                            push_utf16(&mut clean, c);
+                        }
+                        let c_len = clean.len() as u32 - c_start;
+                        if c_len > 0 {
+                            codes.push((c_start, c_len));
+                        }
+                    }
+                    i = end + 1;
+                    continue;
+                }
+            }
             if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
                 if let Some(end) = find_double_star(&chars, i + 2) {
                     let b_start = clean.len() as u32;
@@ -3020,7 +3309,27 @@ pub fn parse_markdown_segment(text: &str) -> (Vec<u16>, Vec<(u32, u32)>, Vec<(u3
         }
     }
 
-    (clean, bolds, headings)
+    (clean, bolds, headings, codes)
+}
+
+/// 判断行内代码 span 是否为「类文件路径」token（供对话内文件名链接化）。
+///
+/// 规则：无空白、含 `.`、至少一个字母、不含 `://`、扩展名为 1~8 位字母数字。
+pub fn is_path_like_token(s: &str) -> bool {
+    if s.len() < 3 || s.len() > 260 {
+        return false;
+    }
+    if s.chars().any(|c| c.is_whitespace()) {
+        return false;
+    }
+    if s.contains("://") {
+        return false;
+    }
+    if !s.contains('.') || !s.chars().any(|c| c.is_alphabetic()) {
+        return false;
+    }
+    let ext = s.rsplit('.').next().unwrap_or("");
+    !ext.is_empty() && ext.len() <= 8 && ext.chars().all(|c| c.is_alphanumeric())
 }
 
 fn push_utf16(buf: &mut Vec<u16>, c: char) {
@@ -3215,6 +3524,52 @@ mod tests {
         assert!(p.history_detail_id.is_none());
         // 越界删除报错
         assert!(p.delete_history_item(5).is_err());
+    }
+
+    #[test]
+    fn delete_history_item_cancels_pending_hibernate_and_editing() {
+        let now = now_secs();
+        let mut p = test_panel();
+        p.history = vec![meta("a", now, "Ask")];
+        // 打开标签中存在同 id 会话且休眠握手在途
+        let mut c = archivable_conv("a");
+        c.hibernate_pending_at = Some(c.updated_at);
+        p.conversations.push(c);
+        // 正在编辑即将被删除的条目
+        p.begin_history_edit(0);
+        assert_eq!(p.history_editing_id.as_deref(), Some("a"));
+
+        p.delete_history_item(0).unwrap();
+
+        // 同 id 标签的休眠握手必须取消：否则回执到达后卸载消息体，
+        // 唤醒时 DB 记录已删，退化为欢迎语占位导致对话丢失
+        assert!(p.conversations[1].hibernate_pending_at.is_none());
+        // 编辑态同步清理
+        assert!(p.history_editing_id.is_none());
+    }
+
+    #[test]
+    fn clear_all_history_cancels_all_pending_hibernations() {
+        let now = now_secs();
+        let mut p = test_panel();
+        p.history = vec![meta("a", now, "Ask"), meta("b", now, "Agent")];
+        for id in ["a", "b"] {
+            let mut c = archivable_conv(id);
+            c.hibernate_pending_at = Some(c.updated_at);
+            p.conversations.push(c);
+        }
+        p.begin_history_edit(0);
+
+        p.clear_all_history().unwrap();
+
+        assert!(p.history.is_empty());
+        assert!(p.history_editing_id.is_none());
+        assert!(
+            p.conversations
+                .iter()
+                .all(|c| c.hibernate_pending_at.is_none()),
+            "清空后不得残留任何在途休眠握手"
+        );
     }
 
     #[test]
