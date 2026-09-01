@@ -993,11 +993,12 @@ unsafe fn omm_ai_hover(
             || old_apply_hover != st.ai.ai_panel.hover_apply_button;
     }
 
-    // 智能体模式：处理左侧边栏的对话标签页悬浮
+    // 智能体模式：处理左侧边栏的对话标签页悬浮 + 中间 AI 面板悬浮
     if st.editor_mode.is_agent() {
         let sidebar_region = layout.sidebar_region();
-        if sidebar_region.contains(mouse_x, mouse_y) {
-            // 检查对话标签页悬浮
+
+        // 1. 左侧边栏：对话标签页悬浮
+        let tab_hover_changed = if sidebar_region.contains(mouse_x, mouse_y) {
             let old_tab_hover = st.ai.ai_panel.hover_tab;
             st.ai.ai_panel.hover_tab = st
                 .ai
@@ -1008,18 +1009,37 @@ unsafe fn omm_ai_hover(
                     mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
                 })
                 .map(|(i, ..)| *i);
-            return old_tab_hover != st.ai.ai_panel.hover_tab;
+            old_tab_hover != st.ai.ai_panel.hover_tab
         } else {
-            // 鼠标不在侧边栏，清除悬浮状态
+            // 鼠标不在侧边栏，清除标签页悬浮状态
             let old_tab_hover = st.ai.ai_panel.hover_tab;
             st.ai.ai_panel.hover_tab = None;
-            return old_tab_hover.is_some();
-        }
+            old_tab_hover.is_some()
+        };
+
+        // 2. 中间 AI 面板区域：图片 chip 悬浮
+        let center_region = layout.editor_content_region(false);
+        let chip_hover = if center_region.contains(mouse_x, mouse_y) {
+            let rel_x = mouse_x - center_region.x;
+            let rel_y = mouse_y - center_region.y;
+            let old_chip = st.ai.ai_panel.hover_image_chip;
+            st.ai.ai_panel.hover_image_chip = st.ai.ai_panel.hit_test_image_chip(rel_x, rel_y);
+            old_chip != st.ai.ai_panel.hover_image_chip
+        } else if st.ai.ai_panel.hover_image_chip.is_some() {
+            st.ai.ai_panel.hover_image_chip = None;
+            true
+        } else {
+            false
+        };
+
+        return tab_hover_changed || chip_hover;
     }
 
     // 开发者模式：右侧面板是 AI 面板
     let right_panel_region = layout.right_panel_region();
-    if layout.right_panel_visible && right_panel_region.contains(mouse_x, mouse_y) {
+    let hover_changed = if layout.right_panel_visible
+        && right_panel_region.contains(mouse_x, mouse_y)
+    {
         // Apply 按钮悬停
         let rel_x = mouse_x - right_panel_region.x;
         let rel_y = mouse_y - right_panel_region.y;
@@ -1062,7 +1082,25 @@ unsafe fn omm_ai_hover(
         st.ai.ai_panel.hover_apply_button = false;
         st.ai.ai_panel.hover_tab = None;
         old || old_tab.is_some()
-    }
+    };
+    // 图片 chip 悬停（命中区为相对右面板坐标，渲染帧注册）。
+    // 注意：函数开头已持有 st = state.borrow_mut()（RefMut 的 Drop 使借用
+    // 持续到作用域结束），此处严禁再次 state.borrow()/borrow_mut()，
+    // 否则会触发 "RefCell already mutably borrowed" panic。
+    let chip_hover = if layout.right_panel_visible && right_panel_region.contains(mouse_x, mouse_y)
+    {
+        let rel_x = mouse_x - right_panel_region.x;
+        let rel_y = mouse_y - right_panel_region.y;
+        let old_chip = st.ai.ai_panel.hover_image_chip;
+        st.ai.ai_panel.hover_image_chip = st.ai.ai_panel.hit_test_image_chip(rel_x, rel_y);
+        old_chip != st.ai.ai_panel.hover_image_chip
+    } else if st.ai.ai_panel.hover_image_chip.is_some() {
+        st.ai.ai_panel.hover_image_chip = None;
+        true
+    } else {
+        false
+    };
+    hover_changed || chip_hover
 }
 
 /// 欢迎页悬停更新。返回是否有变化。
@@ -1432,9 +1470,10 @@ unsafe fn omm_tooltip_state(
 /// 9. 底部面板分隔条 → SizeNS
 /// 10. 文件树内联输入框（新建/重命名时）→ IBeam
 /// 11. AI 面板输入框 → IBeam
-/// 12. 编辑器内容区：欢迎页/空占位页 → Arrow；设置页仅输入字段 → IBeam；其余 → IBeam
-/// 13. 状态栏 clickable 分区 → Hand
-/// 14. 默认 → Arrow
+/// 12. 整页标签（设置/沙盒评测，智能体模式在右面板）：仅输入字段 → IBeam，其余 → Arrow
+/// 13. 编辑器内容区：欢迎页/空占位页 → Arrow；其余 → IBeam
+/// 14. 状态栏 clickable 分区 → Hand
+/// 15. 默认 → Arrow
 pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> CursorType {
     EDITOR_STATE.with(|s| {
         let s = s.borrow();
@@ -1642,7 +1681,7 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
                 let margin = 10.0;
                 let input_margin = 8.0;
                 // 使用动态计算的输入框高度
-                let input_area_h = st.ai.ai_panel.input_computed_height + 44.0f32;
+                let input_area_h = st.ai.ai_panel.input_area_height();
                 let text_input_y = rp.height - input_area_h + 6.0;
                 let text_input_h = st.ai.ai_panel.input_computed_height;
                 if rp_rel_y >= text_input_y
@@ -1651,6 +1690,21 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
                     && rp_rel_x < rp.width - margin - input_margin
                 {
                     return CursorType::IBeam;
+                }
+                // 图片 chip / 附加图片按钮 → Hand（只读判定，光标函数不修改状态）
+                if st
+                    .ai
+                    .ai_panel
+                    .hit_test_image_chip(rp_rel_x, rp_rel_y)
+                    .is_some()
+                {
+                    return CursorType::Hand;
+                }
+                if let Some((bx, by, bw, bh)) = st.ai.ai_panel.image_button_region {
+                    if rp_rel_x >= bx && rp_rel_x < bx + bw && rp_rel_y >= by && rp_rel_y < by + bh
+                    {
+                        return CursorType::Hand;
+                    }
                 }
             }
         }
@@ -1697,36 +1751,40 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
             }
         }
 
-        // 12. 编辑器内容区
+        // 12. 整页标签（设置 / 沙盒评测）：智能体模式渲染在右面板、经典模式在编辑器内容区，
+        // 故用 full_page_region 门控（与渲染/点击几何口径一致）
+        let full_page = st.full_page_region(&layout);
+        if st.active_tab_is_settings() && full_page.contains(mouse_x, mouse_y) {
+            // 设置页：仅文本输入字段 → IBeam（Provider 为下拉选择，保持 Arrow）
+            if st
+                .ui
+                .settings_panel
+                .hit_test_field(mouse_x, mouse_y)
+                .is_some_and(|f| f != crate::settings::SettingsField::Provider)
+            {
+                return CursorType::IBeam;
+            }
+            return CursorType::Arrow;
+        }
+        if st.active_tab_is_sandbox_eval() && full_page.contains(mouse_x, mouse_y) {
+            // 沙盒评测页：仅文本输入字段 → IBeam，其余为 Arrow
+            let regions = &st.ui.sandbox_eval.regions;
+            let in_field = regions
+                .topic_field
+                .is_some_and(|r| crate::sandbox_eval::rect_hit(&r, mouse_x, mouse_y))
+                || regions
+                    .custom_count_field
+                    .is_some_and(|r| crate::sandbox_eval::rect_hit(&r, mouse_x, mouse_y));
+            if in_field {
+                return CursorType::IBeam;
+            }
+            return CursorType::Arrow;
+        }
+
+        // 13. 编辑器内容区
         if editor_content.contains(mouse_x, mouse_y) {
             // 欢迎页/新标签页：非文本区域 → Arrow（可点项已在步骤 2/11b 返回 Hand）
             if st.show_welcome() || st.ntp_active() {
-                return CursorType::Arrow;
-            }
-            // 设置页：仅文本输入字段 → IBeam（Provider 为下拉选择，保持 Arrow）
-            if st.active_tab_is_settings() {
-                if st
-                    .ui
-                    .settings_panel
-                    .hit_test_field(mouse_x, mouse_y)
-                    .is_some_and(|f| f != crate::settings::SettingsField::Provider)
-                {
-                    return CursorType::IBeam;
-                }
-                return CursorType::Arrow;
-            }
-            // 沙盒评测页：仅文本输入字段 → IBeam，其余为 Arrow
-            if st.active_tab_is_sandbox_eval() {
-                let regions = &st.ui.sandbox_eval.regions;
-                let in_field = regions
-                    .topic_field
-                    .is_some_and(|r| crate::sandbox_eval::rect_hit(&r, mouse_x, mouse_y))
-                    || regions
-                        .custom_count_field
-                        .is_some_and(|r| crate::sandbox_eval::rect_hit(&r, mouse_x, mouse_y));
-                if in_field {
-                    return CursorType::IBeam;
-                }
                 return CursorType::Arrow;
             }
             // 图片预览：非文本 → Arrow

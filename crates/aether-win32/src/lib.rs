@@ -11,6 +11,7 @@ pub mod render_context;
 
 pub mod activity_bar;
 pub mod activity_bar_context_menu;
+pub mod ai_image_input;
 pub mod ai_panel;
 pub mod auto_save;
 pub mod bitmap_loader;

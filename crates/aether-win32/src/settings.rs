@@ -146,6 +146,9 @@ pub struct ModelConfig {
     pub response_format: String,
     /// 业务侧用户标识（空=不下发）
     pub user_id: String,
+    /// 多模态（图片）输入支持：用户声明该模型为视觉模型后，
+    /// AI 输入框允许附加图片随消息发送
+    pub multimodal: bool,
 }
 
 impl ModelConfig {
@@ -192,6 +195,7 @@ impl ModelConfig {
                 } else {
                     Some(self.user_id.trim().to_string())
                 },
+                multimodal: self.multimodal,
             },
         }
     }
@@ -247,6 +251,7 @@ impl ModelConfig {
                 .clone()
                 .unwrap_or_else(|| "text".to_string()),
             user_id: s.user_id.clone().unwrap_or_default(),
+            multimodal: s.multimodal,
         }
     }
 }
@@ -281,6 +286,8 @@ pub struct SettingsPanel {
     pub max_input_tokens: String,
     pub system_prompt: String,
     pub active_field: Option<SettingsField>,
+    /// 聚焦输入框的光标闪烁相位（由 CARET_TIMER 周期翻转，渲染层据此绘制闪烁竖线）
+    pub caret_visible: bool,
     pub hover_button: Option<SettingsButton>,
     pub test_status: String,
     pub is_testing: bool,
@@ -384,6 +391,12 @@ pub struct SettingsPanel {
     pub hover_response_format: Option<&'static str>,
     /// 业务侧用户标识（空=不下发）
     pub user_id: String,
+    /// 多模态（图片）输入开关：用户声明当前编辑模型是否为视觉模型
+    pub multimodal: bool,
+    /// 多模态开关命中区
+    pub multimodal_toggle_region: Option<(f32, f32, f32, f32)>,
+    /// 多模态开关悬停态
+    pub hover_multimodal_toggle: bool,
     /// 打开设置面板时的 AI 配置快照，用于"未保存更改"检测
     pub baseline_ai: Option<AiSettings>,
     /// 外观页：最大化时显示任务栏开关命中区
@@ -406,6 +419,7 @@ impl SettingsPanel {
             max_input_tokens: "24000".to_string(),
             system_prompt: String::new(),
             active_field: None,
+            caret_visible: false,
             hover_button: None,
             test_status: String::new(),
             is_testing: false,
@@ -466,6 +480,9 @@ impl SettingsPanel {
             response_format_regions: Vec::new(),
             hover_response_format: None,
             user_id: String::new(),
+            multimodal: false,
+            multimodal_toggle_region: None,
+            hover_multimodal_toggle: false,
             baseline_ai: None,
             taskbar_toggle_region: None,
             default_mode_toggle_region: None,
@@ -500,6 +517,7 @@ impl SettingsPanel {
                 .unwrap_or_else(|| "24000".to_string()),
             system_prompt: ai.system_prompt.clone().unwrap_or_default(),
             active_field: None,
+            caret_visible: false,
             hover_button: None,
             test_status: String::new(),
             is_testing: false,
@@ -572,6 +590,9 @@ impl SettingsPanel {
             response_format_regions: Vec::new(),
             hover_response_format: None,
             user_id: ai.user_id.clone().unwrap_or_default(),
+            multimodal: ai.multimodal,
+            multimodal_toggle_region: None,
+            hover_multimodal_toggle: false,
             baseline_ai: None,
             taskbar_toggle_region: None,
             default_mode_toggle_region: None,
@@ -616,6 +637,7 @@ impl SettingsPanel {
             } else {
                 Some(self.user_id.trim().to_string())
             },
+            multimodal: self.multimodal,
         }
     }
 
@@ -665,6 +687,7 @@ impl SettingsPanel {
             self.stop = m.stop;
             self.response_format = m.response_format;
             self.user_id = m.user_id;
+            self.multimodal = m.multimodal;
         } else {
             self.provider = fallback_ai.provider.clone();
             self.api_key = fallback_ai.api_key.clone();
@@ -711,6 +734,7 @@ impl SettingsPanel {
                 .clone()
                 .unwrap_or_else(|| "text".to_string());
             self.user_id = fallback_ai.user_id.clone().unwrap_or_default();
+            self.multimodal = fallback_ai.multimodal;
         }
     }
 
@@ -752,6 +776,7 @@ impl SettingsPanel {
                 stop: String::new(),
                 response_format: "text".to_string(),
                 user_id: String::new(),
+                multimodal: false,
             });
             self.active_model_id = Some(new_id);
         }
@@ -772,6 +797,7 @@ impl SettingsPanel {
         let stop = self.stop.clone();
         let response_format = self.response_format.clone();
         let user_id = self.user_id.clone();
+        let multimodal = self.multimodal;
         if let Some(id) = self.active_model_id.clone() {
             if let Some(m) = self.models.iter_mut().find(|m| m.id == id) {
                 m.provider = provider;
@@ -790,6 +816,7 @@ impl SettingsPanel {
                 m.stop = stop;
                 m.response_format = response_format;
                 m.user_id = user_id;
+                m.multimodal = multimodal;
                 // 用户自定义名称优先；为空时回退为模型 ID
                 if !display_name.is_empty() {
                     m.display_name = display_name;
@@ -835,6 +862,7 @@ impl SettingsPanel {
             stop: String::new(),
             response_format: "text".to_string(),
             user_id: String::new(),
+            multimodal: false,
         });
         self.active_model_id = Some(id.clone());
         self.provider = "deepseek".to_string();
@@ -880,6 +908,7 @@ impl SettingsPanel {
         self.stop = String::new();
         self.response_format = "text".to_string();
         self.user_id = String::new();
+        self.multimodal = false;
     }
 
     /// 把模型列表与激活选择同步回 AppSettings（供持久化）
@@ -920,6 +949,7 @@ impl SettingsPanel {
         self.dropdown_trigger_regions.clear();
         self.dropdown_item_regions.clear();
         self.thinking_toggle_region = None;
+        self.multimodal_toggle_region = None;
         self.effort_regions.clear();
         self.temp_slider_region = None;
         self.top_p_slider_region = None;
@@ -982,6 +1012,8 @@ impl SettingsPanel {
 
     pub fn input_char(&mut self, ch: char) {
         if let Some(field) = self.active_field {
+            // 输入即重置光标相位：打字时竖线常亮，停止后由定时器恢复闪烁
+            self.caret_visible = true;
             match field {
                 SettingsField::Provider => self.provider.push(ch),
                 SettingsField::ApiKey => self.api_key.push(ch),
@@ -1001,6 +1033,7 @@ impl SettingsPanel {
     /// 粘贴文本到当前活动字段
     pub fn paste_text(&mut self, text: &str) {
         if let Some(field) = self.active_field {
+            self.caret_visible = true;
             match field {
                 SettingsField::Provider => self.provider.push_str(text),
                 SettingsField::ApiKey => self.api_key.push_str(text),
@@ -1020,6 +1053,7 @@ impl SettingsPanel {
     /// 退格
     pub fn backspace(&mut self) {
         if let Some(field) = self.active_field {
+            self.caret_visible = true;
             match field {
                 SettingsField::Provider => {
                     self.provider.pop();
@@ -1061,6 +1095,7 @@ impl SettingsPanel {
     /// UI-M05: Delete 键清除活动字段（区别于 Backspace 删除末尾字符）
     pub fn delete_forward(&mut self) {
         if let Some(field) = self.active_field {
+            self.caret_visible = true;
             match field {
                 SettingsField::Provider => self.provider.clear(),
                 SettingsField::ApiKey => self.api_key.clear(),
@@ -1108,6 +1143,9 @@ impl SettingsPanel {
                 _ => None,
             },
         };
+        if self.active_field.is_some() {
+            self.caret_visible = true;
+        }
     }
 
     pub fn prev_field(&mut self) {
@@ -1119,6 +1157,9 @@ impl SettingsPanel {
                 _ => None,
             },
         };
+        if self.active_field.is_some() {
+            self.caret_visible = true;
+        }
     }
 
     /// 掩码 API 密钥用于显示：隐藏态下全部字符都以圆点遮盖，不泄露任何明文字符。
@@ -1201,6 +1242,20 @@ impl SettingsPanel {
     /// 切换深度思考开关
     pub fn toggle_thinking(&mut self) {
         self.thinking = !self.thinking;
+    }
+
+    /// 命中：多模态（图片）开关
+    pub fn hit_test_multimodal_toggle(&self, x: f32, y: f32) -> bool {
+        if let Some((rx, ry, rw, rh)) = self.multimodal_toggle_region {
+            x >= rx && x < rx + rw && y >= ry && y < ry + rh
+        } else {
+            false
+        }
+    }
+
+    /// 切换多模态（图片）开关
+    pub fn toggle_multimodal(&mut self) {
+        self.multimodal = !self.multimodal;
     }
 
     /// 命中：温度滑块轨道，返回点击位置对应的温度（0.0-2.0，步进 0.1）
