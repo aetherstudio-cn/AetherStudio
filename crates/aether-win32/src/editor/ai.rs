@@ -1565,12 +1565,7 @@ impl EditorState {
                 .strip_prefix(root)
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| r.path.to_string_lossy().to_string());
-            lines.push(format!(
-                "{}:{}: {}",
-                rel_path,
-                r.line,
-                r.text.trim()
-            ));
+            lines.push(format!("{}:{}: {}", rel_path, r.line, r.text.trim()));
         }
         if results.len() > MAX_RESULTS {
             lines.push(format!("…（共 {} 个结果，已省略其余）", results.len()));
@@ -1745,7 +1740,11 @@ impl EditorState {
                     // 大多数单文件（HTML/CSS/JS/RS 等），避免中途截断导致文件不完整。
                     // 若用户设置的 max_tokens 更大则尊重用户设置。
                     let worker_max_tokens = 16384u32;
-                    if settings.max_tokens.map(|m| m < worker_max_tokens).unwrap_or(true) {
+                    if settings
+                        .max_tokens
+                        .map(|m| m < worker_max_tokens)
+                        .unwrap_or(true)
+                    {
                         settings.max_tokens = Some(worker_max_tokens);
                     }
                     self.ui.status_message =
@@ -1843,7 +1842,11 @@ impl EditorState {
             settings.temperature = Some(0.0);
             // 续写时保持较大的 max_tokens
             let worker_max_tokens = 16384u32;
-            if settings.max_tokens.map(|m| m < worker_max_tokens).unwrap_or(true) {
+            if settings
+                .max_tokens
+                .map(|m| m < worker_max_tokens)
+                .unwrap_or(true)
+            {
                 settings.max_tokens = Some(worker_max_tokens);
             }
 
@@ -1852,11 +1855,7 @@ impl EditorState {
                 p.resume_count += 1;
             }
 
-            self.ui.status_message = format!(
-                "正在续写 {} …（第 {} 次）",
-                target,
-                resume_count + 1
-            );
+            self.ui.status_message = format!("正在续写 {} …（第 {} 次）", target, resume_count + 1);
             self.ai.ai_panel.stream_focused(&settings, system, user);
             return; // 续写完成后会再次进入本函数
         }
@@ -1918,10 +1917,9 @@ impl EditorState {
         }
         // 显示失败任务信息（在释放 agent_pipeline 借用后）
         if let Some((target, err)) = failed_task_info {
-            self.ai.ai_panel.add_assistant_message(format!(
-                "[警告] 任务 `{}` 未完成：{}",
-                target, err
-            ));
+            self.ai
+                .ai_panel
+                .add_assistant_message(format!("[警告] 任务 `{}` 未完成：{}", target, err));
         }
         self.win.dirty_tracker.mark_full_window();
         self.run_pipeline_until_file_task_or_finish();

@@ -1984,7 +1984,9 @@ pub(super) unsafe fn lbd_welcome_or_editor(
                 return Some(result);
             }
             // 4. 代码块保存按钮
-            if let Some(result) = lbd_ai_code_save(hwnd, state, mouse_x, mouse_y, &center_panel_region) {
+            if let Some(result) =
+                lbd_ai_code_save(hwnd, state, mouse_x, mouse_y, &center_panel_region)
+            {
                 return Some(result);
             }
             // 5. 模式切换 / 上下文附件 / 浏览文件夹按钮

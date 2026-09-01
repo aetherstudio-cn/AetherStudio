@@ -287,7 +287,10 @@ pub fn build_worker_resume_prompt(
     if !goal.trim().is_empty() {
         user.push_str(&format!("【整体目标】{}\n", goal.trim()));
     }
-    user.push_str(&format!("【续写任务】文件 `{}` 的内容被截断，请从断点继续补全。\n", path));
+    user.push_str(&format!(
+        "【续写任务】文件 `{}` 的内容被截断，请从断点继续补全。\n",
+        path
+    ));
     if !created_files.is_empty() {
         user.push_str(
             "【本次已生成的其它文件】（请与其中的结构、类名、函数名、引用路径保持一致）\n",
@@ -305,7 +308,7 @@ pub fn build_worker_resume_prompt(
         let lines: Vec<&str> = partial_content.lines().collect();
         let last_lines: Vec<&str> = lines.iter().rev().take(5).rev().cloned().collect();
         let tail_hint = last_lines.join("\n");
-        
+
         user.push_str(&format!(
             "【该文件已生成的部分内容】\n```\n{}\n```\n\n【已生成内容的末尾几行】\n```\n{}\n```\n\n请直接从上述内容的末尾继续续写，补全剩余部分，使文件完整。**不要重复已有内容**。
 ",

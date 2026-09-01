@@ -103,18 +103,22 @@ pub fn sanitize_error(err: &str) -> String {
 fn diagnose_stream_error(err: &str) -> String {
     let err_lower = err.to_lowercase();
     let sanitized = sanitize_error(err);
-    
+
     let mut msg = String::new();
-    
+
     // 判断错误类型
-    if err_lower.contains("network") || err_lower.contains("connection") 
-        || err_lower.contains("dns") || err_lower.contains("ssl") 
-        || err_lower.contains("timeout") || err_lower.contains("timed out") {
+    if err_lower.contains("network")
+        || err_lower.contains("connection")
+        || err_lower.contains("dns")
+        || err_lower.contains("ssl")
+        || err_lower.contains("timeout")
+        || err_lower.contains("timed out")
+    {
         // 网络错误
         msg.push_str("[网络错误] 无法连接到 API 服务器\n\n");
         msg.push_str("🔍 错误详情:\n");
         msg.push_str(&format!("• 错误信息: {}\n\n", sanitized));
-        
+
         msg.push_str("📊 诊断分析:\n");
         if err_lower.contains("dns") {
             msg.push_str("• DNS 解析失败：无法解析 API 服务器域名\n");
@@ -167,8 +171,11 @@ fn diagnose_stream_error(err: &str) -> String {
         msg.push_str("1. 稍后重试（通常几秒到几分钟后恢复）\n");
         msg.push_str("2. 减少请求频率\n");
         msg.push_str("3. 考虑升级 API 套餐以提高限额\n");
-    } else if err_lower.contains("500") || err_lower.contains("502") 
-        || err_lower.contains("503") || err_lower.contains("504") {
+    } else if err_lower.contains("500")
+        || err_lower.contains("502")
+        || err_lower.contains("503")
+        || err_lower.contains("504")
+    {
         // 服务器错误
         msg.push_str("[服务器错误] API 服务器内部错误\n\n");
         msg.push_str("🔍 错误详情:\n");
@@ -191,16 +198,16 @@ fn diagnose_stream_error(err: &str) -> String {
         msg.push_str("2. 查看 API 文档确认请求格式\n");
         msg.push_str("3. 联系 API 提供商获取支持\n");
     }
-    
+
     msg
 }
 
 /// 诊断 API 错误：根据 AiError 类型提供详细的诊断信息
 fn diagnose_api_error(e: &aether_ai::AiError) -> String {
     use aether_ai::AiError;
-    
+
     let mut msg = String::new();
-    
+
     match e {
         AiError::Http(err) => {
             msg.push_str("[HTTP 错误] 网络请求失败\n\n");
@@ -250,12 +257,12 @@ fn diagnose_api_error(e: &aether_ai::AiError) -> String {
                 503 => "API 服务器负载过高",
                 _ => "API 请求失败",
             };
-            
+
             msg.push_str(&format!("[API 错误 {}] {}\n\n", code, desc));
             msg.push_str("🔍 错误详情:\n");
             msg.push_str(&format!("• HTTP 状态码: {}\n", code));
             msg.push_str(&format!("• 错误信息: {}\n\n", sanitize_error(message)));
-            
+
             msg.push_str("📊 诊断分析:\n");
             match *code {
                 400 => {
@@ -327,7 +334,7 @@ fn diagnose_api_error(e: &aether_ai::AiError) -> String {
                     msg.push_str("3. 联系 API 提供商支持\n");
                 }
             }
-            
+
             // 添加重试提示
             if e.is_retryable() {
                 msg.push_str("\n♻️ 此错误为暂时性错误，系统稍后可能自动重试\n");
@@ -336,7 +343,7 @@ fn diagnose_api_error(e: &aether_ai::AiError) -> String {
             }
         }
     }
-    
+
     msg
 }
 
@@ -1702,9 +1709,7 @@ impl AiPanel {
         // 收集诊断信息
         let (elapsed_secs, thinking_mode, limit_secs) = {
             if let Ok(s) = self.stream_state.lock() {
-                let elapsed = s.start_time
-                    .map(|t| t.elapsed().as_secs())
-                    .unwrap_or(0);
+                let elapsed = s.start_time.map(|t| t.elapsed().as_secs()).unwrap_or(0);
                 let thinking = self.in_flight_thinking;
                 let limit = if thinking { 180 } else { 30 };
                 (elapsed, thinking, limit)
@@ -1718,15 +1723,18 @@ impl AiPanel {
 
         // 构建详细的超时诊断消息
         let mut msg = String::from("[超时] AI 响应超时\n\n");
-        
+
         // 基本信息
         msg.push_str(&format!("⏱️  等待时长: {} 秒\n", elapsed_secs));
         msg.push_str(&format!("🎯 超时阈值: {} 秒\n", limit_secs));
-        msg.push_str(&format!("🧠 思考模式: {}\n\n", if thinking_mode { "开启" } else { "关闭" }));
+        msg.push_str(&format!(
+            "🧠 思考模式: {}\n\n",
+            if thinking_mode { "开启" } else { "关闭" }
+        ));
 
         // 诊断分析
         msg.push_str("📊 诊断分析:\n");
-        
+
         if elapsed_secs < 5 {
             msg.push_str("• 请求几乎立即超时，可能是网络连接完全中断\n");
             msg.push_str("• 检查: 网络连接、防火墙设置、代理配置\n");
@@ -1745,7 +1753,7 @@ impl AiPanel {
 
         // 针对性建议
         msg.push_str("\n💡 针对性建议:\n");
-        
+
         if elapsed_secs < 5 {
             msg.push_str("1. 立即检查网络连接（尝试访问其他网站）\n");
             msg.push_str("2. 检查防火墙/杀毒软件是否拦截了请求\n");
@@ -1762,7 +1770,10 @@ impl AiPanel {
 
         // 技术细节
         msg.push_str("\n🔧 技术细节:\n");
-        msg.push_str(&format!("• 错误类型: 首包响应超时（{}秒内未收到任何数据）\n", limit_secs));
+        msg.push_str(&format!(
+            "• 错误类型: 首包响应超时（{}秒内未收到任何数据）\n",
+            limit_secs
+        ));
         msg.push_str("• 建议操作: 点击重试按钮或重新发送消息\n");
 
         self.add_assistant_message(msg);

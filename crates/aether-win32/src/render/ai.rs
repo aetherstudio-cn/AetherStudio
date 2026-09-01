@@ -2668,13 +2668,10 @@ impl EditorState {
                 );
 
                 // 注册命中区域（绝对坐标）
-                self.ai.ai_panel.mode_button_regions.push((
-                    mode,
-                    mode_x,
-                    mode_btn_y,
-                    mode_btn_w,
-                    mode_btn_h,
-                ));
+                self.ai
+                    .ai_panel
+                    .mode_button_regions
+                    .push((mode, mode_x, mode_btn_y, mode_btn_w, mode_btn_h));
 
                 mode_x += mode_btn_w + mode_gap;
             }
@@ -2720,7 +2717,11 @@ impl EditorState {
                     right: chip_x + chip_w,
                     bottom: mode_btn_y + chip_h - 2.0,
                 };
-                let text_color = if is_attached { &white_brush } else { &dim_brush };
+                let text_color = if is_attached {
+                    &white_brush
+                } else {
+                    &dim_brush
+                };
                 target.DrawText(
                     &label_wide,
                     &small_format,
@@ -2731,13 +2732,10 @@ impl EditorState {
                 );
 
                 // 注册命中区域（绝对坐标）
-                self.ai.ai_panel.attachment_chip_regions.push((
-                    i,
-                    chip_x,
-                    mode_btn_y,
-                    chip_w,
-                    chip_h,
-                ));
+                self.ai
+                    .ai_panel
+                    .attachment_chip_regions
+                    .push((i, chip_x, mode_btn_y, chip_w, chip_h));
 
                 chip_x += chip_w + chip_gap;
             }
