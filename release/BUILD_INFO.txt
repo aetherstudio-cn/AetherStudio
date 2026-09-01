@@ -1,0 +1,69 @@
+Aether Studio - Release Build Information
+==========================================
+
+构建时间: 2026-08-30 23:30:30
+构建类型: Release (optimized)
+
+生成的文件:
+-----------
+
+1. aether-app.exe (28,953,088 bytes / ~27.6 MB)
+   - GUI 主程序（Windows 桌面应用）
+   - 包含所有最新功能和修复
+
+2. aether.exe (543,744 bytes / ~531 KB)
+   - CLI 命令行工具
+   - 用于命令行交互和脚本集成
+
+本次构建包含的修复:
+-------------------
+
+1. 智能体模式 AI 对话栏交互修复
+   - 修复中间区域点击交互缺失（思考块、询问卡片、代码保存等）
+   - 修复中间区域悬浮处理缺失
+   - 添加模式切换按钮和附件 chips 渲染
+   - 修复键盘方向键冲突问题
+
+2. 错误诊断系统增强
+   - 详细的超时错误诊断（显示等待时长、超时阈值、思考模式状态）
+   - 智能错误分类（网络错误、认证错误、速率限制、服务器错误）
+   - 针对性建议和排查步骤
+   - HTTP 状态码详细说明（400/401/402/403/404/422/429/500/503）
+
+系统要求:
+---------
+- Windows 10/11 (64-bit)
+- 无需额外依赖（静态链接）
+
+安装说明:
+---------
+方式 1: 直接运行
+  - 解压后直接运行 aether-app.exe
+
+方式 2: 使用安装程序（需要 NSIS）
+  - 运行 aether-setup.exe（需要先安装 NSIS 重新打包）
+
+注意事项:
+---------
+- 首次运行需要配置 AI API Key（设置 → AI）
+- 支持 DeepSeek、Kimi 等 OpenAI 兼容 API
+- 所有数据本地存储，不上传云端
+
+构建环境:
+---------
+- Rust toolchain: stable
+- Target: x86_64-pc-windows-msvc
+- Profile: release (optimized)
+
+构建命令:
+---------
+cargo build --release
+
+文件校验（SHA256）:
+-------------------
+aether-app.exe: 89D46267BECEDFD06A1A535B19D764AEB560F4F8135B099FB91527B3AD436254
+aether.exe:     02F989022BD902464EFAECC87071A6B111FF622F815B2AE416D46985B25561E4
+
+验证命令:
+Get-FileHash .\aether-app.exe -Algorithm SHA256
+Get-FileHash .\aether.exe -Algorithm SHA256

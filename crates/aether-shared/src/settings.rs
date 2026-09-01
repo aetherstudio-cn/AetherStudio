@@ -112,6 +112,10 @@ pub struct AiSettings {
     /// 业务侧用户标识（内容安全/缓存隔离/限速调度）；None/空=不下发
     #[serde(default)]
     pub user_id: Option<String>,
+    /// 该模型是否支持多模态（图片）输入：用户在模型编辑表单中勾选。
+    /// 开启后 AI 输入框允许附加图片，以 OpenAI 兼容 image_url 块随请求发送。
+    #[serde(default)]
+    pub multimodal: bool,
 }
 
 impl std::fmt::Debug for AiSettings {
@@ -136,6 +140,7 @@ impl std::fmt::Debug for AiSettings {
             .field("stop", &self.stop)
             .field("response_format", &self.response_format)
             .field("user_id", &self.user_id)
+            .field("multimodal", &self.multimodal)
             .finish()
     }
 }
@@ -661,6 +666,7 @@ impl Default for AppSettings {
                 stop: None,
                 response_format: None,
                 user_id: None,
+                multimodal: false,
             },
             ui: UiSettings::default(),
             remote: RemoteSettings::default(),

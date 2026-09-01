@@ -488,6 +488,7 @@ impl SandboxEvalPanel {
             ChatMessage {
                 role: "system".to_string(),
                 content: system,
+                images: Vec::new(),
             },
             ChatMessage::user(user),
         ];
@@ -953,6 +954,7 @@ impl SandboxEvalPanel {
             ChatMessage {
                 role: "system".to_string(),
                 content: system,
+                images: Vec::new(),
             },
             ChatMessage::user(user),
         ];

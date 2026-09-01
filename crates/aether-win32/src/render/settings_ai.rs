@@ -245,10 +245,58 @@ impl EditorState {
             D2D1_DRAW_TEXT_OPTIONS_NONE,
             DWRITE_MEASURING_MODE_NATURAL,
         );
+        // 聚焦光标：占位符态光标贴左缘，否则位于文本末尾
+        if focused && self.ui.settings_panel.caret_visible {
+            let caret_text = if is_placeholder { "" } else { &display };
+            self.draw_settings_caret(
+                target,
+                caret_text,
+                x + margin + 6.0,
+                box_y,
+                input_h,
+                x + margin + input_w - 6.0,
+            );
+        }
         self.ui
             .settings_panel
             .add_field_region(field, x + margin, box_y, input_w, input_h);
         box_y + input_h
+    }
+
+    /// 绘制设置输入框的闪烁光标（聚焦字段的 caret_visible 相位为 true 时显示）。
+    /// 设置输入框仅支持末尾追加，光标始终位于显示文本末尾；
+    /// `left` 为文本左缘，`text` 为空时光标位于左缘；`max_x` 防止光标越过右侧控件。
+    unsafe fn draw_settings_caret(
+        &mut self,
+        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
+        text: &str,
+        left: f32,
+        top: f32,
+        height: f32,
+        max_x: f32,
+    ) {
+        let width = self
+            .win
+            .render_ctx
+            .text_format_cache
+            .measure_text_width(text, 13.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
+            .unwrap_or(0.0);
+        let caret_x = (left + width).min(max_x);
+        let caret_brush = self
+            .win
+            .render_ctx
+            .brush_cache
+            .get_brush(target, &color_f(0.92, 0.92, 0.92, 1.0))
+            .unwrap();
+        target.FillRectangle(
+            &D2D_RECT_F {
+                left: caret_x,
+                top: top + 7.0,
+                right: caret_x + 1.0,
+                bottom: top + height - 7.0,
+            },
+            &caret_brush,
+        );
     }
 
     /// 渲染 AI 接口设置字段（provider / key / url / model / 保存 / 测试连接）
@@ -526,6 +574,18 @@ impl EditorState {
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
+            // 聚焦光标：光标不得越过右侧「显示/隐藏」按钮
+            if apikey_focused && self.ui.settings_panel.caret_visible {
+                let caret_text = if key_empty { "" } else { &display_key };
+                self.draw_settings_caret(
+                    target,
+                    caret_text,
+                    x + margin + 8.0,
+                    cy,
+                    input_h,
+                    eye_x - 6.0,
+                );
+            }
             self.ui.settings_panel.add_field_region(
                 crate::settings::SettingsField::ApiKey,
                 x + margin,
@@ -632,6 +692,21 @@ impl EditorState {
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
+                // 聚焦光标
+                if self.ui.settings_panel.active_field
+                    == Some(crate::settings::SettingsField::BaseUrl)
+                    && self.ui.settings_panel.caret_visible
+                {
+                    let caret_text = self.ui.settings_panel.base_url.clone();
+                    self.draw_settings_caret(
+                        target,
+                        &caret_text,
+                        x + margin + 6.0,
+                        cy,
+                        input_h,
+                        x + margin + input_w - 6.0,
+                    );
+                }
                 self.ui.settings_panel.add_field_region(
                     crate::settings::SettingsField::BaseUrl,
                     x + margin,
@@ -865,6 +940,86 @@ impl EditorState {
                     }
                     cy += seg_h + gap;
                 }
+            }
+
+            // 多模态（图片）输入开关——胶囊开关 + 标签。
+            // 由用户声明模型是否为视觉模型：开启后 AI 输入框允许附加图片，
+            // 随消息以 OpenAI 兼容 image_url 块发送（仅适用于支持图片的模型）。
+            {
+                let sw_w = 38.0_f32;
+                let sw_h = 20.0_f32;
+                let sw_x = x + margin;
+                let sw_y = cy;
+                let checked = self.ui.settings_panel.multimodal;
+                let hover = self.ui.settings_panel.hover_multimodal_toggle;
+                let sw_bg = if checked {
+                    color_f(0.0, 0.47, 0.83, 1.0)
+                } else if hover {
+                    color_f(0.42, 0.42, 0.45, 1.0)
+                } else {
+                    color_f(0.34, 0.34, 0.37, 1.0)
+                };
+                if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &sw_bg) {
+                    let sw_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: D2D_RECT_F {
+                            left: sw_x,
+                            top: sw_y,
+                            right: sw_x + sw_w,
+                            bottom: sw_y + sw_h,
+                        },
+                        radiusX: sw_h / 2.0,
+                        radiusY: sw_h / 2.0,
+                    };
+                    target.FillRoundedRectangle(&sw_rounded, &b);
+                }
+                let knob_r = 7.0_f32;
+                let knob_cx = if checked {
+                    sw_x + sw_w - knob_r - 3.0
+                } else {
+                    sw_x + knob_r + 3.0
+                };
+                if let Ok(kb) = self
+                    .win
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
+                {
+                    target.FillEllipse(
+                        &windows::Win32::Graphics::Direct2D::D2D1_ELLIPSE {
+                            point: windows::Win32::Graphics::Direct2D::Common::D2D_POINT_2F {
+                                x: knob_cx,
+                                y: sw_y + sw_h / 2.0,
+                            },
+                            radiusX: knob_r,
+                            radiusY: knob_r,
+                        },
+                        &kb,
+                    );
+                }
+                let lbl_text = if checked {
+                    "多模态（图片）  已开启（输入框可附加图片随消息发送）"
+                } else {
+                    "多模态（图片）  已关闭（视觉模型请开启）"
+                };
+                let lbl: Vec<u16> = lbl_text.encode_utf16().chain(Some(0)).collect();
+                let lbl_rect = D2D_RECT_F {
+                    left: sw_x + sw_w + 10.0,
+                    top: sw_y,
+                    right: x + width - margin,
+                    bottom: sw_y + sw_h,
+                };
+                target.DrawText(
+                    &lbl,
+                    &label_format,
+                    &lbl_rect,
+                    text_brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+                // 命中区覆盖开关 + 标签一段，便于点击切换
+                self.ui.settings_panel.multimodal_toggle_region =
+                    Some((sw_x, sw_y, sw_w + 10.0 + 320.0, sw_h));
+                cy += sw_h + gap;
             }
 
             // 采样参数禁用态：DeepSeek 思考模式下 temperature/top_p 不生效（官方文档）

@@ -382,6 +382,12 @@ impl EditorState {
 
     /// WM_APP+14 回调：后台预读完成后用已加载缓冲创建标签页。
     pub(crate) fn finish_open_ai_file_link(&mut self, path: &Path, text: &str) {
+        // 防御性检查：路径为空或无效时直接返回，避免后续 panic
+        if path.as_os_str().is_empty() {
+            tracing::warn!("finish_open_ai_file_link: 收到空路径，跳过");
+            return;
+        }
+
         // 异步读盘期间若用户已手动打开同一文件，直接切换避免重复标签
         if self.editor.content.file_path.as_ref() == Some(&path.to_path_buf()) {
             return;
@@ -393,9 +399,15 @@ impl EditorState {
             .iter()
             .position(|t| t.file_path().map(|p| p.as_path()) == Some(path))
         {
-            self.switch_tab(idx);
+            // 防御性检查：索引有效才切换
+            if idx < self.editor.tab_bar.tabs.len() {
+                self.switch_tab(idx);
+            }
             return;
         }
+
+        // 防御性检查：确保 tabs 不为空时才调用 open_in_new_tab
+        // （open_in_new_tab 内部会访问 tabs[active_tab]，空 tabs 会导致越界）
         let lang = Language::from_path(path);
         let tab = crate::tabs::Tab::File(crate::tabs::TabContent::with_loaded_buffer(
             Some(path.to_path_buf()),
@@ -403,7 +415,22 @@ impl EditorState {
             lang,
             false,
         ));
-        self.open_in_new_tab(tab);
+
+        // 如果 tabs 为空，直接 push 并设置 active_tab，跳过 swap_tab_content
+        if self.editor.tab_bar.tabs.is_empty() {
+            self.editor.tab_bar.tabs.push(tab);
+            self.editor.tab_bar.active_tab = 0;
+            // 同步内容到 editor.content
+            if let Some(crate::tabs::Tab::File(content)) = self.editor.tab_bar.tabs.get(0) {
+                // 克隆内容而非 swap，因为 tabs[0] 需要保留
+                self.editor.content = content.clone();
+            }
+            self.editor.is_selecting = false;
+            self.emit_event(crate::events::EditorEvent::TabChanged);
+        } else {
+            self.open_in_new_tab(tab);
+        }
+
         // 智能体模式下打开标签需保证右侧编辑区可见
         if self.editor_mode.is_agent() {
             self.ui.layout.right_panel_visible = true;
@@ -1513,6 +1540,39 @@ impl EditorState {
         Ok(lines.join("\n"))
     }
 
+    /// 在工作区中搜索关键词，返回格式化的搜索结果。
+    fn search_workspace_keyword(&self, keyword: &str) -> std::result::Result<String, String> {
+        use aether_core::search::{search_workspace, SearchQuery};
+        let Some(root) = self.fs.current_folder.as_ref() else {
+            return Err("未打开工作区".to_string());
+        };
+        let query = SearchQuery {
+            pattern: keyword.to_string(),
+            regex: false,
+            case_sensitive: false,
+            ..Default::default()
+        };
+        let results = search_workspace(root, &query);
+        if results.is_empty() {
+            return Ok(format!("未找到包含 \"{}\" 的代码", keyword));
+        }
+        // 限制结果数量，避免占满上下文
+        const MAX_RESULTS: usize = 50;
+        let mut lines: Vec<String> = Vec::new();
+        for r in results.iter().take(MAX_RESULTS) {
+            let rel_path = r
+                .path
+                .strip_prefix(root)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| r.path.to_string_lossy().to_string());
+            lines.push(format!("{}:{}: {}", rel_path, r.line, r.text.trim()));
+        }
+        if results.len() > MAX_RESULTS {
+            lines.push(format!("…（共 {} 个结果，已省略其余）", results.len()));
+        }
+        Ok(lines.join("\n"))
+    }
+
     /// 执行一批只读探查请求，返回 `(面板展示行, 回喂给模型的反馈文本)`。
     fn execute_tool_requests(
         &self,
@@ -1547,6 +1607,17 @@ impl EditorState {
                         }
                     }
                 }
+                ToolRequest::Search(keyword) => match self.search_workspace_keyword(keyword) {
+                    Ok(results) => {
+                        let n = results.lines().count();
+                        display.push(format!("◈ 已搜索 `{}`（{} 个结果）", keyword, n));
+                        feedback.push(format!("[搜索结果] {}\n{}", keyword, results));
+                    }
+                    Err(e) => {
+                        display.push(format!("✕ 搜索 `{}` 失败：{}", keyword, e));
+                        feedback.push(format!("[搜索失败] {}：{}", keyword, e));
+                    }
+                },
             }
         }
         (display, feedback.join("\n\n"))
@@ -1588,6 +1659,7 @@ impl EditorState {
             cursor: 0,
             created_files: Vec::new(),
             failed_files: Vec::new(),
+            resume_count: 0,
         });
         self.win.dirty_tracker.mark_full_window();
         self.run_pipeline_until_file_task_or_finish();
@@ -1664,6 +1736,17 @@ impl EditorState {
                     // 注意：思考模式下温度被忽略，但 worker 关闭思考后温度真实生效，
                     // 用户全局温度过高（如 2.0）会导致长代码生成退化为乱语。
                     settings.temperature = Some(0.0);
+                    // worker 生成完整文件需要更大的输出预算：16384 tokens 足以覆盖
+                    // 大多数单文件（HTML/CSS/JS/RS 等），避免中途截断导致文件不完整。
+                    // 若用户设置的 max_tokens 更大则尊重用户设置。
+                    let worker_max_tokens = 16384u32;
+                    if settings
+                        .max_tokens
+                        .map(|m| m < worker_max_tokens)
+                        .unwrap_or(true)
+                    {
+                        settings.max_tokens = Some(worker_max_tokens);
+                    }
                     self.ui.status_message =
                         format!("[{}/{}] 正在生成 {} …", cursor + 1, total, target);
                     self.ai.ai_panel.stream_focused(&settings, system, user);
@@ -1674,6 +1757,7 @@ impl EditorState {
     }
 
     /// worker 完成回调：把刚生成的文件落盘，记入已建清单，推进到下一任务。
+    /// 若输出被截断（max_tokens），自动发起续写请求补全文件。
     fn advance_agent_pipeline(&mut self, conv_idx: usize) {
         // 用户中途停止 → 中止流水线
         if self
@@ -1689,8 +1773,96 @@ impl EditorState {
             self.win.dirty_tracker.mark_full_window();
             return;
         }
+
+        // 检测截断：worker 输出被 max_tokens 截断时，自动续写补全文件
+        if self.ai.ai_panel.last_truncated {
+            // 获取当前任务信息用于续写
+            let (target, goal, created, resume_count) = {
+                let Some(p) = self.ai.ai_panel.agent_pipeline.as_ref() else {
+                    return;
+                };
+                let Some(task) = p.tasks.get(p.cursor) else {
+                    return;
+                };
+                (
+                    task.target.clone(),
+                    p.goal.clone(),
+                    p.created_files.clone(),
+                    p.resume_count,
+                )
+            };
+
+            // 续写次数限制：最多续写 3 次，防止无限循环
+            const MAX_RESUME_COUNT: usize = 3;
+            if resume_count >= MAX_RESUME_COUNT {
+                self.ai.ai_panel.add_assistant_message(format!(
+                    "[警告] 文件 `{}` 续写次数已达上限（{} 次），可能仍不完整。请手动检查或重新生成。",
+                    target, MAX_RESUME_COUNT
+                ));
+                // 将当前任务标记为失败，继续下一任务
+                if let Some(p) = self.ai.ai_panel.agent_pipeline.as_mut() {
+                    if let Some(task) = p.tasks.get(p.cursor) {
+                        p.failed_files.push(task.target.clone());
+                    }
+                    p.cursor += 1;
+                    p.resume_count = 0; // 重置续写计数
+                }
+                self.win.dirty_tracker.mark_full_window();
+                self.run_pipeline_until_file_task_or_finish();
+                return;
+            }
+
+            // 从 AI 输出中提取已生成的部分内容（而非从磁盘读取旧文件）
+            let partial_content = self
+                .ai
+                .ai_panel
+                .last_assistant_text_of(conv_idx)
+                .and_then(|text| Self::extract_file_content_from_output(&text, &target))
+                .unwrap_or_default();
+
+            // 读取已生成的其他文件内容（用于跨文件一致性）
+            let created_with_content: Vec<(String, String)> = created
+                .iter()
+                .map(|name| {
+                    let content = self.read_workspace_file(name).unwrap_or_default();
+                    (name.clone(), content)
+                })
+                .collect();
+
+            // 构建续写提示：告知模型已生成的部分内容，要求直接续写
+            let (system, user) = crate::ai_panel::build_worker_resume_prompt(
+                &goal,
+                &target,
+                &partial_content,
+                &created_with_content,
+            );
+
+            let mut settings = self.ui.app_settings.active_ai_settings();
+            settings.thinking = Some(false);
+            settings.temperature = Some(0.0);
+            // 续写时保持较大的 max_tokens
+            let worker_max_tokens = 16384u32;
+            if settings
+                .max_tokens
+                .map(|m| m < worker_max_tokens)
+                .unwrap_or(true)
+            {
+                settings.max_tokens = Some(worker_max_tokens);
+            }
+
+            // 增加续写计数
+            if let Some(p) = self.ai.ai_panel.agent_pipeline.as_mut() {
+                p.resume_count += 1;
+            }
+
+            self.ui.status_message = format!("正在续写 {} …（第 {} 次）", target, resume_count + 1);
+            self.ai.ai_panel.stream_focused(&settings, system, user);
+            return; // 续写完成后会再次进入本函数
+        }
+
         // 落盘当前 worker 生成的文件；成功与否如实记录
         let mut wrote_ok = false;
+        let mut error_msg: Option<String> = None;
         if let Some(text) = self.ai.ai_panel.last_assistant_text_of(conv_idx) {
             let edits = crate::ai_panel::parse_edits(&text, None);
             if !edits.is_empty() && self.fs.current_folder.is_some() {
@@ -1711,26 +1883,87 @@ impl EditorState {
                         self.refresh_file_tree_light();
                     }
                     Err(e) => {
+                        error_msg = Some(e.clone());
                         self.ai
                             .ai_panel
                             .add_assistant_message(format!("✕ 文件写入失败: {}", e));
                     }
                 }
+            } else if edits.is_empty() {
+                // AI 输出中没有有效的文件块
+                error_msg = Some("AI 输出中未找到有效的文件标记块".to_string());
             }
+        } else {
+            // 没有获取到 AI 输出
+            error_msg = Some("未获取到 AI 输出内容".to_string());
         }
-        // 记录成败并前进：成功的内容会传给后续 worker，失败的收尾时汇报
+
+        // 记录成败并前进：只有真正写入成功才标记完成
+        let mut failed_task_info: Option<(String, String)> = None;
         if let Some(p) = self.ai.ai_panel.agent_pipeline.as_mut() {
             if let Some(task) = p.tasks.get(p.cursor) {
                 if wrote_ok {
                     p.created_files.push(task.target.clone());
                 } else {
                     p.failed_files.push(task.target.clone());
+                    // 收集失败信息，稍后统一显示
+                    if let Some(err) = error_msg {
+                        failed_task_info = Some((task.target.clone(), err));
+                    }
                 }
             }
             p.cursor += 1;
+            p.resume_count = 0; // 重置续写计数，准备下一任务
+        }
+        // 显示失败任务信息（在释放 agent_pipeline 借用后）
+        if let Some((target, err)) = failed_task_info {
+            self.ai
+                .ai_panel
+                .add_assistant_message(format!("[警告] 任务 `{}` 未完成：{}", target, err));
         }
         self.win.dirty_tracker.mark_full_window();
         self.run_pipeline_until_file_task_or_finish();
+    }
+
+    /// 从 AI 输出文本中提取指定文件的内容（用于续写时获取已生成的部分内容）。
+    ///
+    /// 解析 `AETHER_FILE` 块，提取 `AETHER_SEP` 之后、`AETHER_END_FILE` 之前的内容。
+    /// 如果块未闭合（被截断），则提取到文本末尾。
+    fn extract_file_content_from_output(text: &str, target_path: &str) -> Option<String> {
+        use crate::ai_panel::{FILE_FOOTER, FILE_HEADER_PREFIX, FILE_SEP};
+        let lines: Vec<&str> = text.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i].trim_end();
+            // 查找目标文件的 FILE 头
+            if line.starts_with(FILE_HEADER_PREFIX) {
+                let path = line[FILE_HEADER_PREFIX.len()..].trim();
+                if path == target_path {
+                    // 找到目标文件，查找 SEP 分隔行
+                    i += 1;
+                    while i < lines.len() && lines[i].trim_end() != FILE_SEP {
+                        i += 1;
+                    }
+                    if i >= lines.len() {
+                        return None; // 没有找到 SEP
+                    }
+                    // 提取 SEP 之后的内容
+                    i += 1;
+                    let mut content_lines: Vec<&str> = Vec::new();
+                    while i < lines.len() {
+                        let l = lines[i].trim_end();
+                        if l == FILE_FOOTER {
+                            break; // 块闭合
+                        }
+                        content_lines.push(lines[i]);
+                        i += 1;
+                    }
+                    return Some(content_lines.join("\n"));
+                }
+            }
+            i += 1;
+        }
+        None
     }
 
     /// 流水线收尾：清理状态并如实汇总成败。

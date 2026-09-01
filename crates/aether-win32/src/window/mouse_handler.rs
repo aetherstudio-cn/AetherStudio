@@ -314,7 +314,7 @@ pub(crate) unsafe fn on_mouse_wheel(
                 if right_panel.contains(cursor_x, cursor_y) {
                     let chat_top = 52.0f32;
                     // 使用动态计算的输入框高度
-                    let input_area_h = state.ai.ai_panel.input_computed_height + 44.0f32;
+                    let input_area_h = state.ai.ai_panel.input_area_height();
                     let chat_bottom = right_panel.height - input_area_h;
                     // 只有当光标在聊天消息区域（非输入框）时才滚动
                     if cursor_y >= chat_top && cursor_y < chat_bottom {
@@ -328,10 +328,10 @@ pub(crate) unsafe fn on_mouse_wheel(
                 }
             }
 
-            // 设置页：光标在编辑器内容区内 → 滚动设置内容
+            // 设置页：光标在设置页区域内（经典=编辑器内容区，智能体=右面板内容区）→ 滚动设置内容
             if state.active_tab_is_settings() {
-                let editor = state.ui.layout.editor_region();
-                if editor.contains(cursor_x, cursor_y) {
+                let page = state.full_page_region(&state.ui.layout);
+                if page.contains(cursor_x, cursor_y) {
                     // delta>0（上滚）减小偏移查看上方内容
                     state.ui.settings_panel.scroll_by(-delta * 0.5);
                     invalidate_window(hwnd);
@@ -339,10 +339,10 @@ pub(crate) unsafe fn on_mouse_wheel(
                 }
             }
 
-            // 沙盒评测页：光标在编辑器内容区内 → 滚动页面内容
+            // 沙盒评测页：光标在页面区域内（经典=编辑器内容区，智能体=右面板内容区）→ 滚动页面内容
             if state.active_tab_is_sandbox_eval() {
-                let editor = state.ui.layout.editor_region();
-                if editor.contains(cursor_x, cursor_y) {
+                let page = state.full_page_region(&state.ui.layout);
+                if page.contains(cursor_x, cursor_y) {
                     let max_scroll = (state.ui.sandbox_eval.content_height
                         - state.ui.sandbox_eval.view_height)
                         .max(0.0);

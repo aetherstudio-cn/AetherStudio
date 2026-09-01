@@ -431,7 +431,22 @@ unsafe fn okd_ctrl_clipboard(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) {
                     .unwrap_or((false, false))
             });
             if ai_focused {
-                if let Some(text) = crate::editor::EditorState::get_clipboard_text() {
+                // 优先尝试剪贴板图片（截图位图 / Explorer 复制的图片文件）→ 附加为待发送图片；
+                // 无图片内容时回退到原有文本粘贴。
+                let image_attached = EDITOR_STATE.with(|s| {
+                    s.borrow()
+                        .as_ref()
+                        .map(|state| {
+                            matches!(
+                                crate::ai_image_input::try_paste_clipboard_image(state),
+                                crate::ai_image_input::PasteImageOutcome::Attached
+                            )
+                        })
+                        .unwrap_or(false)
+                });
+                if image_attached {
+                    invalidate_window(hwnd);
+                } else if let Some(text) = crate::editor::EditorState::get_clipboard_text() {
                     EDITOR_STATE.with(|s| {
                         if let Some(state) = s.borrow().as_ref() {
                             state.borrow_mut().ai.ai_panel.paste_text(&text);

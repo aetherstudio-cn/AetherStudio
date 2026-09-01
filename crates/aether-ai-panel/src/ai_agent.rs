@@ -41,6 +41,8 @@ pub const LOCATE_HEADER: &str = "<<<<<<< AETHER_LOCATE";
 pub const EDIT_HEADER: &str = "<<<<<<< AETHER_EDIT";
 /// 精准编辑结束标记：`>>>>>>> AETHER_END_EDIT`
 pub const EDIT_FOOTER: &str = ">>>>>>> AETHER_END_EDIT";
+/// 工作区搜索标记（单行指令，关键词为参数）：`<<<<<<< AETHER_SEARCH <关键词>`
+pub const SEARCH_PREFIX: &str = "<<<<<<< AETHER_SEARCH";
 
 /// 快速判断回复是否包含任一 Agent 工具标记（用于"未打开工作区"等前置校验）。
 pub fn has_agent_markers(text: &str) -> bool {
@@ -50,16 +52,19 @@ pub fn has_agent_markers(text: &str) -> bool {
             || t == RUN_HEADER
             || t.starts_with(READ_PREFIX)
             || t.starts_with(LIST_PREFIX)
+            || t.starts_with(SEARCH_PREFIX)
     })
 }
 
-/// 只读探查请求：读取文件 / 列出目录。由编辑器同步执行并将结果回喂给模型。
+/// 只读探查请求：读取文件 / 列出目录 / 搜索工作区。由编辑器同步执行并将结果回喂给模型。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolRequest {
     /// 读取文件内容（参数为工作区相对路径）
     Read(String),
     /// 列出目录条目（参数为工作区相对路径，空串表示根目录）
     List(String),
+    /// 搜索工作区（参数为搜索关键词）
+    Search(String),
 }
 
 /// 解析单行指令标记，返回其后的参数（前缀后须紧跟空白或行尾）。
@@ -669,10 +674,10 @@ pub fn parse_run_commands(response: &str) -> Vec<String> {
     commands
 }
 
-/// 从 AI 回复中解析只读探查请求（READ / LIST）。
+/// 从 AI 回复中解析只读探查请求（READ / LIST / SEARCH）。
 ///
 /// 会跳过 FILE / RUN 块体，避免块内的文件内容/命令被误读为工具请求；
-/// READ/LIST 为单行指令，路径写在标记行同一行。
+/// READ/LIST/SEARCH 为单行指令，路径/关键词写在标记行同一行。
 pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
     let lines: Vec<&str> = response.lines().collect();
     let mut reqs = Vec::new();
@@ -704,6 +709,14 @@ pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
         // 列出目录：空路径表示工作区根
         if let Some(p) = parse_directive(t, LIST_PREFIX) {
             reqs.push(ToolRequest::List(p));
+            i += 1;
+            continue;
+        }
+        // 搜索工作区：关键词非空才有效
+        if let Some(p) = parse_directive(t, SEARCH_PREFIX) {
+            if !p.is_empty() {
+                reqs.push(ToolRequest::Search(p));
+            }
             i += 1;
             continue;
         }
@@ -1343,6 +1356,28 @@ cargo test\n\
                 ToolRequest::List("".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn test_parse_tool_requests_search() {
+        let text = "我搜索一下：\n\
+<<<<<<< AETHER_SEARCH login\n\
+<<<<<<< AETHER_READ src/main.rs\n";
+        let reqs = parse_tool_requests(text);
+        assert_eq!(
+            reqs,
+            vec![
+                ToolRequest::Search("login".to_string()),
+                ToolRequest::Read("src/main.rs".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_requests_search_empty_ignored() {
+        // SEARCH 无关键词无效
+        let reqs = parse_tool_requests("<<<<<<< AETHER_SEARCH\n");
+        assert!(reqs.is_empty());
     }
 
     #[test]

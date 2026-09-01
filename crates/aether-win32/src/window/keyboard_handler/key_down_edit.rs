@@ -37,6 +37,11 @@ pub(crate) unsafe fn okd_edit_dispatch(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool)
         return;
     }
 
+    // 智能体模式：AI 面板可见但输入框未聚焦时，方向键滚动对话历史
+    if !ime_composing && okd_agent_ai_scroll(hwnd, vk) {
+        return;
+    }
+
     match vk {
         VK_RETURN => okd_edit_return(hwnd),
         VK_BACK => okd_edit_back(hwnd),
@@ -46,6 +51,107 @@ pub(crate) unsafe fn okd_edit_dispatch(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool)
         VK_HOME | VK_END | VK_PRIOR | VK_NEXT => okd_edit_home_end_page(hwnd, vk, shift),
         VK_TAB => okd_edit_tab(hwnd),
         _ => {}
+    }
+}
+
+/// 智能体模式：AI 面板可见但输入框未聚焦时，方向键/PageUp/PageDown 滚动对话历史
+/// 返回 true 表示已处理，false 表示按键不属于此范畴
+unsafe fn okd_agent_ai_scroll(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
+    let should_handle = EDITOR_STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|state| {
+                let st = state.borrow();
+                // 智能体模式 + AI 面板可见 + 输入框未聚焦 + 历史浮窗未打开
+                st.editor_mode.is_agent()
+                    && st.ai.ai_panel.visible
+                    && !st.ai.ai_panel.input_focused
+                    && !st.ai.ai_panel.history_open
+            })
+            .unwrap_or(false)
+    });
+    if !should_handle {
+        return false;
+    }
+
+    match vk {
+        VK_UP => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    st.ai.ai_panel.scroll_y = (st.ai.ai_panel.scroll_y - 40.0)
+                        .clamp(0.0, st.ai.ai_panel.content_height.max(0.0));
+                    st.ai.ai_panel.stick_to_bottom = false;
+                    invalidate_window(hwnd);
+                }
+            });
+            true
+        }
+        VK_DOWN => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    st.ai.ai_panel.scroll_y = (st.ai.ai_panel.scroll_y + 40.0)
+                        .clamp(0.0, st.ai.ai_panel.content_height.max(0.0));
+                    st.ai.ai_panel.stick_to_bottom = false;
+                    invalidate_window(hwnd);
+                }
+            });
+            true
+        }
+        VK_PRIOR => {
+            // PageUp：滚动一页
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    let page_h = 400.0; // 估算一页高度
+                    st.ai.ai_panel.scroll_y = (st.ai.ai_panel.scroll_y - page_h)
+                        .clamp(0.0, st.ai.ai_panel.content_height.max(0.0));
+                    st.ai.ai_panel.stick_to_bottom = false;
+                    invalidate_window(hwnd);
+                }
+            });
+            true
+        }
+        VK_NEXT => {
+            // PageDown：滚动一页
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    let page_h = 400.0; // 估算一页高度
+                    st.ai.ai_panel.scroll_y = (st.ai.ai_panel.scroll_y + page_h)
+                        .clamp(0.0, st.ai.ai_panel.content_height.max(0.0));
+                    st.ai.ai_panel.stick_to_bottom = false;
+                    invalidate_window(hwnd);
+                }
+            });
+            true
+        }
+        VK_HOME => {
+            // Home：滚动到顶部
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    st.ai.ai_panel.scroll_y = 0.0;
+                    st.ai.ai_panel.stick_to_bottom = false;
+                    invalidate_window(hwnd);
+                }
+            });
+            true
+        }
+        VK_END => {
+            // End：滚动到底部
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    let mut st = state.borrow_mut();
+                    st.ai.ai_panel.scroll_y = st.ai.ai_panel.content_height.max(0.0);
+                    st.ai.ai_panel.stick_to_bottom = true;
+                    invalidate_window(hwnd);
+                }
+            });
+            true
+        }
+        _ => false,
     }
 }
 

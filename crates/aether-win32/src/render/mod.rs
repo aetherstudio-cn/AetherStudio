@@ -1345,7 +1345,7 @@ impl EditorState {
             let margin = 10.0f32;
             let input_margin = 8.0f32;
             let text_input_h = self.ai.ai_panel.input_computed_height.max(36.0);
-            let input_area_h = text_input_h + 44.0;
+            let input_area_h = self.ai.ai_panel.input_area_height();
             let input_y = region.y + region.height - input_area_h;
             let text_input_y = input_y + 6.0;
             let text_left = region.x + margin + input_margin + 4.0;

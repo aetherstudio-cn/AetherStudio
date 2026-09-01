@@ -68,6 +68,7 @@ pub fn build_chat_prompt(settings: &AiSettings, context: &str, mode: AiMode) -> 
     vec![ChatMessage {
         role: "system".to_string(),
         content: sections.join("\n\n"),
+        images: Vec::new(),
     }]
 }
 
@@ -85,17 +86,37 @@ fn detect_shell() -> &'static str {
 /// 编辑器会自动解析并执行输出中的标记，落盘到磁盘并刷新文件树，无需用户手动保存。
 pub fn agent_capabilities_prompt(shell: &str) -> String {
     use crate::ai_agent::{
-        FILE_FOOTER, FILE_HEADER_PREFIX, FILE_SEP, LIST_PREFIX, READ_PREFIX, RUN_FOOTER, RUN_HEADER,
+        EDIT_FOOTER, EDIT_HEADER, FILE_FOOTER, FILE_HEADER_PREFIX, FILE_SEP, LIST_PREFIX,
+        LOCATE_HEADER, READ_PREFIX, RUN_FOOTER, RUN_HEADER, SEARCH_PREFIX,
     };
     format!(
         r#"你可以直接在当前工作区创建、修改、删除文件和文件夹，也可以执行终端命令，拥有与用户完全同等的项目操作权限。编辑器会自动解析并执行你输出的下列标记：
 
-【创建 / 修改 / 删除文件】
+【创建 / 整文件替换 / 删除文件】
 {FILE_HEADER_PREFIX} 相对路径
 原代码片段（创建新文件或整文件替换时此处留空）
 {FILE_SEP}
 新内容（删除文件时此处留空）
 {FILE_FOOTER}
+
+【精准编辑（局部修改，优先使用）】
+当只需修改文件的某一部分时，使用精准编辑而非全量写入：
+{LOCATE_HEADER} lines <起始行号> <结束行号> [@ 相对路径]
+{EDIT_HEADER} replace
+新内容
+{EDIT_FOOTER}
+
+定位方式（任选其一）：
+- `{LOCATE_HEADER} lines <起始行> <结束行>` — 按行号范围定位（最精确）
+- `{LOCATE_HEADER} keyword <关键词> [上下文行数]` — 按关键词定位
+- `{LOCATE_HEADER} fn <函数名>` — 定位整个函数体
+- `{LOCATE_HEADER} snippet <代码片段>` — 按代码片段匹配
+
+编辑操作（任选其一）：
+- `{EDIT_HEADER} replace` — 替换定位到的内容
+- `{EDIT_HEADER} insert before` — 在定位位置前插入
+- `{EDIT_HEADER} insert after` — 在定位位置后插入
+- `{EDIT_HEADER} delete` — 删除定位到的内容
 
 【执行终端命令】
 {RUN_HEADER}
@@ -105,18 +126,21 @@ pub fn agent_capabilities_prompt(shell: &str) -> String {
 【只读探查（先看后改，各占一行；结果会自动回传给你）】
 {READ_PREFIX} 相对路径      （读取某个文件的内容）
 {LIST_PREFIX} 相对路径      （列出某个目录下的条目，路径留空或写 . 表示工作区根目录）
-注意：READ / LIST 都是**单行指令**，写完路径即结束，**没有也不要写任何结束标记**（例如不要输出 AETHER_END_READ / AETHER_END_LIST）。
+{SEARCH_PREFIX} 关键词      （在整个工作区搜索包含关键词的代码行，返回文件路径+行号+内容）
+注意：READ / LIST / SEARCH 都是**单行指令**，写完参数即结束，**没有也不要写任何结束标记**（例如不要输出 AETHER_END_READ / AETHER_END_LIST / AETHER_END_SEARCH）。
 
 必须遵守：
-1. 上述每个标记（{FILE_HEADER_PREFIX} / {FILE_SEP} / {FILE_FOOTER} / {RUN_HEADER} / {RUN_FOOTER} / {READ_PREFIX} / {LIST_PREFIX}）都必须**独占一整行**，行首顶格、前后不得有其它字符，否则不会被识别。
+1. 上述每个标记（{FILE_HEADER_PREFIX} / {FILE_SEP} / {FILE_FOOTER} / {LOCATE_HEADER} / {EDIT_HEADER} / {EDIT_FOOTER} / {RUN_HEADER} / {RUN_FOOTER} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX}）都必须**独占一整行**，行首顶格、前后不得有其它字符，否则不会被识别。
 2. 当用户要求"生成/创建/新建/写一个……文件或脚本"时，必须使用文件标记直接创建文件，而不是只贴代码块。
-3. 修改文件时，原代码片段必须与目标文件内容逐字符一致（含缩进与空行）且在文件中全局唯一；无法保证唯一时改用整文件替换（原片段留空，新内容为完整文件）。
-4. 路径相对于当前工作区根目录；路径中不存在的目录会被自动创建；禁止操作工作区目录之外的文件。
-5. 需要运行/编译/安装时，用 {RUN_HEADER} 标记在集成终端执行命令（当前终端环境：{shell}）；禁止执行删除工作区外文件、格式化磁盘、修改系统配置等高危命令。
-6. 当你不确定文件内容或项目结构时，先用 {READ_PREFIX} / {LIST_PREFIX} 探查：**探查请单独成轮**，本轮只输出探查标记、不要同时修改文件或执行命令；拿到回传结果后再决定如何修改。
-7. 严禁输出"我无法访问文件系统""请你手动保存/复制"之类的话——你确实有权限直接操作，直接给出标记即可。
-8. 文件/命令内容内部即使出现 {FILE_SEP} / {FILE_FOOTER} / {RUN_FOOTER} 这类字样也没关系（只要它们不是独占一行的标记行），普通的 Git 冲突标记（{sep7} 等）可正常包含在文件内容中。
-9. 你用 {RUN_HEADER} 标记执行的命令，其终端输出会以一条 `[终端命令执行结果]` 消息回传给你；{READ_PREFIX} / {LIST_PREFIX} 的结果会以 `[文件内容]` / `[目录列表]` 回传：请根据这些结果继续后续步骤（如读到源码后再修改、编译报错后修复重试）；如果结果显示失败，分析原因并修正后重试，不要假设操作已成功。"#,
+3. **修改已有文件时，优先使用精准编辑（{LOCATE_HEADER} + {EDIT_HEADER}）进行局部修改**，而非全量写入。只有当修改范围很大或无法确定具体位置时，才使用 {FILE_HEADER_PREFIX} 整文件替换。
+4. 使用精准编辑前，先用 {READ_PREFIX} 读取文件内容，确定要修改的行号范围或关键词。
+5. **当需要查找某个函数、变量、标识符在工作区中的位置时，先用 {SEARCH_PREFIX} 搜索**，再根据结果用 {READ_PREFIX} 读取具体文件。
+6. 路径相对于当前工作区根目录；路径中不存在的目录会被自动创建；禁止操作工作区目录之外的文件。
+7. 需要运行/编译/安装时，用 {RUN_HEADER} 标记在集成终端执行命令（当前终端环境：{shell}）；禁止执行删除工作区外文件、格式化磁盘、修改系统配置等高危命令。
+8. 当你不确定文件内容或项目结构时，先用 {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} 探查：**探查请单独成轮**，本轮只输出探查标记、不要同时修改文件或执行命令；拿到回传结果后再决定如何修改。
+9. 严禁输出"我无法访问文件系统""请你手动保存/复制"之类的话——你确实有权限直接操作，直接给出标记即可。
+10. 文件/命令内容内部即使出现 {FILE_SEP} / {FILE_FOOTER} / {RUN_FOOTER} 这类字样也没关系（只要它们不是独占一行的标记行），普通的 Git 冲突标记（{sep7} 等）可正常包含在文件内容中。
+11. 你用 {RUN_HEADER} 标记执行的命令，其终端输出会以一条 `[终端命令执行结果]` 消息回传给你；{READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} 的结果会以 `[文件内容]` / `[目录列表]` / `[搜索结果]` 回传：请根据这些结果继续后续步骤（如读到源码后再修改、编译报错后修复重试）；如果结果显示失败，分析原因并修正后重试，不要假设操作已成功。"#,
         sep7 = "======="
     )
 }
@@ -225,5 +249,74 @@ pub fn build_worker_prompt(
         }
     }
     user.push_str(&format!("现在请只输出 `{}` 的文件标记块。", path));
+    (system, user)
+}
+
+/// 构建 worker 续写提示：当文件生成被 max_tokens 截断时，让模型从断点继续补全。
+///
+/// 与 `build_worker_prompt` 的区别：
+/// - 告知模型文件已部分内容已生成（但未落盘），要求直接续写而非重新生成；
+/// - 强调不要重复已输出部分，不要输出解释文字；
+/// - 提示模型在合适的位置（如函数/标签边界）继续。
+pub fn build_worker_resume_prompt(
+    goal: &str,
+    path: &str,
+    partial_content: &str,
+    created_files: &[(String, String)],
+) -> (String, String) {
+    use crate::ai_agent::{FILE_FOOTER, FILE_HEADER_PREFIX, FILE_SEP};
+    let system = format!(
+        r#"你是专注的文件生成器。之前为文件 `{}` 生成的内容因长度限制被截断，现在需要从中断处继续补全。
+
+输出格式（严格遵守，标记各占一整行、行首顶格）：
+{FILE_HEADER_PREFIX} 相对路径
+{FILE_SEP}
+续写的剩余内容（不要重复已有部分）
+{FILE_FOOTER}
+
+续写规则：
+1. 原代码片段段（{FILE_SEP} 之前）留空
+2. 只输出续写部分，**不要重复已生成的内容**
+3. 不要输出任何解释文字、注释或前言
+4. 从已生成内容的**最后一个完整结构**（如函数、标签、代码块）之后继续
+5. 如果已生成内容在某个结构中间截断，请先补全该结构再继续"#,
+        path
+    );
+
+    let mut user = String::new();
+    if !goal.trim().is_empty() {
+        user.push_str(&format!("【整体目标】{}\n", goal.trim()));
+    }
+    user.push_str(&format!(
+        "【续写任务】文件 `{}` 的内容被截断，请从断点继续补全。\n",
+        path
+    ));
+    if !created_files.is_empty() {
+        user.push_str(
+            "【本次已生成的其它文件】（请与其中的结构、类名、函数名、引用路径保持一致）\n",
+        );
+        for (name, content) in created_files {
+            if content.trim().is_empty() {
+                user.push_str(&format!("- `{}`（内容略）\n", name));
+            } else {
+                user.push_str(&format!("- `{}`：\n```\n{}\n```\n", name, content));
+            }
+        }
+    }
+    if !partial_content.trim().is_empty() {
+        // 分析已生成内容的末尾，帮助模型理解断点位置
+        let lines: Vec<&str> = partial_content.lines().collect();
+        let last_lines: Vec<&str> = lines.iter().rev().take(5).rev().cloned().collect();
+        let tail_hint = last_lines.join("\n");
+
+        user.push_str(&format!(
+            "【该文件已生成的部分内容】\n```\n{}\n```\n\n【已生成内容的末尾几行】\n```\n{}\n```\n\n请直接从上述内容的末尾继续续写，补全剩余部分，使文件完整。**不要重复已有内容**。
+",
+            partial_content, tail_hint
+        ));
+    } else {
+        user.push_str("【注意】未能获取已生成的部分内容，请重新生成完整文件。\n");
+    }
+    user.push_str(&format!("现在请只输出 `{}` 的续写文件标记块。", path));
     (system, user)
 }

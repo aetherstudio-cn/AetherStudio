@@ -61,7 +61,11 @@ impl AiProvider {
     /// 作为 UI 模型下拉的唯一数据源，避免核心层与 UI 清单漂移。
     pub fn preset_models(&self) -> &'static [&'static str] {
         match self {
-            Self::DeepSeek => &["deepseek-v4-pro", "deepseek-v4-flash"],
+            Self::DeepSeek => &[
+                "deepseek-v4-pro",
+                "deepseek-v4-flash",
+                "deepseek-v4-flash-vision-exp",
+            ],
             Self::Kimi => &[
                 "moonshot-v1-8k",
                 "moonshot-v1-32k",
@@ -187,6 +191,8 @@ pub struct AiConfig {
     pub response_format: Option<String>,
     /// 业务侧用户标识，None/空=不下发
     pub user_id: Option<String>,
+    /// 模型是否支持多模态（图片）输入（用户在模型配置中声明）
+    pub multimodal: bool,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -210,6 +216,7 @@ impl std::fmt::Debug for AiConfig {
             .field("stop", &self.stop)
             .field("response_format", &self.response_format)
             .field("user_id", &self.user_id)
+            .field("multimodal", &self.multimodal)
             .finish()
     }
 }
@@ -246,6 +253,7 @@ impl AiConfig {
             stop: settings.stop.clone(),
             response_format: settings.response_format.clone(),
             user_id: settings.user_id.clone(),
+            multimodal: settings.multimodal,
         }
     }
 
@@ -261,10 +269,62 @@ pub struct AiClient {
     http: ureq::Agent,
 }
 
+/// 多模态图片输入块（随 user 消息以 OpenAI 兼容 `image_url` 内容块发送）。
+///
+/// 格式按文件实际内容（魔数）判定，与文件名/声明的 MIME 无关——
+/// 与 DeepSeek 视觉模型的服务端行为一致。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ChatImage {
+    /// MIME 类型：image/jpeg / image/png / image/gif / image/webp
+    pub mime: String,
+    /// 图片原始字节的 Base64 编码（请求时拼为 `data:<mime>;base64,<data>` URL）
+    pub data_b64: String,
+}
+
+impl ChatImage {
+    /// 单张内联图片的原始字节上限 32 MiB（DeepSeek base64/URL 单图限制）
+    pub const MAX_RAW_BYTES: usize = 32 * 1024 * 1024;
+
+    /// 从原始字节构造：按魔数识别格式（不支持则返回 None）并做 Base64 编码。
+    /// 超过 `MAX_RAW_BYTES` 的字节流直接拒绝（内联会顶破 48 MiB 请求体限制）。
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let mime = Self::detect_mime(bytes)?;
+        if bytes.len() > Self::MAX_RAW_BYTES {
+            return None;
+        }
+        use base64::Engine;
+        Some(Self {
+            mime: mime.to_string(),
+            data_b64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        })
+    }
+
+    /// 按魔数识别图片格式（JPEG / PNG / GIF / WebP），未知返回 None
+    pub fn detect_mime(bytes: &[u8]) -> Option<&'static str> {
+        if bytes.len() >= 3 && bytes[..3] == [0xFF, 0xD8, 0xFF] {
+            return Some("image/jpeg");
+        }
+        if bytes.len() >= 8 && bytes[..8] == [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
+            return Some("image/png");
+        }
+        if bytes.len() >= 6 && (bytes[..6] == *b"GIF87a" || bytes[..6] == *b"GIF89a") {
+            return Some("image/gif");
+        }
+        if bytes.len() >= 12 && bytes[..4] == *b"RIFF" && bytes[8..12] == *b"WEBP" {
+            return Some("image/webp");
+        }
+        None
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// 附加图片（仅 user 消息生效）：序列化时转为内容块数组；
+    /// 不参与 serde 持久化（#[serde(skip)]），历史消息重放不重发图片。
+    #[serde(skip)]
+    pub images: Vec<ChatImage>,
 }
 
 impl ChatMessage {
@@ -272,6 +332,7 @@ impl ChatMessage {
         Self {
             role: "user".to_string(),
             content: content.into(),
+            images: Vec::new(),
         }
     }
 
@@ -279,7 +340,34 @@ impl ChatMessage {
         Self {
             role: "assistant".to_string(),
             content: content.into(),
+            images: Vec::new(),
         }
+    }
+
+    /// 序列化为 OpenAI 兼容消息体：无图片时 content 为纯字符串；
+    /// 有图片的 user 消息转为块数组（text + image_url data URL）。
+    /// API 仅接受 user 消息携带图片，其它角色强制忽略图片字段。
+    pub fn to_api_json(&self) -> serde_json::Value {
+        if self.images.is_empty() || self.role != "user" {
+            return serde_json::json!({
+                "role": self.role,
+                "content": self.content,
+            });
+        }
+        let mut blocks: Vec<serde_json::Value> =
+            vec![serde_json::json!({ "type": "text", "text": self.content })];
+        for img in &self.images {
+            blocks.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:{};base64,{}", img.mime, img.data_b64),
+                },
+            }));
+        }
+        serde_json::json!({
+            "role": self.role,
+            "content": blocks,
+        })
     }
 }
 
@@ -663,15 +751,7 @@ impl AiClient {
         // 始终使用原始 base_url（含域名），TLS 证书验证才能匹配域名
         let url = format!("{}/chat/completions", base_url);
 
-        let msgs: Vec<serde_json::Value> = messages
-            .iter()
-            .map(|m| {
-                serde_json::json!({
-                    "role": m.role,
-                    "content": m.content,
-                })
-            })
-            .collect();
+        let msgs: Vec<serde_json::Value> = messages.iter().map(|m| m.to_api_json()).collect();
 
         let body = serde_json::json!({
             "model": self.config.model,
@@ -755,15 +835,9 @@ impl AiClient {
         let url = format!("{}/chat/completions", base_url);
         // system 消息由调用方在消息列表中构建（见 build_chat_prompt，固定为第一条），
         // 此处不再从 config.system_prompt 重复注入，避免同一提示词发送两遍。
-        let body_messages: Vec<serde_json::Value> = messages
-            .iter()
-            .map(|m| {
-                serde_json::json!({
-                    "role": m.role,
-                    "content": m.content,
-                })
-            })
-            .collect();
+        // 带图片的 user 消息在 to_api_json 中转为内容块数组（多模态）。
+        let body_messages: Vec<serde_json::Value> =
+            messages.iter().map(|m| m.to_api_json()).collect();
 
         let mut body = serde_json::json!({
             "model": self.config.model,
@@ -1038,7 +1112,11 @@ mod tests {
         // DeepSeek/Kimi 提供真实模型清单；Custom 无预置
         assert_eq!(
             AiProvider::DeepSeek.preset_models(),
-            &["deepseek-v4-pro", "deepseek-v4-flash"]
+            &[
+                "deepseek-v4-pro",
+                "deepseek-v4-flash",
+                "deepseek-v4-flash-vision-exp"
+            ]
         );
         assert!(AiProvider::Kimi.preset_models().contains(&"moonshot-v1-8k"));
         assert!(AiProvider::Kimi.preset_models().contains(&"kimi-latest"));
@@ -1168,6 +1246,7 @@ mod tests {
             stop: None,
             response_format: None,
             user_id: None,
+            multimodal: false,
         };
         let out = format!("{:?}", config);
         assert!(!out.contains("super-secret"), "api_key leaked in Debug");
@@ -1624,5 +1703,89 @@ mod tests {
 
         let dbg = format!("{:?}", AiStreamEvent::Token("x".to_string()));
         assert!(dbg.contains("Token") && dbg.contains("x"));
+    }
+
+    // ==================== ChatImage / 多模态 ====================
+
+    #[test]
+    fn chat_image_detect_mime_by_magic_bytes() {
+        // JPEG / PNG / GIF / WebP 魔数识别，与文件名无关
+        assert_eq!(
+            ChatImage::detect_mime(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            ChatImage::detect_mime(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+            Some("image/png")
+        );
+        assert_eq!(ChatImage::detect_mime(b"GIF89a"), Some("image/gif"));
+        assert_eq!(ChatImage::detect_mime(b"GIF87a"), Some("image/gif"));
+        assert_eq!(
+            ChatImage::detect_mime(b"RIFF\x00\x00\x00\x00WEBP"),
+            Some("image/webp")
+        );
+        assert_eq!(ChatImage::detect_mime(b"plain text"), None);
+        assert_eq!(ChatImage::detect_mime(&[]), None);
+    }
+
+    #[test]
+    fn chat_image_from_bytes_encodes_base64() {
+        // PNG 魔数 + 载荷：from_bytes 成功且 base64 可还原
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+        let img = ChatImage::from_bytes(&bytes).expect("PNG 应可识别");
+        assert_eq!(img.mime, "image/png");
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&img.data_b64)
+            .unwrap();
+        assert_eq!(decoded, bytes);
+        // 未知格式返回 None
+        assert!(ChatImage::from_bytes(b"not an image").is_none());
+    }
+
+    #[test]
+    fn chat_message_to_api_json_plain_and_multimodal() {
+        // 无图片：content 保持纯字符串
+        let plain = ChatMessage::user("你好");
+        let v = plain.to_api_json();
+        assert_eq!(v["role"], "user");
+        assert_eq!(v["content"], serde_json::json!("你好"));
+
+        // 带图片的 user 消息：content 转为块数组（text + image_url data URL）
+        let mut with_img = ChatMessage::user("这张图片里有什么？");
+        with_img.images.push(ChatImage {
+            mime: "image/jpeg".to_string(),
+            data_b64: "QUJD".to_string(),
+        });
+        let v = with_img.to_api_json();
+        let blocks = v["content"].as_array().expect("应为块数组");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[1]["type"], "image_url");
+        assert_eq!(
+            blocks[1]["image_url"]["url"],
+            serde_json::json!("data:image/jpeg;base64,QUJD")
+        );
+
+        // 非 user 角色即使带图片也退回纯文本（API 仅接受 user 携带图片）
+        let mut assistant = ChatMessage::assistant("回答");
+        assistant.images.push(ChatImage {
+            mime: "image/png".to_string(),
+            data_b64: "x".to_string(),
+        });
+        assert_eq!(
+            assistant.to_api_json()["content"],
+            serde_json::json!("回答")
+        );
+    }
+
+    #[test]
+    fn config_multimodal_from_settings() {
+        let mut settings = AiSettings::default();
+        settings.provider = "deepseek".to_string();
+        settings.multimodal = true;
+        let config = AiConfig::from_settings(&settings);
+        assert!(config.multimodal);
     }
 }
