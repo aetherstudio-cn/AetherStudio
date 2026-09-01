@@ -754,6 +754,13 @@ unsafe fn okd_settings_field(hwnd: HWND, vk: VIRTUAL_KEY, shift: bool) -> Option
                     invalidate_window(hwnd);
                 }
             });
+            // Tab 切换字段后保证光标闪烁定时器在运行（点击聚焦路径已启动时为空操作）
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                hwnd,
+                crate::window::CARET_TIMER_ID,
+                530,
+                None,
+            );
             Some(LRESULT(0))
         }
         VK_V if ctrl => {

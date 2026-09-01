@@ -770,6 +770,24 @@ impl EditorState {
             layout.editor_region()
         }
     }
+    /// 整页标签（设置/沙盒评测）的渲染区域：经典模式占据编辑器内容区（标签栏下方），
+    /// 智能体模式占据右面板内容区（标签栏下方）。
+    ///
+    /// 与 [`settings_page_region`] 不同，本方法用于滚轮等交互门控，
+    /// 与 [`new_tab_page_region`] 的几何口径一致。
+    pub fn full_page_region(&self, layout: &crate::layout::LayoutManager) -> crate::layout::Region {
+        if self.editor_mode.is_agent() {
+            let rp = layout.right_panel_region();
+            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+                0.0
+            } else {
+                TAB_BAR_HEIGHT
+            };
+            crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+        } else {
+            layout.editor_content_region(self.show_tab_bar())
+        }
+    }
     /// 新标签页（NTP）内容区域：经典模式占据编辑器内容区（标签栏下方），
     /// 智能体模式占据右面板内容区（标签栏下方）。渲染/点击/光标/IME 共用。
     pub fn new_tab_page_region(

@@ -16,6 +16,13 @@ impl EditorState {
                 return;
             }
 
+            // 局部重绘自包含：脏矩形裁剪帧跳过全窗口 clear（render/mod.rs），
+            // 若此处不先铺面板背景，流式生成期间新文字会叠加在上一帧残影上，
+            // 抗锯齿边缘逐帧累积导致文字变暗/闪烁（全窗口帧与裁剪帧交替时尤为明显）。
+            self.win
+                .render_ctx
+                .fill_rect(x, y, width, height, &self.win.theme.editor_bg);
+
             // 文件卡片命中区域每帧重建（P0 可展开预览）；
             // 放在函数开头，历史视图/早退分支下也不会残留旧区域。
             self.ai.ai_panel.file_card_regions.clear();
@@ -485,8 +492,8 @@ impl EditorState {
 
             // ===== 聊天消息区域 =====
             // 使用上一帧计算的输入框高度（避免在渲染过程中重复计算）
-            // 输入框区域高度 = 文本输入高度 + 工具栏高度(34) + 间距(8)
-            let input_area_h = self.ai.ai_panel.input_computed_height + 44.0f32;
+            // 输入框区域高度 = 文本输入高度 + 工具栏与间距(44) + 图片 chips 行（若有）
+            let input_area_h = self.ai.ai_panel.input_area_height();
             let chat_top = cy;
             let chat_bottom = y + height - input_area_h - 8.0;
             // 消息区域（自动换行 + 完整显示 + 代码块分段，不再按 80 字符截断）
@@ -663,9 +670,18 @@ impl EditorState {
                 // 用户消息无标记，整体作为一段文本；Tool 消息同样整体作为一段文本。
                 // 待确认消息也整体作为一段文本，但使用特殊样式渲染。
                 let display_blocks = if is_user || is_tool || is_pending_confirmation {
-                    vec![crate::ai_panel::AgentDisplayBlock::Text(
-                        msg.content.clone(),
-                    )]
+                    // 用户消息附带过图片时，在正文前展示图片文件名标注（数据不持久化重发）
+                    if is_user && !msg.image_names.is_empty() {
+                        let img_line = format!("🖼 图片：{}\n", msg.image_names.join("、"));
+                        vec![crate::ai_panel::AgentDisplayBlock::Text(format!(
+                            "{}{}",
+                            img_line, msg.content
+                        ))]
+                    } else {
+                        vec![crate::ai_panel::AgentDisplayBlock::Text(
+                            msg.content.clone(),
+                        )]
+                    }
                 } else {
                     crate::ai_panel::parse_display_blocks(&msg.content)
                 };
@@ -2194,8 +2210,8 @@ impl EditorState {
             // 更新 AI 面板的输入框高度缓存
             self.ai.ai_panel.input_computed_height = text_input_h;
 
-            // 输入区域总高度 = 文本输入高度 + 工具栏高度(34) + 间距
-            let input_area_h = text_input_h + 44.0f32; // 44 = 6(上间距) + 34(工具栏) + 4(下间距)
+            // 输入区域总高度 = 文本输入高度 + 工具栏与间距(44) + 图片 chips 行（若有）
+            let input_area_h = self.ai.ai_panel.input_area_height();
             let input_y = y + height - input_area_h;
 
             // 输入框卡片背景（圆角卡片）
@@ -2486,6 +2502,103 @@ impl EditorState {
             };
             target.FillRectangle(&toolbar_sep, &sep_brush);
 
+            // 3.5 待发送图片 chips 行（多模态：附加的图片以文件名胶囊展示，点击移除）
+            self.ai.ai_panel.image_chip_regions.clear();
+            if !self.ai.ai_panel.pending_images.is_empty() {
+                let chips_top = input_y + 6.0 + text_input_h + 4.0;
+                let chip_h = 24.0f32;
+                let mut chip_x = x + margin + input_margin;
+                let max_chip_x = x + width - margin - input_margin;
+                for (i, img) in self.ai.ai_panel.pending_images.iter().enumerate() {
+                    // 文件名过长时截断展示
+                    let display_name: String = if img.filename.chars().count() > 18 {
+                        let mut s: String = img.filename.chars().take(17).collect();
+                        s.push('…');
+                        s
+                    } else {
+                        img.filename.clone()
+                    };
+                    let chip_w =
+                        ((display_name.chars().count() as f32) * 6.5 + 42.0).clamp(64.0, 180.0);
+                    if chip_x + chip_w > max_chip_x {
+                        break; // 横向空间不足，余下图片仍保留在待发列表
+                    }
+                    let hovered = self.ai.ai_panel.hover_image_chip == Some(i);
+                    let chip_bg = if hovered {
+                        color_f(0.28, 0.24, 0.24, 1.0)
+                    } else {
+                        color_f(0.20, 0.21, 0.24, 1.0)
+                    };
+                    if let Ok(cb) = self.win.render_ctx.brush_cache.get_brush(target, &chip_bg) {
+                        fill_round_rect(
+                            target,
+                            &D2D_RECT_F {
+                                left: chip_x,
+                                top: chips_top,
+                                right: chip_x + chip_w,
+                                bottom: chips_top + chip_h,
+                            },
+                            4.0,
+                            &cb,
+                        );
+                    }
+                    if let Ok(bb) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &color_f(0.32, 0.32, 0.36, 1.0))
+                    {
+                        target.DrawRectangle(
+                            &D2D_RECT_F {
+                                left: chip_x,
+                                top: chips_top,
+                                right: chip_x + chip_w,
+                                bottom: chips_top + chip_h,
+                            },
+                            &bb,
+                            1.0,
+                            None,
+                        );
+                    }
+                    // 图片小图标 + 文件名 + 移除标记
+                    self.ui.icons.draw(
+                        target,
+                        crate::icons::IconKind::Image,
+                        chip_x + 6.0,
+                        chips_top + 5.0,
+                        14.0,
+                        14.0,
+                        &dim_brush,
+                    );
+                    let chip_text: Vec<u16> = format!("{}  ✕", display_name)
+                        .encode_utf16()
+                        .chain(Some(0))
+                        .collect();
+                    target.DrawText(
+                        &chip_text,
+                        &small_format,
+                        &D2D_RECT_F {
+                            left: chip_x + 24.0,
+                            top: chips_top + 4.0,
+                            right: chip_x + chip_w - 4.0,
+                            bottom: chips_top + chip_h,
+                        },
+                        &dim_brush,
+                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        DWRITE_MEASURING_MODE_NATURAL,
+                    );
+                    // 命中区以面板相对坐标注册（点击/悬停用 rp_rel 比对）
+                    self.ai.ai_panel.image_chip_regions.push((
+                        i,
+                        chip_x - x,
+                        chips_top - y,
+                        chip_w,
+                        chip_h,
+                    ));
+                    chip_x += chip_w + 6.0;
+                }
+            }
+
             // 4. 底部工具栏
             let toolbar_y = toolbar_sep_y + 4.0;
             let toolbar_h = 26.0f32;
@@ -2505,9 +2618,133 @@ impl EditorState {
                 Err(_) => return,
             };
 
+            // 左侧：模式切换按钮（Ask / Agent）
+            let mode_btn_w = 52.0f32;
+            let mode_btn_h = toolbar_h;
+            let mode_btn_y = toolbar_y;
+            let mode_gap = 4.0f32;
+            let mut mode_x = x + margin + input_margin;
+
+            // 清空并重建模式按钮命中区域
+            self.ai.ai_panel.mode_button_regions.clear();
+
+            for mode in [crate::ai_panel::AiMode::Ask, crate::ai_panel::AiMode::Agent] {
+                let is_active = self.ai.ai_panel.mode == mode;
+                let btn_rect = D2D_RECT_F {
+                    left: mode_x,
+                    top: mode_btn_y,
+                    right: mode_x + mode_btn_w,
+                    bottom: mode_btn_y + mode_btn_h,
+                };
+                // 背景：激活时高亮
+                let bg = if is_active {
+                    color_f(0.0, 0.47, 0.83, 1.0)
+                } else {
+                    btn_bg
+                };
+                let bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &bg) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                };
+                fill_round_rect(target, &btn_rect, 4.0, &bg_brush);
+
+                // 文字
+                let label = mode.label();
+                let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
+                let text_rect = D2D_RECT_F {
+                    left: mode_x,
+                    top: mode_btn_y + 4.0,
+                    right: mode_x + mode_btn_w,
+                    bottom: mode_btn_y + mode_btn_h - 2.0,
+                };
+                let text_color = if is_active { &white_brush } else { &dim_brush };
+                target.DrawText(
+                    &label_wide,
+                    &small_format,
+                    &text_rect,
+                    text_color,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+
+                // 注册命中区域（绝对坐标）
+                self.ai.ai_panel.mode_button_regions.push((
+                    mode,
+                    mode_x,
+                    mode_btn_y,
+                    mode_btn_w,
+                    mode_btn_h,
+                ));
+
+                mode_x += mode_btn_w + mode_gap;
+            }
+
+            // 附件 chips（上下文附件切换）
+            let attachments = crate::ai_panel::AiPanel::toggleable_attachments();
+            let chip_h = toolbar_h;
+            let chip_gap = 4.0f32;
+            let mut chip_x = mode_x + 8.0; // 与模式按钮间距
+
+            // 清空并重建附件 chip 命中区域
+            self.ai.ai_panel.attachment_chip_regions.clear();
+
+            for (i, att) in attachments.iter().enumerate() {
+                let is_attached = self.ai.ai_panel.has_attachment(att);
+                let label = att.short_label();
+                let chip_w = (label.chars().count() as f32 * 7.0 + 16.0).clamp(40.0, 80.0);
+
+                let chip_rect = D2D_RECT_F {
+                    left: chip_x,
+                    top: mode_btn_y,
+                    right: chip_x + chip_w,
+                    bottom: mode_btn_y + chip_h,
+                };
+
+                // 背景：已附加时高亮
+                let bg = if is_attached {
+                    color_f(0.16, 0.30, 0.46, 1.0)
+                } else {
+                    btn_bg
+                };
+                let bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &bg) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                };
+                fill_round_rect(target, &chip_rect, 4.0, &bg_brush);
+
+                // 文字
+                let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
+                let text_rect = D2D_RECT_F {
+                    left: chip_x,
+                    top: mode_btn_y + 4.0,
+                    right: chip_x + chip_w,
+                    bottom: mode_btn_y + chip_h - 2.0,
+                };
+                let text_color = if is_attached { &white_brush } else { &dim_brush };
+                target.DrawText(
+                    &label_wide,
+                    &small_format,
+                    &text_rect,
+                    text_color,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+
+                // 注册命中区域（绝对坐标）
+                self.ai.ai_panel.attachment_chip_regions.push((
+                    i,
+                    chip_x,
+                    mode_btn_y,
+                    chip_w,
+                    chip_h,
+                ));
+
+                chip_x += chip_w + chip_gap;
+            }
+
             // 中间：模型选择下拉按钮
             let model_btn_w = 140.0f32;
-            let model_btn_x = x + margin + input_margin;
+            let model_btn_x = chip_x + 8.0; // 与附件 chips 间距
             let model_btn_rect = D2D_RECT_F {
                 left: model_btn_x,
                 top: toolbar_y,
@@ -2710,6 +2947,37 @@ impl EditorState {
                 send_btn_size - 4.0,
                 &dim_brush,
             );
+
+            // 附加图片按钮（多模态）：仅当前激活模型声明支持多模态时显示，
+            // 点击打开文件对话框选择图片，附加后随下一条消息发送。
+            let active_multimodal = self.ui.app_settings.active_ai_settings().multimodal;
+            if active_multimodal {
+                let img_btn_size = 24.0f32;
+                let img_btn_x = star_btn_x - img_btn_size - 4.0;
+                let img_btn_rect = D2D_RECT_F {
+                    left: img_btn_x,
+                    top: send_btn_y,
+                    right: img_btn_x + img_btn_size,
+                    bottom: send_btn_y + img_btn_size,
+                };
+                fill_round_rect(target, &img_btn_rect, 4.0, &btn_bg_brush);
+                self.ui.icons.draw(
+                    target,
+                    crate::icons::IconKind::Image,
+                    img_btn_x + 2.0,
+                    send_btn_y + 2.0,
+                    img_btn_size - 4.0,
+                    img_btn_size - 4.0,
+                    &dim_brush,
+                );
+                // 命中区以面板相对坐标注册（点击处理用 rp_rel_x/rp_rel_y 比对，
+                // 与发送/星星按钮的相对坐标系一致；渲染用的 img_btn_x/send_btn_y
+                // 是绝对坐标，需减去面板原点 x/y 转换）。
+                self.ai.ai_panel.image_button_region =
+                    Some((img_btn_x - x, send_btn_y - y, img_btn_size, img_btn_size));
+            } else {
+                self.ai.ai_panel.image_button_region = None;
+            }
         }
     }
 }

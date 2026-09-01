@@ -369,96 +369,12 @@ pub(super) unsafe fn lbd_right_panel(
         return Some(result);
     }
     // 思考过程块：点击标题折叠/展开（命中区为渲染时注册的绝对坐标）
-    {
-        let hit = {
-            let st = state.borrow();
-            st.ai
-                .ai_panel
-                .reasoning_toggle_regions
-                .iter()
-                .find(|(_, rx, ry, rw, rh)| {
-                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
-                })
-                .map(|(i, ..)| *i)
-        };
-        if let Some(i) = hit {
-            let mut st = state.borrow_mut();
-            if let Some(msg) = st.ai.ai_panel.messages.get_mut(i) {
-                msg.reasoning_collapsed = !msg.reasoning_collapsed;
-            }
-            // 折叠/展开改变块高，后续内容整体位移：标脏面板整个区域做局部重绘，
-            // 避免依赖 on_paint 的全窗口兜底（性能）或漏标导致的重影
-            st.mark_ai_panel_dirty();
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
+    if let Some(result) = lbd_ai_reasoning_toggle(hwnd, state, mouse_x, mouse_y) {
+        return Some(result);
     }
-    // 询问卡片：点击选项记录回答；该消息内全部问题回答完毕后自动汇总回传继续生成
-    {
-        let hit = {
-            let st = state.borrow();
-            st.ai
-                .ai_panel
-                .ask_option_regions
-                .iter()
-                .find(|(_, _, _, rx, ry, rw, rh)| {
-                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
-                })
-                .map(|(mi, seq, oi, ..)| (*mi, *seq, *oi))
-        };
-        if let Some((mi, seq, oi)) = hit {
-            let mut st = state.borrow_mut();
-            if !st.ai.ai_panel.is_generating {
-                if let Some(opt) = st.ai.ai_panel.ask_option_text(mi, seq, oi) {
-                    let all_done = st.ai.ai_panel.answer_ask(mi, seq, opt);
-                    if all_done {
-                        let settings = st.ui.app_settings.active_ai_settings();
-                        let mode = st.ai.ai_panel.mode;
-                        let attachments = st.ai.ai_panel.attachments.clone();
-                        let context = st.gather_context(&attachments);
-                        match st.ai.ai_panel.send_ask_reply(&settings, mi, mode, context) {
-                            Ok(_) => {
-                                st.ui.status_message = "AI 请求已发送".to_string();
-                                let _ = SetTimer(hwnd, AI_TIMER_ID, AI_REFRESH_MS, None);
-                            }
-                            Err(e) => st.ui.status_message = e,
-                        }
-                    } else {
-                        st.ui.status_message = "已记录回答，请继续回答其余问题".to_string();
-                    }
-                }
-            }
-            st.mark_ai_panel_dirty();
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 询问卡片：自定义回答——将输入框置为待回答状态，下一条发送的消息作为该问题的答案
-    {
-        let hit = {
-            let st = state.borrow();
-            st.ai
-                .ai_panel
-                .ask_custom_regions
-                .iter()
-                .find(|(_, _, rx, ry, rw, rh)| {
-                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
-                })
-                .map(|(mi, seq, ..)| (*mi, *seq))
-        };
-        if let Some((mi, seq)) = hit {
-            let mut st = state.borrow_mut();
-            if !st.ai.ai_panel.is_generating {
-                st.ai.ai_panel.pending_ask_custom = Some((mi, seq));
-                st.ai.ai_panel.input_focused = true;
-                st.ai.ai_panel.caret_pos = st.ai.ai_panel.input.len();
-                st.ui.status_message = "请输入自定义回答并发送".to_string();
-                let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
-            }
-            st.mark_ai_panel_dirty();
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
+    // 询问卡片：选项点击 / 自定义回答
+    if let Some(result) = lbd_ai_ask_cards(hwnd, state, mouse_x, mouse_y) {
+        return Some(result);
     }
     // 先检测输入框和按钮点击，如果命中则直接返回（不取消聚焦）
     if let Some(result) =
@@ -467,105 +383,9 @@ pub(super) unsafe fn lbd_right_panel(
         return Some(result);
     }
 
-    // 检测代码块保存按钮点击
-    // 简化实现：检测是否在消息区域右侧的代码块保存按钮位置
-    let rp_rel_x = mouse_x - right_panel_region.x;
-    let rp_rel_y = mouse_y - right_panel_region.y;
-    let margin = 10.0f32;
-    let content_right = right_panel_region.width - margin;
-    let save_btn_w = 60.0f32;
-    let save_btn_x = content_right - save_btn_w - 4.0;
-
-    // 遍历消息查找代码块位置
-    {
-        let st = state.borrow();
-        let chat_top = 52.0f32; // 标题 + 分隔线后的起始位置
-        let _chat_bottom = right_panel_region.height - 80.0f32; // 输入框上方
-        let mut msg_y = chat_top - st.ai.ai_panel.scroll_y;
-        let seg_pad = 6.0f32;
-        let msg_gap = 12.0f32;
-        let seg_gap = 4.0f32;
-        let label_h = 14.0f32;
-
-        for msg in &st.ai.ai_panel.messages {
-            if msg.role == crate::ai_panel::AiRole::System {
-                continue;
-            }
-            let is_user = msg.role == crate::ai_panel::AiRole::User;
-            let is_tool = msg.role == crate::ai_panel::AiRole::Tool;
-            // Tool 消息无角色标签行
-            if !is_tool {
-                msg_y += label_h;
-            }
-
-            // 按 ``` 代码围栏拆分
-            let mut segments: Vec<(bool, String)> = Vec::new();
-            {
-                let mut in_code = false;
-                let mut buf: Vec<&str> = Vec::new();
-                for line in msg.content.lines() {
-                    if line.trim_start().starts_with("```") {
-                        if !buf.is_empty() {
-                            segments.push((in_code, buf.join("\n")));
-                            buf.clear();
-                        }
-                        in_code = !in_code;
-                        continue;
-                    }
-                    buf.push(line);
-                }
-                if !buf.is_empty() {
-                    segments.push((in_code, buf.join("\n")));
-                }
-            }
-
-            for (is_code, seg_text) in &segments {
-                // 估算段高度（简化）
-                let line_count = seg_text.lines().count().max(1);
-                let seg_h = if *is_code {
-                    (line_count as f32 * 16.0 + seg_pad * 2.0).max(30.0)
-                } else {
-                    (line_count as f32 * 16.0 + seg_pad * 2.0).max(20.0)
-                };
-
-                // 检查是否在视口内且是代码块
-                if *is_code && !is_user && !seg_text.is_empty() {
-                    let save_btn_y = msg_y + 2.0;
-                    let save_btn_h = 18.0f32;
-                    if rp_rel_y >= save_btn_y
-                        && rp_rel_y < save_btn_y + save_btn_h
-                        && rp_rel_x >= save_btn_x
-                        && rp_rel_x < save_btn_x + save_btn_w
-                    {
-                        // 点击了保存按钮 - 先收集需要的信息，然后释放借用
-                        let code_to_save = seg_text.clone();
-                        let suggested_name = msg
-                            .content
-                            .lines()
-                            .find(|l| {
-                                l.trim_start().starts_with("```")
-                                    && !l.trim_start().starts_with("```\n")
-                            })
-                            .and_then(crate::ai_panel::AiPanel::extract_filename_from_fence);
-                        drop(st);
-                        let mut st_mut = state.borrow_mut();
-                        match st_mut.save_ai_code_block(&code_to_save, suggested_name.as_deref()) {
-                            Ok(path) => {
-                                st_mut.ui.status_message = format!("已保存: {}", path.display());
-                            }
-                            Err(e) => {
-                                st_mut.ui.status_message = format!("保存失败: {}", e);
-                            }
-                        }
-                        drop(st_mut);
-                        invalidate_window(hwnd);
-                        return Some(LRESULT(0));
-                    }
-                }
-                msg_y += seg_h + seg_gap;
-            }
-            msg_y += msg_gap;
-        }
+    // 代码块保存按钮点击
+    if let Some(result) = lbd_ai_code_save(hwnd, state, mouse_x, mouse_y, &right_panel_region) {
+        return Some(result);
     }
 
     // 模式切换 / 上下文附件 / 变更列表按钮（基于渲染时注册的绝对坐标命中区）
@@ -763,6 +583,225 @@ unsafe fn lbd_right_panel_ai_controls(
     None
 }
 
+/// AI 面板：思考过程块折叠/展开点击。
+/// 命中区为渲染时注册的绝对坐标，直接用 mouse_x/mouse_y 测试。
+unsafe fn lbd_ai_reasoning_toggle(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+) -> Option<LRESULT> {
+    let hit = {
+        let st = state.borrow();
+        st.ai
+            .ai_panel
+            .reasoning_toggle_regions
+            .iter()
+            .find(|(_, rx, ry, rw, rh)| {
+                mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+            })
+            .map(|(i, ..)| *i)
+    };
+    if let Some(i) = hit {
+        let mut st = state.borrow_mut();
+        if let Some(msg) = st.ai.ai_panel.messages.get_mut(i) {
+            msg.reasoning_collapsed = !msg.reasoning_collapsed;
+        }
+        // 折叠/展开改变块高，后续内容整体位移：标脏面板整个区域做局部重绘
+        st.mark_ai_panel_dirty();
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+    None
+}
+
+/// AI 面板：询问卡片选项点击 / 自定义回答。
+/// 命中区为渲染时注册的绝对坐标，直接用 mouse_x/mouse_y 测试。
+unsafe fn lbd_ai_ask_cards(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+) -> Option<LRESULT> {
+    // 1. 询问卡片：点击选项记录回答
+    {
+        let hit = {
+            let st = state.borrow();
+            st.ai
+                .ai_panel
+                .ask_option_regions
+                .iter()
+                .find(|(_, _, _, rx, ry, rw, rh)| {
+                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+                })
+                .map(|(mi, seq, oi, ..)| (*mi, *seq, *oi))
+        };
+        if let Some((mi, seq, oi)) = hit {
+            let mut st = state.borrow_mut();
+            if !st.ai.ai_panel.is_generating {
+                if let Some(opt) = st.ai.ai_panel.ask_option_text(mi, seq, oi) {
+                    let all_done = st.ai.ai_panel.answer_ask(mi, seq, opt);
+                    if all_done {
+                        let settings = st.ui.app_settings.active_ai_settings();
+                        let mode = st.ai.ai_panel.mode;
+                        let attachments = st.ai.ai_panel.attachments.clone();
+                        let context = st.gather_context(&attachments);
+                        match st.ai.ai_panel.send_ask_reply(&settings, mi, mode, context) {
+                            Ok(_) => {
+                                st.ui.status_message = "AI 请求已发送".to_string();
+                                let _ = SetTimer(hwnd, AI_TIMER_ID, AI_REFRESH_MS, None);
+                            }
+                            Err(e) => st.ui.status_message = e,
+                        }
+                    } else {
+                        st.ui.status_message = "已记录回答，请继续回答其余问题".to_string();
+                    }
+                }
+            }
+            st.mark_ai_panel_dirty();
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    // 2. 询问卡片：自定义回答
+    {
+        let hit = {
+            let st = state.borrow();
+            st.ai
+                .ai_panel
+                .ask_custom_regions
+                .iter()
+                .find(|(_, _, rx, ry, rw, rh)| {
+                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+                })
+                .map(|(mi, seq, ..)| (*mi, *seq))
+        };
+        if let Some((mi, seq)) = hit {
+            let mut st = state.borrow_mut();
+            if !st.ai.ai_panel.is_generating {
+                st.ai.ai_panel.pending_ask_custom = Some((mi, seq));
+                st.ai.ai_panel.input_focused = true;
+                st.ai.ai_panel.caret_pos = st.ai.ai_panel.input.len();
+                st.ui.status_message = "请输入自定义回答并发送".to_string();
+                let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
+            }
+            st.mark_ai_panel_dirty();
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+    None
+}
+
+/// AI 面板：代码块保存按钮点击。
+/// 遍历消息查找代码块位置，检测是否点击了保存按钮。
+unsafe fn lbd_ai_code_save(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+    panel_region: &crate::layout::Region,
+) -> Option<LRESULT> {
+    let rp_rel_x = mouse_x - panel_region.x;
+    let rp_rel_y = mouse_y - panel_region.y;
+    let margin = 10.0f32;
+    let content_right = panel_region.width - margin;
+    let save_btn_w = 60.0f32;
+    let save_btn_x = content_right - save_btn_w - 4.0;
+
+    // 遍历消息查找代码块位置
+    {
+        let st = state.borrow();
+        let chat_top = 52.0f32; // 标题 + 分隔线后的起始位置
+        let mut msg_y = chat_top - st.ai.ai_panel.scroll_y;
+        let seg_pad = 6.0f32;
+        let msg_gap = 12.0f32;
+        let seg_gap = 4.0f32;
+        let label_h = 14.0f32;
+
+        for msg in &st.ai.ai_panel.messages {
+            if msg.role == crate::ai_panel::AiRole::System {
+                continue;
+            }
+            let is_user = msg.role == crate::ai_panel::AiRole::User;
+            let is_tool = msg.role == crate::ai_panel::AiRole::Tool;
+            // Tool 消息无角色标签行
+            if !is_tool {
+                msg_y += label_h;
+            }
+
+            // 按 ``` 代码围栏拆分
+            let mut segments: Vec<(bool, String)> = Vec::new();
+            {
+                let mut in_code = false;
+                let mut buf: Vec<&str> = Vec::new();
+                for line in msg.content.lines() {
+                    if line.trim_start().starts_with("```") {
+                        if !buf.is_empty() {
+                            segments.push((in_code, buf.join("\n")));
+                            buf.clear();
+                        }
+                        in_code = !in_code;
+                        continue;
+                    }
+                    buf.push(line);
+                }
+                if !buf.is_empty() {
+                    segments.push((in_code, buf.join("\n")));
+                }
+            }
+
+            for (is_code, seg_text) in &segments {
+                // 估算段高度（简化）
+                let line_count = seg_text.lines().count().max(1);
+                let seg_h = if *is_code {
+                    (line_count as f32 * 16.0 + seg_pad * 2.0).max(30.0)
+                } else {
+                    (line_count as f32 * 16.0 + seg_pad * 2.0).max(20.0)
+                };
+
+                // 检查是否在视口内且是代码块
+                if *is_code && !is_user && !seg_text.is_empty() {
+                    let save_btn_y = msg_y + 2.0;
+                    let save_btn_h = 18.0f32;
+                    if rp_rel_y >= save_btn_y
+                        && rp_rel_y < save_btn_y + save_btn_h
+                        && rp_rel_x >= save_btn_x
+                        && rp_rel_x < save_btn_x + save_btn_w
+                    {
+                        // 点击了保存按钮 - 先收集需要的信息，然后释放借用
+                        let code_to_save = seg_text.clone();
+                        let suggested_name = msg
+                            .content
+                            .lines()
+                            .find(|l| {
+                                l.trim_start().starts_with("```")
+                                    && !l.trim_start().starts_with("```\n")
+                            })
+                            .and_then(crate::ai_panel::AiPanel::extract_filename_from_fence);
+                        drop(st);
+                        let mut st_mut = state.borrow_mut();
+                        match st_mut.save_ai_code_block(&code_to_save, suggested_name.as_deref()) {
+                            Ok(path) => {
+                                st_mut.ui.status_message = format!("已保存: {}", path.display());
+                            }
+                            Err(e) => {
+                                st_mut.ui.status_message = format!("保存失败: {}", e);
+                            }
+                        }
+                        drop(st_mut);
+                        invalidate_window(hwnd);
+                        return Some(LRESULT(0));
+                    }
+                }
+                msg_y += seg_h + seg_gap;
+            }
+            msg_y += msg_gap;
+        }
+    }
+    None
+}
+
 /// AI 面板 Apply 按钮 + 输入框点击。
 unsafe fn lbd_right_panel_apply_input(
     hwnd: HWND,
@@ -916,7 +955,7 @@ unsafe fn lbd_right_panel_apply_input(
     // ===== 输入框区域（新设计：参考图样式，支持自适应高度）=====
     // 使用动态计算的输入框高度
     let input_computed_height = state.borrow().ai.ai_panel.input_computed_height;
-    let input_area_h = input_computed_height + 44.0f32;
+    let input_area_h = state.borrow().ai.ai_panel.input_area_height();
     let input_y = right_panel_region.height - input_area_h;
     let text_input_y = input_y + 6.0; // 中间文本输入区域
     let text_input_h = input_computed_height;
@@ -1023,6 +1062,95 @@ unsafe fn lbd_right_panel_apply_input(
         }
         invalidate_window(hwnd);
         return Some(LRESULT(0));
+    }
+
+    // 图片 chip 点击：移除对应待发送图片（命中区由渲染帧注册）
+    {
+        let chip_hit = state
+            .borrow()
+            .ai
+            .ai_panel
+            .hit_test_image_chip(rp_rel_x, rp_rel_y);
+        if let Some(idx) = chip_hit {
+            let mut st = state.borrow_mut();
+            let removed = st
+                .ai
+                .ai_panel
+                .pending_images
+                .get(idx)
+                .map(|p| p.filename.clone());
+            st.ai.ai_panel.remove_pending_image(idx);
+            if let Some(name) = removed {
+                st.ui.status_message = format!("已移除待发送图片：{}", name);
+            }
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+    }
+
+    // 附加图片按钮（多模态，星星按钮左侧）：打开文件对话框选择图片附加到待发送列表
+    {
+        let img_hit = state
+            .borrow()
+            .ai
+            .ai_panel
+            .image_button_region
+            .map(|(bx, by, bw, bh)| {
+                rp_rel_x >= bx && rp_rel_x < bx + bw && rp_rel_y >= by && rp_rel_y < by + bh
+            })
+            .unwrap_or(false);
+        if img_hit {
+            // 二次确认多模态状态（渲染帧与点击之间可能切换了模型）
+            if !state
+                .borrow()
+                .ui
+                .app_settings
+                .active_ai_settings()
+                .multimodal
+            {
+                state.borrow_mut().ui.status_message =
+                    "当前模型未启用多模态：请在模型设置中勾选「多模态（图片）」".to_string();
+                invalidate_window(hwnd);
+                return Some(LRESULT(0));
+            }
+            let picked = crate::dialogs::Dialogs::open_file_dialog(
+                hwnd,
+                "选择图片（JPEG / PNG / GIF / WebP）",
+                &[("图片", "*.jpg;*.jpeg;*.png;*.gif;*.webp")],
+            );
+            let mut st = state.borrow_mut();
+            if let Some(path) = picked {
+                let filename = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "image".to_string());
+                match std::fs::read(&path) {
+                    Ok(bytes) => match aether_ai::ChatImage::from_bytes(&bytes) {
+                        Some(img) => {
+                            st.ai
+                                .ai_panel
+                                .add_pending_image(crate::ai_panel::AiImageAttachment {
+                                    filename: filename.clone(),
+                                    mime: img.mime,
+                                    data_b64: img.data_b64,
+                                });
+                            st.ui.status_message =
+                                format!("已附加图片 {}，将随下一条消息发送", filename);
+                        }
+                        None => {
+                            st.ui.status_message =
+                                "无法附加图片：仅支持 JPEG/PNG/GIF/WebP（按文件内容识别），且单张不超过 32 MiB"
+                                    .to_string();
+                        }
+                    },
+                    Err(e) => {
+                        st.ui.status_message = format!("读取图片失败：{}", e);
+                    }
+                }
+            }
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
     }
 
     // 停止生成按钮（当正在生成时显示）
@@ -1260,6 +1388,17 @@ pub(super) unsafe fn lbd_settings_page(
             invalidate_window(hwnd);
             return Some(LRESULT(0));
         }
+        // 多模态（图片）开关切换：用户声明该模型是否支持图片输入
+        if st
+            .ui
+            .settings_panel
+            .hit_test_multimodal_toggle(mouse_x, mouse_y)
+        {
+            st.ui.settings_panel.toggle_multimodal();
+            st.ui.settings_panel.active_field = None;
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
         // 思考强度分段切换（DeepSeek 思考模式专属）
         if let Some(effort) = st.ui.settings_panel.hit_test_effort(mouse_x, mouse_y) {
             st.ui.settings_panel.reasoning_effort = effort.to_string();
@@ -1424,15 +1563,18 @@ pub(super) unsafe fn lbd_settings_page(
         }
     }
 
-    // 6. 输入字段聚焦
+    // 6. 输入字段聚焦（同时启动光标闪烁定时器）
     if let Some(field) = st.ui.settings_panel.hit_test_field(mouse_x, mouse_y) {
         st.ui.settings_panel.active_field = Some(field);
+        st.ui.settings_panel.caret_visible = true;
+        let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     }
 
     // 7. 点击设置区空白 → 清除聚焦与下拉，消费点击
     st.ui.settings_panel.active_field = None;
+    st.ui.settings_panel.caret_visible = false;
     st.ui.settings_panel.open_dropdown = None;
     invalidate_window(hwnd);
     Some(LRESULT(0))
@@ -1827,10 +1969,33 @@ pub(super) unsafe fn lbd_welcome_or_editor(
         let center_panel_region = layout.editor_content_region(false);
         drop(st);
         if center_panel_region.contains(mouse_x, mouse_y) {
+            // 1. 思考过程块：点击标题折叠/展开（命中区为渲染时注册的绝对坐标）
+            if let Some(result) = lbd_ai_reasoning_toggle(hwnd, state, mouse_x, mouse_y) {
+                return Some(result);
+            }
+            // 2. 询问卡片：选项点击 / 自定义回答
+            if let Some(result) = lbd_ai_ask_cards(hwnd, state, mouse_x, mouse_y) {
+                return Some(result);
+            }
+            // 3. 输入框/发送按钮/模型下拉等
             if let Some(result) =
                 lbd_right_panel_apply_input(hwnd, state, mouse_x, mouse_y, &center_panel_region)
             {
                 return Some(result);
+            }
+            // 4. 代码块保存按钮
+            if let Some(result) = lbd_ai_code_save(hwnd, state, mouse_x, mouse_y, &center_panel_region) {
+                return Some(result);
+            }
+            // 5. 模式切换 / 上下文附件 / 浏览文件夹按钮
+            if lbd_right_panel_ai_controls(hwnd, state, mouse_x, mouse_y).is_some() {
+                return Some(LRESULT(0));
+            }
+            // 6. 点击非输入框/按钮区域时取消输入框聚焦
+            {
+                let mut st = state.borrow_mut();
+                st.ai.ai_panel.input_focused = false;
+                drop(st);
             }
         }
         // 未命中按钮/输入框时消费事件，防止穿透到编辑器区域

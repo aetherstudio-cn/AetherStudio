@@ -332,6 +332,25 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             need_invalidate = true;
             any_active = true;
         }
+        // 设置页输入框光标闪烁（智能体模式右面板 / 经典模式编辑器内容区）
+        if st.active_tab_is_settings() && st.ui.settings_panel.active_field.is_some() {
+            st.ui.settings_panel.caret_visible = !st.ui.settings_panel.caret_visible;
+            let region = st.full_page_region(&st.ui.layout).clone();
+            let region_type = if st.editor_mode.is_agent() {
+                crate::dirty_rect::DirtyRegionType::RightPanel
+            } else {
+                crate::dirty_rect::DirtyRegionType::EditorContent
+            };
+            st.win.dirty_tracker.mark_region(
+                region.x,
+                region.y,
+                region.width,
+                region.height,
+                region_type,
+            );
+            need_invalidate = true;
+            any_active = true;
+        }
         // 编辑器内容区光标闪烁（文件编辑状态）
         if st
             .editor
@@ -741,6 +760,17 @@ pub(crate) unsafe fn on_dropfiles(
     use windows::Win32::UI::Shell::{DragFinish, DragQueryFileW, HDROP};
     let hdrop = HDROP(wparam.0 as *mut std::ffi::c_void);
 
+    // 落点（客户区物理像素 → 逻辑像素），用于判断是否落在 AI 面板区域
+    let drop_logical = EDITOR_STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|state| {
+                let dpi = state.borrow().win.dpi_scale;
+                crate::ai_image_input::drop_point_logical(hdrop, dpi)
+            })
+            .unwrap_or((-1.0, -1.0))
+    });
+
     let file_count = DragQueryFileW(hdrop, u32::MAX, None);
     for i in 0..file_count {
         let path_len = DragQueryFileW(hdrop, i, None);
@@ -751,6 +781,19 @@ pub(crate) unsafe fn on_dropfiles(
         let _ = DragQueryFileW(hdrop, i, Some(&mut path_buf));
         if let Ok(path_str) = String::from_utf16(&path_buf[..path_len as usize]) {
             let path = PathBuf::from(path_str);
+            // 优先：落在 AI 面板区域的图片文件 → 附加为待发送图片（多模态）
+            let consumed = EDITOR_STATE.with(|s| {
+                s.borrow()
+                    .as_ref()
+                    .map(|state| {
+                        crate::ai_image_input::try_attach_dropped_image(state, drop_logical, &path)
+                    })
+                    .unwrap_or(false)
+            });
+            if consumed {
+                invalidate_window(hwnd);
+                continue;
+            }
             if path.is_dir() {
                 // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
                 if crate::editor::files::check_workspace_trust(hwnd, &path) {

@@ -134,11 +134,13 @@ pub enum IconKind {
     Pencil,
     /// 刷新（内置浏览器工具栏）
     Refresh,
+    /// 图片（AI 多模态：附加图片按钮 / 待发图片 chip）
+    Image,
 }
 
 impl IconKind {
     /// 所有图标变体索引（与 SVG_DEFS 数组下标对应）
-    pub const ALL: [IconKind; 87] = [
+    pub const ALL: [IconKind; 88] = [
         IconKind::OpenFolder,
         IconKind::NewFile,
         IconKind::Clone,
@@ -226,6 +228,7 @@ impl IconKind {
         IconKind::Eye,
         IconKind::Pencil,
         IconKind::Refresh,
+        IconKind::Image,
     ];
 
     /// 索引到 SVG_DEFS 数组下标

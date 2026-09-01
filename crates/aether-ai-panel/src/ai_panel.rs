@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use aether_ai::{AiClient, AiStreamEvent, ChatMessage};
+use aether_ai::{AiClient, AiStreamEvent, ChatImage, ChatMessage};
 use aether_shared::settings::AiSettings;
 
 use crate::ai_context::{truncate_middle, AiContextAttachment};
@@ -99,6 +99,247 @@ pub fn sanitize_error(err: &str) -> String {
     result
 }
 
+/// 诊断流式错误：根据错误消息内容提供详细的诊断信息
+fn diagnose_stream_error(err: &str) -> String {
+    let err_lower = err.to_lowercase();
+    let sanitized = sanitize_error(err);
+    
+    let mut msg = String::new();
+    
+    // 判断错误类型
+    if err_lower.contains("network") || err_lower.contains("connection") 
+        || err_lower.contains("dns") || err_lower.contains("ssl") 
+        || err_lower.contains("timeout") || err_lower.contains("timed out") {
+        // 网络错误
+        msg.push_str("[网络错误] 无法连接到 API 服务器\n\n");
+        msg.push_str("🔍 错误详情:\n");
+        msg.push_str(&format!("• 错误信息: {}\n\n", sanitized));
+        
+        msg.push_str("📊 诊断分析:\n");
+        if err_lower.contains("dns") {
+            msg.push_str("• DNS 解析失败：无法解析 API 服务器域名\n");
+            msg.push_str("• 可能原因: DNS 服务器故障、域名错误、网络连接中断\n\n");
+            msg.push_str("💡 建议:\n");
+            msg.push_str("1. 检查网络连接是否正常\n");
+            msg.push_str("2. 尝试使用其他 DNS 服务器（如 8.8.8.8）\n");
+            msg.push_str("3. 检查 API 基础 URL 配置是否正确\n");
+        } else if err_lower.contains("ssl") || err_lower.contains("certificate") {
+            msg.push_str("• SSL/TLS 证书验证失败\n");
+            msg.push_str("• 可能原因: 证书过期、系统时间不准确、中间人攻击\n\n");
+            msg.push_str("💡 建议:\n");
+            msg.push_str("1. 检查系统时间是否准确\n");
+            msg.push_str("2. 更新系统证书库\n");
+            msg.push_str("3. 如使用企业代理，可能需要安装企业根证书\n");
+        } else if err_lower.contains("timeout") || err_lower.contains("timed out") {
+            msg.push_str("• 连接超时：服务器未在预期时间内响应\n");
+            msg.push_str("• 可能原因: 网络延迟高、服务器负载高、防火墙拦截\n\n");
+            msg.push_str("💡 建议:\n");
+            msg.push_str("1. 检查网络延迟（ping API 服务器）\n");
+            msg.push_str("2. 检查防火墙/代理设置\n");
+            msg.push_str("3. 稍后重试或联系 API 提供商\n");
+        } else {
+            msg.push_str("• 网络连接失败\n");
+            msg.push_str("• 可能原因: 网络中断、防火墙拦截、代理配置错误\n\n");
+            msg.push_str("💡 建议:\n");
+            msg.push_str("1. 检查网络连接（尝试访问其他网站）\n");
+            msg.push_str("2. 检查防火墙/杀毒软件设置\n");
+            msg.push_str("3. 如使用代理，确认代理配置正确\n");
+        }
+    } else if err_lower.contains("401") || err_lower.contains("unauthorized") {
+        // 认证错误
+        msg.push_str("[认证错误] API Key 验证失败\n\n");
+        msg.push_str("🔍 错误详情:\n");
+        msg.push_str(&format!("• 错误信息: {}\n\n", sanitized));
+        msg.push_str("📊 诊断分析:\n");
+        msg.push_str("• API Key 无效、过期或权限不足\n\n");
+        msg.push_str("💡 建议:\n");
+        msg.push_str("1. 检查 API Key 是否正确（设置 → AI → API Key）\n");
+        msg.push_str("2. 确认 API Key 未过期\n");
+        msg.push_str("3. 检查 API Key 是否有访问该模型的权限\n");
+    } else if err_lower.contains("429") || err_lower.contains("rate limit") {
+        // 速率限制
+        msg.push_str("[速率限制] 请求过于频繁\n\n");
+        msg.push_str("🔍 错误详情:\n");
+        msg.push_str(&format!("• 错误信息: {}\n\n", sanitized));
+        msg.push_str("📊 诊断分析:\n");
+        msg.push_str("• 已达到 API 请求速率限制（TPM/RPM）\n\n");
+        msg.push_str("💡 建议:\n");
+        msg.push_str("1. 稍后重试（通常几秒到几分钟后恢复）\n");
+        msg.push_str("2. 减少请求频率\n");
+        msg.push_str("3. 考虑升级 API 套餐以提高限额\n");
+    } else if err_lower.contains("500") || err_lower.contains("502") 
+        || err_lower.contains("503") || err_lower.contains("504") {
+        // 服务器错误
+        msg.push_str("[服务器错误] API 服务器内部错误\n\n");
+        msg.push_str("🔍 错误详情:\n");
+        msg.push_str(&format!("• 错误信息: {}\n\n", sanitized));
+        msg.push_str("📊 诊断分析:\n");
+        msg.push_str("• API 服务器遇到内部错误或正在维护\n\n");
+        msg.push_str("💡 建议:\n");
+        msg.push_str("1. 稍后重试（通常是临时问题）\n");
+        msg.push_str("2. 检查 API 服务状态页面\n");
+        msg.push_str("3. 如持续失败，联系 API 提供商支持\n");
+    } else {
+        // 其他 API 错误
+        msg.push_str("[API 错误] 请求失败\n\n");
+        msg.push_str("🔍 错误详情:\n");
+        msg.push_str(&format!("• 错误信息: {}\n\n", sanitized));
+        msg.push_str("📊 诊断分析:\n");
+        msg.push_str("• API 服务器返回错误响应\n\n");
+        msg.push_str("💡 建议:\n");
+        msg.push_str("1. 检查请求参数是否正确\n");
+        msg.push_str("2. 查看 API 文档确认请求格式\n");
+        msg.push_str("3. 联系 API 提供商获取支持\n");
+    }
+    
+    msg
+}
+
+/// 诊断 API 错误：根据 AiError 类型提供详细的诊断信息
+fn diagnose_api_error(e: &aether_ai::AiError) -> String {
+    use aether_ai::AiError;
+    
+    let mut msg = String::new();
+    
+    match e {
+        AiError::Http(err) => {
+            msg.push_str("[HTTP 错误] 网络请求失败\n\n");
+            msg.push_str("🔍 错误详情:\n");
+            msg.push_str(&format!("• 错误信息: {}\n\n", sanitize_error(err)));
+            msg.push_str("📊 诊断分析:\n");
+            msg.push_str("• HTTP 请求无法完成\n");
+            msg.push_str("• 可能原因: 网络问题、URL 错误、请求格式错误\n\n");
+            msg.push_str("💡 建议:\n");
+            msg.push_str("1. 检查网络连接\n");
+            msg.push_str("2. 验证 API 基础 URL 配置\n");
+            msg.push_str("3. 检查请求参数格式\n");
+        }
+        AiError::Parse(err) => {
+            msg.push_str("[解析错误] 响应数据格式错误\n\n");
+            msg.push_str("🔍 错误详情:\n");
+            msg.push_str(&format!("• 错误信息: {}\n\n", sanitize_error(err)));
+            msg.push_str("📊 诊断分析:\n");
+            msg.push_str("• 无法解析 API 返回的数据\n");
+            msg.push_str("• 可能原因: API 返回格式变更、响应数据损坏\n\n");
+            msg.push_str("💡 建议:\n");
+            msg.push_str("1. 检查 API 版本是否兼容\n");
+            msg.push_str("2. 查看 API 文档确认响应格式\n");
+            msg.push_str("3. 联系 API 提供商报告问题\n");
+        }
+        AiError::Config(err) => {
+            msg.push_str("[配置错误] AI 配置无效\n\n");
+            msg.push_str("🔍 错误详情:\n");
+            msg.push_str(&format!("• 错误信息: {}\n\n", sanitize_error(err)));
+            msg.push_str("📊 诊断分析:\n");
+            msg.push_str("• AI 配置参数无效或缺失\n\n");
+            msg.push_str("💡 建议:\n");
+            msg.push_str("1. 检查设置 → AI 配置\n");
+            msg.push_str("2. 确认所有必填字段已填写\n");
+            msg.push_str("3. 验证 API Key 和模型名称正确\n");
+        }
+        AiError::Api { code, message } => {
+            let desc = match *code {
+                400 => "请求体格式错误",
+                401 => "API Key 无效或已过期",
+                402 => "账户余额不足",
+                403 => "API Key 权限不足",
+                404 => "请求的资源不存在",
+                422 => "参数错误",
+                429 => "请求速率超限",
+                500 => "API 服务器内部故障",
+                503 => "API 服务器负载过高",
+                _ => "API 请求失败",
+            };
+            
+            msg.push_str(&format!("[API 错误 {}] {}\n\n", code, desc));
+            msg.push_str("🔍 错误详情:\n");
+            msg.push_str(&format!("• HTTP 状态码: {}\n", code));
+            msg.push_str(&format!("• 错误信息: {}\n\n", sanitize_error(message)));
+            
+            msg.push_str("📊 诊断分析:\n");
+            match *code {
+                400 => {
+                    msg.push_str("• 请求参数格式不正确\n");
+                    msg.push_str("• 可能原因: 模型名称错误、参数类型不匹配\n\n");
+                    msg.push_str("💡 建议:\n");
+                    msg.push_str("1. 检查模型名称是否正确\n");
+                    msg.push_str("2. 验证 temperature/max_tokens 等参数范围\n");
+                    msg.push_str("3. 查看 API 文档确认参数格式\n");
+                }
+                401 => {
+                    msg.push_str("• API Key 验证失败\n");
+                    msg.push_str("• 可能原因: Key 无效、过期、被撤销\n\n");
+                    msg.push_str("💡 建议:\n");
+                    msg.push_str("1. 重新生成 API Key\n");
+                    msg.push_str("2. 检查 Key 是否完整复制（无多余空格）\n");
+                    msg.push_str("3. 确认 Key 未过期\n");
+                }
+                402 => {
+                    msg.push_str("• 账户余额不足\n\n");
+                    msg.push_str("💡 建议:\n");
+                    msg.push_str("1. 到 API 提供商官网充值\n");
+                    msg.push_str("2. 检查账户余额\n");
+                    msg.push_str("3. 考虑使用其他模型或提供商\n");
+                }
+                403 => {
+                    msg.push_str("• API Key 权限不足\n");
+                    msg.push_str("• 可能原因: Key 无访问该模型的权限\n\n");
+                    msg.push_str("💡 建议:\n");
+                    msg.push_str("1. 检查 API Key 权限设置\n");
+                    msg.push_str("2. 确认账户已开通该模型访问权限\n");
+                    msg.push_str("3. 联系 API 提供商升级权限\n");
+                }
+                404 => {
+                    msg.push_str("• 请求的资源不存在\n");
+                    msg.push_str("• 可能原因: 模型名称错误、API 端点错误\n\n");
+                    msg.push_str("💡 建议:\n");
+                    msg.push_str("1. 检查模型名称拼写\n");
+                    msg.push_str("2. 验证 API 基础 URL 配置\n");
+                    msg.push_str("3. 查看 API 文档确认端点地址\n");
+                }
+                422 => {
+                    msg.push_str("• 请求参数验证失败\n");
+                    msg.push_str("• 可能原因: 参数值超出允许范围\n\n");
+                    msg.push_str("💡 建议:\n");
+                    msg.push_str("1. 检查 temperature 范围（通常 0.0-2.0）\n");
+                    msg.push_str("2. 检查 max_tokens 是否合理\n");
+                    msg.push_str("3. 查看 API 文档确认参数约束\n");
+                }
+                429 => {
+                    msg.push_str("• 请求速率超过限制（TPM/RPM）\n\n");
+                    msg.push_str("💡 建议:\n");
+                    msg.push_str("1. 稍后重试（通常几秒到几分钟后恢复）\n");
+                    msg.push_str("2. 减少请求频率\n");
+                    msg.push_str("3. 考虑升级 API 套餐\n");
+                }
+                500 | 503 => {
+                    msg.push_str("• API 服务器内部错误或负载过高\n\n");
+                    msg.push_str("💡 建议:\n");
+                    msg.push_str("1. 稍后重试（通常是临时问题）\n");
+                    msg.push_str("2. 检查 API 服务状态页面\n");
+                    msg.push_str("3. 如持续失败，联系 API 提供商\n");
+                }
+                _ => {
+                    msg.push_str("• API 请求失败\n\n");
+                    msg.push_str("💡 建议:\n");
+                    msg.push_str("1. 检查请求参数\n");
+                    msg.push_str("2. 查看 API 文档\n");
+                    msg.push_str("3. 联系 API 提供商支持\n");
+                }
+            }
+            
+            // 添加重试提示
+            if e.is_retryable() {
+                msg.push_str("\n♻️ 此错误为暂时性错误，系统稍后可能自动重试\n");
+            } else if e.is_permanent() {
+                msg.push_str("\n⚠️ 此错误为永久性错误，请检查配置后重试\n");
+            }
+        }
+    }
+    
+    msg
+}
+
 /// AI 助手消息
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct AiMessage {
@@ -119,6 +360,10 @@ pub struct AiMessage {
     /// 询问卡片（AETHER_ASK）回答：按消息内 ASK 块出现顺序对齐，None = 未回答
     #[serde(default)]
     pub ask_answers: Vec<Option<String>>,
+    /// 该消息附带过的图片文件名（仅展示用；图片数据本身不持久化、
+    /// 也不随历史重发）。空 = 无图片。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_names: Vec<String>,
 }
 
 impl AiMessage {
@@ -131,6 +376,7 @@ impl AiMessage {
             reasoning_ms: None,
             reasoning_started_ms: None,
             ask_answers: Vec::new(),
+            image_names: Vec::new(),
         }
     }
 
@@ -259,6 +505,21 @@ pub fn gen_conversation_id() -> String {
     format!("conv-{}-{}", ms, n)
 }
 
+/// 待发送的图片附件（AI 输入框中附加，随下一条用户消息以
+/// OpenAI 兼容 `image_url` base64 data URL 块发送）。
+///
+/// 仅运行期驻留：发送后清空，不持久化（历史消息只保留 `AiMessage::image_names`
+/// 文件名用于展示），避免 base64 数据撑爆会话存储。
+#[derive(Clone, Debug)]
+pub struct AiImageAttachment {
+    /// 原始文件名（用于 chip 展示与历史消息标注）
+    pub filename: String,
+    /// MIME 类型（按文件魔数检测：image/jpeg | image/png | image/gif | image/webp）
+    pub mime: String,
+    /// 图片内容的 base64 编码
+    pub data_b64: String,
+}
+
 /// 单个 AI 对话会话（多标签页 + 历史记录的基本单元）。
 ///
 /// 活动会话的实时状态保存在 `AiPanel` 的扁平字段中（沿用旧逻辑，避免大面积改动）；
@@ -279,6 +540,8 @@ pub struct AiConversation {
     pub stick_to_bottom: bool,
     pub mode: AiMode,
     pub attachments: Vec<AiContextAttachment>,
+    /// 待发送图片附件（发送后即清空；会话切换时随槽位保存/恢复）
+    pub pending_images: Vec<AiImageAttachment>,
     pub stream_state: Arc<Mutex<AiStreamState>>,
     pub should_stop: Arc<AtomicBool>,
     /// 本轮注入过的 playbook 条目 ID（用于反馈归因）
@@ -311,6 +574,7 @@ impl AiConversation {
             stick_to_bottom: true,
             mode: AiMode::Agent,
             attachments: Vec::new(),
+            pending_images: Vec::new(),
             stream_state: Arc::new(Mutex::new(AiStreamState::default())),
             should_stop: Arc::new(AtomicBool::new(false)),
             used_bullet_ids: Vec::new(),
@@ -398,11 +662,11 @@ impl AiConversation {
                         .get_or_insert_with(String::new)
                         .push_str(&reasoning);
                 }
-                self.stick_to_bottom = true;
+                // 不强制吸附底部：尊重用户手动滚动选择
                 self.updated_at = now_secs();
             }
             if !partial.is_empty() {
-                self.stick_to_bottom = true;
+                // 不强制吸附底部：尊重用户手动滚动选择
                 if !matches!(self.messages.last(), Some(m) if m.role == AiRole::Assistant) {
                     self.messages
                         .push(AiMessage::new(AiRole::Assistant, String::new()));
@@ -553,6 +817,8 @@ pub struct AgentPipeline {
     pub created_files: Vec<String>,
     /// 未成功写入的文件任务（worker 输出未闭合/应用失败），收尾时如实汇报
     pub failed_files: Vec<String>,
+    /// 当前任务的续写次数（防止无限续写循环）
+    pub resume_count: usize,
 }
 
 /// Tab 键无障碍导航的焦点动作（文件卡展开 / 文件链接打开）
@@ -589,6 +855,14 @@ pub struct AiPanel {
     pub model_menu_open: bool,
     /// 已附加的上下文项
     pub attachments: Vec<AiContextAttachment>,
+    /// 待发送的图片附件（活动会话；多模态模型下经输入框图片按钮附加）
+    pub pending_images: Vec<AiImageAttachment>,
+    /// 图片 chip 命中区域 (index, x, y, w, h)，渲染每帧更新（面板相对坐标）；点击移除该图片
+    pub image_chip_regions: Vec<(usize, f32, f32, f32, f32)>,
+    /// 悬停的图片 chip 下标
+    pub hover_image_chip: Option<usize>,
+    /// 输入框工具栏"附加图片"按钮命中区 (x, y, w, h)（面板相对坐标）
+    pub image_button_region: Option<(f32, f32, f32, f32)>,
     /// 模式切换按钮命中区域 (mode, x, y, w, h)
     pub mode_button_regions: Vec<(AiMode, f32, f32, f32, f32)>,
     /// 附件 chip 命中区域 (index, x, y, w, h)
@@ -816,22 +1090,8 @@ fn spawn_ai_stream(
                         }
                         AiStreamEvent::Error(err) => {
                             if let Ok(mut s) = stream_state.lock() {
-                                // 区分本地调用失败和 API 返回错误
-                                let error_msg = if err.contains("network")
-                                    || err.contains("connection")
-                                    || err.contains("dns")
-                                    || err.contains("ssl")
-                                {
-                                    format!(
-                                        "[本地调用失败] 网络请求无法发出：{}",
-                                        sanitize_error(&err)
-                                    )
-                                } else {
-                                    format!(
-                                        "[API 返回错误] 服务器返回错误：{}",
-                                        sanitize_error(&err)
-                                    )
-                                };
+                                // 使用详细错误诊断
+                                let error_msg = diagnose_stream_error(&err);
                                 s.error = Some(error_msg);
                                 s.done = true;
                             }
@@ -842,24 +1102,9 @@ fn spawn_ai_stream(
             }
             Err(e) => {
                 if let Ok(mut s) = stream_state.lock() {
-                    let error_msg = e.safe_display();
-                    let hint = if e.is_retryable() {
-                        "\n（暂时性错误，系统稍后可能自动重试，或请稍候重试）"
-                    } else if e.is_permanent() {
-                        "\n（请检查 API 设置，此错误通常无需重试）"
-                    } else {
-                        ""
-                    };
-
-                    // 区分本地调用失败和 API 返回错误
-                    let error_type = if error_msg.contains("网络") || error_msg.contains("连接")
-                    {
-                        "[本地调用失败]"
-                    } else {
-                        "[API 返回错误]"
-                    };
-
-                    s.error = Some(format!("{} 请求失败: {}{}", error_type, error_msg, hint));
+                    // 使用详细错误诊断
+                    let error_msg = diagnose_api_error(&e);
+                    s.error = Some(error_msg);
                     s.done = true;
                 }
             }
@@ -881,6 +1126,10 @@ impl AiPanel {
             mode: AiMode::Agent,
             model_menu_open: false,
             attachments: Vec::new(),
+            pending_images: Vec::new(),
+            image_chip_regions: Vec::new(),
+            hover_image_chip: None,
+            image_button_region: None,
             mode_button_regions: Vec::new(),
             attachment_chip_regions: Vec::new(),
             hover_attachment: None,
@@ -1138,6 +1387,7 @@ impl AiPanel {
         slot.stick_to_bottom = self.stick_to_bottom;
         slot.mode = self.mode;
         slot.attachments = self.attachments.clone();
+        slot.pending_images = self.pending_images.clone();
         slot.stream_state = Arc::clone(&self.stream_state);
         slot.should_stop = Arc::clone(&self.should_stop);
         slot.updated_at = now_secs();
@@ -1164,6 +1414,9 @@ impl AiPanel {
         self.stick_to_bottom = slot.stick_to_bottom;
         self.mode = slot.mode;
         self.attachments = std::mem::take(&mut slot.attachments);
+        self.pending_images = std::mem::take(&mut slot.pending_images);
+        self.image_chip_regions.clear();
+        self.hover_image_chip = None;
         self.stream_state = Arc::clone(&slot.stream_state);
         self.should_stop = Arc::clone(&slot.should_stop);
         self.active = idx;
@@ -1440,40 +1693,101 @@ impl AiPanel {
         false
     }
 
-    /// 处理超时情况：添加超时提示消息
+    /// 处理超时情况：添加详细的超时诊断消息
     pub fn handle_timeout(&mut self) {
         if !self.check_timeout() {
             return;
         }
 
+        // 收集诊断信息
+        let (elapsed_secs, thinking_mode, limit_secs) = {
+            if let Ok(s) = self.stream_state.lock() {
+                let elapsed = s.start_time
+                    .map(|t| t.elapsed().as_secs())
+                    .unwrap_or(0);
+                let thinking = self.in_flight_thinking;
+                let limit = if thinking { 180 } else { 30 };
+                (elapsed, thinking, limit)
+            } else {
+                (0, false, 30)
+            }
+        };
+
         // 停止当前生成
         self.stop_generation();
 
-        // 添加超时提示消息
-        let timeout_msg = "[超时] AI 响应超时\n\n\
-            可能的原因：\n\
-            1. 网络连接不稳定或中断\n\
-            2. API 服务器响应缓慢\n\
-            3. 请求内容过于复杂，需要更长时间处理\n\n\
-            建议：\n\
-            • 检查网络连接是否正常\n\
-            • 稍后重试\n\
-            • 简化请求内容\n\
-            • 联系 API 服务提供商确认服务状态";
+        // 构建详细的超时诊断消息
+        let mut msg = String::from("[超时] AI 响应超时\n\n");
+        
+        // 基本信息
+        msg.push_str(&format!("⏱️  等待时长: {} 秒\n", elapsed_secs));
+        msg.push_str(&format!("🎯 超时阈值: {} 秒\n", limit_secs));
+        msg.push_str(&format!("🧠 思考模式: {}\n\n", if thinking_mode { "开启" } else { "关闭" }));
 
-        self.add_assistant_message(timeout_msg.to_string());
+        // 诊断分析
+        msg.push_str("📊 诊断分析:\n");
+        
+        if elapsed_secs < 5 {
+            msg.push_str("• 请求几乎立即超时，可能是网络连接完全中断\n");
+            msg.push_str("• 检查: 网络连接、防火墙设置、代理配置\n");
+        } else if elapsed_secs < limit_secs / 2 {
+            msg.push_str("• 请求在超时阈值的一半内失败，可能是 DNS 解析或 TCP 连接问题\n");
+            msg.push_str("• 检查: DNS 设置、API 服务器地址是否正确\n");
+        } else if elapsed_secs >= limit_secs {
+            if thinking_mode {
+                msg.push_str("• 思考模式下超时，可能是模型正在深度推理\n");
+                msg.push_str("• 检查: 问题复杂度、是否可以通过简化问题来加速\n");
+            } else {
+                msg.push_str("• 非思考模式下超时，可能是 API 服务器响应缓慢\n");
+                msg.push_str("• 检查: API 服务状态、网络延迟\n");
+            }
+        }
+
+        // 针对性建议
+        msg.push_str("\n💡 针对性建议:\n");
+        
+        if elapsed_secs < 5 {
+            msg.push_str("1. 立即检查网络连接（尝试访问其他网站）\n");
+            msg.push_str("2. 检查防火墙/杀毒软件是否拦截了请求\n");
+            msg.push_str("3. 如使用代理，确认代理配置正确\n");
+        } else if thinking_mode {
+            msg.push_str("1. 尝试关闭思考模式（设置 → AI → 思考模式）\n");
+            msg.push_str("2. 简化问题描述，减少上下文长度\n");
+            msg.push_str("3. 检查 API 配额是否充足\n");
+        } else {
+            msg.push_str("1. 稍后重试（可能是临时网络波动）\n");
+            msg.push_str("2. 检查 API 服务状态页面\n");
+            msg.push_str("3. 尝试切换到其他模型或提供商\n");
+        }
+
+        // 技术细节
+        msg.push_str("\n🔧 技术细节:\n");
+        msg.push_str(&format!("• 错误类型: 首包响应超时（{}秒内未收到任何数据）\n", limit_secs));
+        msg.push_str("• 建议操作: 点击重试按钮或重新发送消息\n");
+
+        self.add_assistant_message(msg);
     }
 
     /// 并发轮询所有会话：活动会话走扁平逻辑，其余走后台 drain。
     /// 返回 `(刚正常完成, 刚中断)` 两个会话下标列表：
     /// 前者应处理 Agent 动作（文件/命令），后者可抢救已接收的文件块。
+    ///
+    /// 特殊处理：当 worker 流水线运行中时，截断（Truncated）也视为完成，
+    /// 以便 `advance_agent_pipeline` 检测截断并自动续写补全文件。
     pub fn poll_all_background(&mut self) -> (Vec<usize>, Vec<usize>) {
         let mut completed = Vec::new();
         let mut interrupted = Vec::new();
+        // worker 流水线运行中：截断也视为完成（由 advance_agent_pipeline 自动续写）
+        let pipeline_active = self.agent_pipeline.is_some();
         match self.check_background_result() {
             DrainEdge::Completed => completed.push(self.active),
             DrainEdge::Interrupted => interrupted.push(self.active),
-            DrainEdge::Truncated => {} // 截断：UI 显示"继续生成"按钮，不自动处理文件/命令
+            DrainEdge::Truncated => {
+                if pipeline_active {
+                    completed.push(self.active);
+                }
+                // 非流水线模式：UI 显示"继续生成"按钮，不自动处理文件/命令
+            }
             DrainEdge::Pending => {}
         }
         let active = self.active;
@@ -1484,7 +1798,12 @@ impl AiPanel {
             match self.conversations[i].drain_background() {
                 DrainEdge::Completed => completed.push(i),
                 DrainEdge::Interrupted => interrupted.push(i),
-                DrainEdge::Truncated => {} // 后台会话截断：仅显示消息，无按钮
+                DrainEdge::Truncated => {
+                    if pipeline_active {
+                        completed.push(i);
+                    }
+                    // 非流水线模式：后台会话截断仅显示消息，无按钮
+                }
                 DrainEdge::Pending => {}
             }
         }
@@ -1558,6 +1877,53 @@ impl AiPanel {
         self.messages.push(AiMessage::new(AiRole::User, content));
         self.stick_to_bottom = true;
         self.sync_hot_data();
+    }
+
+    // ===== 待发送图片（多模态）=====
+
+    /// 附加一张待发送图片（随下一条用户消息发送；是否允许由发送时的
+    /// 多模态门禁统一校验）
+    pub fn add_pending_image(&mut self, attachment: AiImageAttachment) {
+        self.pending_images.push(attachment);
+    }
+
+    /// 移除指定下标的待发送图片（点击输入框图片 chip）
+    pub fn remove_pending_image(&mut self, index: usize) {
+        if index < self.pending_images.len() {
+            self.pending_images.remove(index);
+            self.hover_image_chip = None;
+        }
+    }
+
+    /// 清空全部待发送图片（切换模型关闭多模态等场景调用）
+    pub fn clear_pending_images(&mut self) {
+        self.pending_images.clear();
+        self.hover_image_chip = None;
+    }
+
+    /// 命中测试：返回点击位置覆盖的图片 chip 下标（渲染帧注册的区域）
+    pub fn hit_test_image_chip(&self, px: f32, py: f32) -> Option<usize> {
+        self.image_chip_regions
+            .iter()
+            .find(|(_, x, y, w, h)| px >= *x && px <= *x + *w && py >= *y && py <= *y + *h)
+            .map(|(i, _, _, _, _)| *i)
+    }
+
+    /// 待发送图片 chips 行高度：有待发图片时占一行，否则为 0
+    pub const IMAGE_CHIPS_ROW_H: f32 = 32.0;
+    pub fn image_chips_row_height(&self) -> f32 {
+        if self.pending_images.is_empty() {
+            0.0
+        } else {
+            Self::IMAGE_CHIPS_ROW_H
+        }
+    }
+
+    /// 输入区域总高度 = 文本输入高度 + 固定工具栏与间距(44) + 图片 chips 行。
+    /// 所有依赖输入区几何的位置（裁剪/命中/IME 定位）必须经此方法计算，
+    /// 避免硬编码 `input_computed_height + 44.0` 与 chips 行漂移。
+    pub fn input_area_height(&self) -> f32 {
+        self.input_computed_height + 44.0 + self.image_chips_row_height()
     }
 
     /// 添加助手消息
@@ -1816,6 +2182,8 @@ impl AiPanel {
         self.is_generating = true;
         self.note_in_flight_thinking(settings);
         self.should_stop.store(false, Ordering::SeqCst);
+        // 重置截断标记：worker 每次调用都是独立生成，不应继承上次的截断状态
+        self.last_truncated = false;
         if let Ok(mut s) = self.stream_state.lock() {
             *s = AiStreamState::default();
         }
@@ -1826,10 +2194,12 @@ impl AiPanel {
             ChatMessage {
                 role: "system".to_string(),
                 content: system,
+                images: Vec::new(),
             },
             ChatMessage {
                 role: "user".to_string(),
                 content: user,
+                images: Vec::new(),
             },
         ];
         spawn_ai_stream(
@@ -1881,10 +2251,12 @@ impl AiPanel {
             ChatMessage {
                 role: "system".to_string(),
                 content: system,
+                images: Vec::new(),
             },
             ChatMessage {
                 role: "user".to_string(),
                 content: user_input,
+                images: Vec::new(),
             },
         ];
         spawn_ai_stream(
@@ -2121,6 +2493,18 @@ impl AiPanel {
             return Err("正在等待上一次回复，请稍后再试".to_string());
         }
 
+        // 多模态门禁：附带图片但当前模型未声明支持多模态时拒绝发送，
+        // 避免非视觉模型返回 400（"This model does not support image"）。
+        // 所有发送路径（发送按钮/Enter/重试/扩写回复）均经本函数，一处覆盖。
+        if !self.pending_images.is_empty() && !settings.multimodal {
+            return Err(
+                "当前模型不支持图片输入：请在模型设置中勾选「多模态（图片）」，或移除已附加的图片"
+                    .to_string(),
+            );
+        }
+        // 取出待发图片（发送即清空；门禁通过后不再有早退路径）
+        let pending_images = std::mem::take(&mut self.pending_images);
+
         // 用户手动发送消息（或点击"继续"）时，重置截断标记
         self.last_truncated = false;
 
@@ -2134,6 +2518,12 @@ impl AiPanel {
         };
 
         self.add_user_message(user_input.clone());
+        // 历史消息只保留图片文件名用于展示（数据不持久化、不随历史重发）
+        if !pending_images.is_empty() {
+            if let Some(last) = self.messages.last_mut() {
+                last.image_names = pending_images.iter().map(|p| p.filename.clone()).collect();
+            }
+        }
         self.input.clear();
         self.caret_pos = 0;
         self.is_generating = true;
@@ -2181,6 +2571,7 @@ impl AiPanel {
                     messages.push(ChatMessage {
                         role: "system".to_string(),
                         content: crate::reflector::format_bullets(&hits),
+                        images: Vec::new(),
                     });
                 }
             }
@@ -2197,6 +2588,21 @@ impl AiPanel {
             .map(|v| v as usize)
             .unwrap_or(24000);
         messages.extend(Self::history_to_chat_messages(&self.messages, input_budget));
+        // 图片只附到本轮最新的 user 消息（OpenAI 兼容 image_url 块；
+        // history_to_chat_messages 保证最新消息必在切片内）。历史消息不重发图片，
+        // 控制多轮对话的请求体大小与 token 成本。
+        if !pending_images.is_empty() {
+            let images: Vec<ChatImage> = pending_images
+                .iter()
+                .map(|p| ChatImage {
+                    mime: p.mime.clone(),
+                    data_b64: p.data_b64.clone(),
+                })
+                .collect();
+            if let Some(last_user) = messages.iter_mut().rev().find(|m| m.role == "user") {
+                last_user.images = images;
+            }
+        }
         let stream_state = Arc::clone(&self.stream_state);
         let should_stop = Arc::clone(&self.should_stop);
 
@@ -2246,6 +2652,7 @@ impl AiPanel {
                 _ => ChatMessage {
                     role: "assistant".to_string(),
                     content: m.content.clone(),
+                    images: Vec::new(),
                 },
             })
             .collect()
@@ -2521,10 +2928,10 @@ impl AiPanel {
                         .get_or_insert_with(String::new)
                         .push_str(&reasoning);
                 }
-                self.stick_to_bottom = true;
+                // 不强制吸附底部：尊重用户手动滚动选择
             }
             if !partial.is_empty() {
-                self.stick_to_bottom = true;
+                // 不强制吸附底部：尊重用户手动滚动选择
                 if !matches!(self.messages.last(), Some(m) if m.role == AiRole::Assistant) {
                     self.messages
                         .push(AiMessage::new(AiRole::Assistant, String::new()));

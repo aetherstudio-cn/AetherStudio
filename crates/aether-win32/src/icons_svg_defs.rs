@@ -998,6 +998,16 @@ const UI_REFRESH: SvgDef = SvgDef {
     ],
 };
 
+/// Lucide "image" - 图片（AI 多模态：附加图片按钮 / 待发图片 chip）
+const UI_IMAGE: SvgDef = SvgDef {
+    viewbox: (0.0, 0.0, 24.0, 24.0),
+    shapes: &[
+        SvgShape::Rect(3.0, 3.0, 18.0, 18.0, None, Some(2.0)),
+        SvgShape::Circle(9.0, 9.0, 2.0, None),
+        SvgShape::Path("m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21", None),
+    ],
+};
+
 /// Lucide "trash-2" - 垃圾桶（删除）
 const UI_TRASH: SvgDef = SvgDef {
     viewbox: (0.0, 0.0, 24.0, 24.0),
@@ -1103,4 +1113,5 @@ pub(crate) const SVG_DEFS: &[SvgDef] = &[
     /* 84 Eye           */ UI_EYE,
     /* 85 Pencil        */ UI_PENCIL,
     /* 86 Refresh       */ UI_REFRESH,
+    /* 87 Image         */ UI_IMAGE,
 ];
