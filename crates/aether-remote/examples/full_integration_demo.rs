@@ -1,6 +1,6 @@
 //! 完整集成演示：设备注册 + Realtime 监听 + 任务执行 + 状态同步
 
-use aether_remote::queue::{Device, QueueConfig, SupabaseConfig, Task, TaskQueueSystem};
+use aether_remote::queue::{QueueConfig, SupabaseConfig, Task, TaskQueueSystem};
 use std::path::PathBuf;
 use uuid::Uuid;
 

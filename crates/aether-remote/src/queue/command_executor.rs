@@ -247,6 +247,7 @@ impl CommandExecutor {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use uuid::Uuid;
 
     async fn create_test_executor() -> (CommandExecutor, TempDir) {
         let temp_dir = TempDir::new().unwrap();

@@ -237,7 +237,7 @@ mod tests {
 
         graph.add_task(&task1).unwrap();
 
-        let mut task2 = create_task(vec![task1_id]);
+        let task2 = create_task(vec![task1_id]);
         let task2_id = task2.id;
         graph.add_task(&task2).unwrap();
 

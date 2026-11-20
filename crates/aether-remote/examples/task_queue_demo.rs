@@ -97,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 6. 查询任务状态
     println!("\n任务状态:");
+    let task1_id = task1.id;
     for (i, task) in [task1, task2, task3, task4].iter().enumerate() {
         if let Some(status) = system.get_task_status(task.id).await {
             println!("  - 任务 {}: {:?}", i + 1, status);
@@ -105,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 7. 获取任务日志
     println!("\n任务日志示例:");
-    let logs = system.get_task_logs(task1.id).await;
+    let logs = system.get_task_logs(task1_id).await;
     for log in logs.iter().take(3) {
         println!("  - [{:?}] {}", log.level, log.message);
     }
