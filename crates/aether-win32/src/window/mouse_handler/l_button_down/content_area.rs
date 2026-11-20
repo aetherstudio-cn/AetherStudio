@@ -394,6 +394,39 @@ unsafe fn lbd_ai_ask_cards(
     None
 }
 
+/// AI 面板：欢迎卡快捷提示 chip 点击，将提示填入输入框并聚焦。
+/// 命中区为渲染时注册的绝对坐标，直接用 mouse_x/mouse_y 测试。
+unsafe fn lbd_ai_welcome_chips(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+) -> Option<LRESULT> {
+    let hit = {
+        let st = state.borrow();
+        st.ai
+            .ai_panel
+            .welcome_chip_regions
+            .iter()
+            .find(|(_, rx, ry, rw, rh)| {
+                mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+            })
+            .map(|(text, ..)| text.clone())
+    };
+    if let Some(text) = hit {
+        let mut st = state.borrow_mut();
+        st.ai.ai_panel.input = text;
+        st.ai.ai_panel.caret_pos = st.ai.ai_panel.input.len();
+        st.ai.ai_panel.input_focused = true;
+        st.ui.status_message = "已填入提示，可编辑后发送".to_string();
+        let _ = SetTimer(hwnd, crate::window::CARET_TIMER_ID, 530, None);
+        st.mark_ai_panel_dirty();
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+    None
+}
+
 /// AI 面板：代码块保存按钮点击。
 /// 遍历消息查找代码块位置，检测是否点击了保存按钮。
 unsafe fn lbd_ai_code_save(
@@ -1643,6 +1676,10 @@ pub(super) unsafe fn lbd_welcome_or_editor(
         }
         // 2. 询问卡片：选项点击 / 自定义回答
         if let Some(result) = lbd_ai_ask_cards(hwnd, state, mouse_x, mouse_y) {
+            return Some(result);
+        }
+        // 2.5 欢迎卡：快捷提示 chip 点击填入输入框
+        if let Some(result) = lbd_ai_welcome_chips(hwnd, state, mouse_x, mouse_y) {
             return Some(result);
         }
         // 3. 输入框/发送按钮/模型下拉等

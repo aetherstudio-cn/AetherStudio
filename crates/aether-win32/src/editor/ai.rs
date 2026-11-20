@@ -441,8 +441,8 @@ impl EditorState {
             self.open_in_new_tab(tab);
         }
 
-        // 打开标签需保证右侧编辑区可见
-        self.ui.layout.right_panel_visible = true;
+        // 打开标签需保证右侧编辑区可见（含零宽兜底）
+        self.ui.layout.ensure_right_panel_visible();
         self.ui.status_message = format!("已打开: {}", path.display());
         self.win.dirty_tracker.mark_full_window();
     }

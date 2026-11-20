@@ -45,8 +45,10 @@ pub const CARET_TIMER_ID: usize = 0xA004;
 pub(crate) const AI_TIMER_ID: usize = 0xA005;
 /// AI 对话温数据归档定时器 ID（周期检查空闲会话，归档进 MemoryStore）
 pub(crate) const AI_ARCHIVE_TIMER_ID: usize = 0xA007;
-/// UI 动画定时器 ID（历史记录下拉面板展开/收起动画，动画结束后自动停止）
+/// UI 动画定时器 ID（历史面板展开/收起 + 活动栏/标签栏悬停微动效，动画结束后自动停止）
 pub(crate) const UI_ANIM_TIMER_ID: usize = 0xA008;
+/// UI 动画帧间隔（毫秒，约 60fps）
+pub(crate) const UI_ANIM_INTERVAL_MS: u32 = 16;
 /// 冰冻看门狗定时器 ID（低频检查空闲时长，满足条件进入 Frozen 冰冻态，见 power.rs）
 pub(crate) const POWER_TIMER_ID: usize = 0xA009;
 /// 智能体沙盒评测定时器 ID（评测运行期间驱动流式消费/倒计时/任务推进，结束后自动停止）

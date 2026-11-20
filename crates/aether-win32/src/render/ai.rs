@@ -32,6 +32,8 @@ impl EditorState {
             // 询问卡片选项/自定义命中区同样每帧重建
             self.ai.ai_panel.ask_option_regions.clear();
             self.ai.ai_panel.ask_custom_regions.clear();
+            // 欢迎卡快捷提示 chips 命中区每帧重建
+            self.ai.ai_panel.welcome_chip_regions.clear();
 
             // 确保矢量图标几何已创建（AI 面板工具栏图标）
             self.ui.icons.ensure_created_from_target(target);
@@ -329,6 +331,226 @@ impl EditorState {
                 bottom: chat_bottom,
             };
             target.PushAxisAlignedClip(&chat_clip_rect, D2D1_ANTIALIAS_MODE_ALIASED);
+
+            // ===== 欢迎卡：会话尚无真实对话（仅 System 欢迎语）时显示 =====
+            // 经典欢迎页移除后新窗口缺少问候语，此处在聊天区恢复现代化欢迎卡：
+            // 圆角卡片 + 标题 + AI_WELCOME 正文 + 可点击快捷提示 chips，
+            // 首条用户/AI 消息出现后自动消失。
+            let has_visible_msg = self
+                .ai
+                .ai_panel
+                .messages
+                .iter()
+                .any(|m| m.role != crate::ai_panel::AiRole::System);
+            if !has_visible_msg && msg_y < chat_bottom {
+                let card_pad = 14.0f32;
+                let inner_left = content_left + card_pad;
+                let inner_right = content_right - card_pad;
+                let inner_w = (inner_right - inner_left).max(40.0);
+                let title_h = 22.0f32;
+                let chip_h = 24.0f32;
+                let chip_gap = 8.0f32;
+
+                // 正文自动换行高度
+                let welcome_wide: Vec<u16> = crate::ai_panel::AI_WELCOME.encode_utf16().collect();
+                let body_h = if let Ok(layout) =
+                    dwrite.CreateTextLayout(&welcome_wide, &msg_format, inner_w, 100000.0)
+                {
+                    let mut m =
+                        windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
+                    if layout.GetMetrics(&mut m).is_ok() {
+                        m.height.max(14.0)
+                    } else {
+                        14.0
+                    }
+                } else {
+                    14.0
+                };
+
+                // 快捷提示 chips：先测量宽度，再按可用宽度折行
+                let chips = ["解释代码", "重构建议", "修复问题", "生成测试"];
+                let mut chip_widths: Vec<f32> = Vec::new();
+                for chip in chips {
+                    let cw: Vec<u16> = chip.encode_utf16().collect();
+                    let text_w = if let Ok(layout) =
+                        dwrite.CreateTextLayout(&cw, &small_format, 100000.0, 100000.0)
+                    {
+                        let mut m =
+                            windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
+                        if layout.GetMetrics(&mut m).is_ok() {
+                            m.width
+                        } else {
+                            40.0
+                        }
+                    } else {
+                        40.0
+                    };
+                    chip_widths.push(text_w + 20.0);
+                }
+                let mut chip_rows = 1usize;
+                let mut row_w = 0.0f32;
+                for w in &chip_widths {
+                    if row_w > 0.0 && row_w + chip_gap + w > inner_w {
+                        chip_rows += 1;
+                        row_w = *w;
+                    } else {
+                        row_w += if row_w > 0.0 { chip_gap } else { 0.0 } + w;
+                    }
+                }
+
+                let card_h = card_pad * 2.0
+                    + title_h
+                    + 8.0
+                    + body_h
+                    + 12.0
+                    + chip_rows as f32 * chip_h
+                    + (chip_rows - 1) as f32 * chip_gap;
+                let card_rect = D2D_RECT_F {
+                    left: content_left,
+                    top: msg_y,
+                    right: content_right,
+                    bottom: msg_y + card_h,
+                };
+                if let Ok(card_bg) = self
+                    .win
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &color_f(0.125, 0.125, 0.145, 1.0))
+                {
+                    fill_round_rect(target, &card_rect, 10.0, &card_bg);
+                }
+
+                // 标题行：强调色圆点 + 半粗体标题，形成视觉锚点
+                let title_y = msg_y + card_pad;
+                if let Ok(accent) = self
+                    .win
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &color_f(0.30, 0.76, 1.0, 1.0))
+                {
+                    target.FillEllipse(
+                        &windows::Win32::Graphics::Direct2D::D2D1_ELLIPSE {
+                            point: D2D_POINT_2F {
+                                x: inner_left + 4.0,
+                                y: title_y + title_h / 2.0,
+                            },
+                            radiusX: 4.0,
+                            radiusY: 4.0,
+                        },
+                        &accent,
+                    );
+                }
+                if let Ok(title_format) = self.win.render_ctx.text_format_cache.get_format(
+                    15.0,
+                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_SEMI_BOLD.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+                ) {
+                    let title_text: Vec<u16> =
+                        "你好，我是 AI 助手".encode_utf16().chain(Some(0)).collect();
+                    if let Ok(title_fg) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &color_f(0.93, 0.94, 0.96, 1.0))
+                    {
+                        target.DrawText(
+                            &title_text,
+                            &title_format,
+                            &D2D_RECT_F {
+                                left: inner_left + 16.0,
+                                top: title_y,
+                                right: inner_right,
+                                bottom: title_y + title_h,
+                            },
+                            &title_fg,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+                    }
+                }
+
+                // 正文（AI_WELCOME，自动换行、柔和灰）
+                let body_y = title_y + title_h + 8.0;
+                if let Ok(layout) =
+                    dwrite.CreateTextLayout(&welcome_wide, &msg_format, inner_w, 100000.0)
+                {
+                    if let Ok(body_fg) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &color_f(0.62, 0.64, 0.68, 1.0))
+                    {
+                        target.DrawTextLayout(
+                            D2D_POINT_2F {
+                                x: inner_left,
+                                y: body_y,
+                            },
+                            &layout,
+                            &body_fg,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        );
+                    }
+                }
+
+                // 快捷提示 chips：圆角胶囊，点击填入输入框
+                let mut chip_x = inner_left;
+                let mut chip_y = body_y + body_h + 12.0;
+                if let Ok(chip_bg) = self
+                    .win
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &color_f(0.18, 0.19, 0.22, 1.0))
+                {
+                    if let Ok(chip_fg) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &color_f(0.78, 0.82, 0.88, 1.0))
+                    {
+                        for (chip, w) in chips.iter().zip(chip_widths.iter()) {
+                            if chip_x > inner_left && chip_x + w > inner_right {
+                                chip_x = inner_left;
+                                chip_y += chip_h + chip_gap;
+                            }
+                            let chip_rect = D2D_RECT_F {
+                                left: chip_x,
+                                top: chip_y,
+                                right: chip_x + w,
+                                bottom: chip_y + chip_h,
+                            };
+                            fill_round_rect(target, &chip_rect, 12.0, &chip_bg);
+                            let chip_text: Vec<u16> = chip.encode_utf16().chain(Some(0)).collect();
+                            target.DrawText(
+                                &chip_text,
+                                &small_format,
+                                &D2D_RECT_F {
+                                    left: chip_x + 10.0,
+                                    top: chip_y + 6.0,
+                                    right: chip_x + w - 10.0,
+                                    bottom: chip_y + chip_h - 4.0,
+                                },
+                                &chip_fg,
+                                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                DWRITE_MEASURING_MODE_NATURAL,
+                            );
+                            // 仅注册完全可见的 chips，避免裁剪区外的幽灵点击
+                            if chip_y + chip_h <= chat_bottom {
+                                self.ai.ai_panel.welcome_chip_regions.push((
+                                    chip.to_string(),
+                                    chip_x,
+                                    chip_y,
+                                    *w,
+                                    chip_h,
+                                ));
+                            }
+                            chip_x += w + chip_gap;
+                        }
+                    }
+                }
+
+                msg_y += card_h + msg_gap;
+            }
 
             for (msg_index, msg) in self.ai.ai_panel.messages.iter().enumerate() {
                 if msg.role == crate::ai_panel::AiRole::System {

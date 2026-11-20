@@ -50,6 +50,7 @@ pub mod tabs;
 pub mod terminal;
 pub mod theme;
 pub mod tooltip;
+pub mod ui_anim;
 pub mod uia;
 pub mod undo_delete;
 pub mod updater;
