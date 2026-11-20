@@ -4,8 +4,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use supabase_realtime_rs::{
-    PostgresChangeEvent, PostgresChangesFilter, PostgresChangesPayload,
-    RealtimeClient, RealtimeClientOptions,
+    PostgresChangeEvent, PostgresChangesFilter, PostgresChangesPayload, RealtimeClient,
+    RealtimeClientOptions,
 };
 
 use super::error::{QueueError, Result};
@@ -46,15 +46,15 @@ impl RealtimeTaskListener {
     /// 启动监听（返回任务接收通道）
     pub async fn start(&self) -> Result<mpsc::Receiver<Task>> {
         let (tx, rx) = mpsc::channel(100);
-        
+
         let config = self.config.clone();
         let device_id = self.device_id.clone();
         let reconnect_interval = self.reconnect_interval;
         let max_attempts = self.max_reconnect_attempts;
-        
+
         tokio::spawn(async move {
             let mut attempt = 0;
-            
+
             loop {
                 match Self::connect_and_listen(&config, &device_id, tx.clone()).await {
                     Ok(_) => {
@@ -63,19 +63,24 @@ impl RealtimeTaskListener {
                     }
                     Err(e) => {
                         attempt += 1;
-                        tracing::error!("Realtime 连接错误 (尝试 {}/{}): {}", attempt, max_attempts, e);
-                        
+                        tracing::error!(
+                            "Realtime 连接错误 (尝试 {}/{}): {}",
+                            attempt,
+                            max_attempts,
+                            e
+                        );
+
                         if attempt >= max_attempts {
                             tracing::error!("达到最大重连次数，停止监听");
                             break;
                         }
-                        
+
                         tokio::time::sleep(reconnect_interval).await;
                     }
                 }
             }
         });
-        
+
         Ok(rx)
     }
 
@@ -86,45 +91,56 @@ impl RealtimeTaskListener {
         tx: mpsc::Sender<Task>,
     ) -> Result<()> {
         tracing::info!("连接到 Supabase Realtime: {}", config.realtime_url());
-        
+
         // 创建 Realtime 客户端
         let client = RealtimeClient::new(
             &config.realtime_url(),
             RealtimeClientOptions {
                 api_key: config.anon_key.clone(),
                 ..Default::default()
-            }
-        ).map_err(|e| QueueError::NetworkError(format!("创建 Realtime 客户端失败: {}", e)))?;
+            },
+        )
+        .map_err(|e| QueueError::NetworkError(format!("创建 Realtime 客户端失败: {}", e)))?;
 
         // 连接
-        client.connect().await
+        client
+            .connect()
+            .await
             .map_err(|e| QueueError::NetworkError(format!("连接失败: {}", e)))?;
 
         tracing::info!("Realtime 连接成功");
 
         // 创建频道
-        let channel = client.channel("agent_tasks_changes", Default::default()).await;
+        let channel = client
+            .channel("agent_tasks_changes", Default::default())
+            .await;
 
         // 监听 agent_tasks 表的 INSERT 事件
-        let mut insert_rx = channel.on_postgres_changes(
-            PostgresChangesFilter::new(PostgresChangeEvent::Insert, "public")
-                .table("agent_tasks")
-        ).await;
+        let mut insert_rx = channel
+            .on_postgres_changes(
+                PostgresChangesFilter::new(PostgresChangeEvent::Insert, "public")
+                    .table("agent_tasks"),
+            )
+            .await;
 
         // 监听 agent_tasks 表的 UPDATE 事件
-        let mut update_rx = channel.on_postgres_changes(
-            PostgresChangesFilter::new(PostgresChangeEvent::Update, "public")
-                .table("agent_tasks")
-        ).await;
+        let mut update_rx = channel
+            .on_postgres_changes(
+                PostgresChangesFilter::new(PostgresChangeEvent::Update, "public")
+                    .table("agent_tasks"),
+            )
+            .await;
 
         // 订阅频道
-        channel.subscribe().await
+        channel
+            .subscribe()
+            .await
             .map_err(|e| QueueError::NetworkError(format!("订阅失败: {}", e)))?;
 
         tracing::info!("已订阅 agent_tasks 表的变化");
 
         let device_id = device_id.to_string();
-        
+
         // 处理 INSERT 事件
         let tx_insert = tx.clone();
         let device_id_insert = device_id.clone();
@@ -132,11 +148,13 @@ impl RealtimeTaskListener {
             while let Some(payload) = insert_rx.recv().await {
                 if let PostgresChangesPayload::Insert(insert) = payload {
                     tracing::info!("收到新任务 INSERT 事件");
-                    
+
                     // 解析任务
                     if let Ok(task) = Self::parse_task_from_payload(&insert.new) {
                         // 只处理当前设备的任务
-                        if task.device_id.as_ref().map(|d| d.to_string()) == Some(device_id_insert.clone()) {
+                        if task.device_id.as_ref().map(|d| d.to_string())
+                            == Some(device_id_insert.clone())
+                        {
                             if let Err(e) = tx_insert.send(task).await {
                                 tracing::error!("发送任务失败: {}", e);
                             }
@@ -152,10 +170,12 @@ impl RealtimeTaskListener {
             while let Some(payload) = update_rx.recv().await {
                 if let PostgresChangesPayload::Update(update) = payload {
                     tracing::debug!("收到任务 UPDATE 事件");
-                    
+
                     // 可以在这里处理任务更新（如取消）
                     if let Ok(task) = Self::parse_task_from_payload(&update.new) {
-                        if task.device_id.as_ref().map(|d| d.to_string()) == Some(device_id_update.clone()) {
+                        if task.device_id.as_ref().map(|d| d.to_string())
+                            == Some(device_id_update.clone())
+                        {
                             if task.status == TaskStatus::Cancelled {
                                 tracing::info!("任务 {} 被取消", task.id);
                                 // TODO: 发送取消信号
@@ -169,14 +189,16 @@ impl RealtimeTaskListener {
         // 保持连接
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            
+
             // 检查连接状态
             // TODO: 实现连接状态检查
         }
     }
 
     /// 从 Postgres payload 解析任务
-    fn parse_task_from_payload(payload: &std::collections::HashMap<String, serde_json::Value>) -> Result<Task> {
+    fn parse_task_from_payload(
+        payload: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<Task> {
         let value = serde_json::to_value(payload)
             .map_err(|e| QueueError::SerializationError(format!("转换 payload 失败: {}", e)))?;
         serde_json::from_value(value)
@@ -204,14 +226,14 @@ impl PollingTaskListener {
     /// 启动轮询
     pub async fn start(&self) -> Result<mpsc::Receiver<Task>> {
         let (tx, rx) = mpsc::channel(100);
-        
+
         let config = self.config.clone();
         let device_id = self.device_id.clone();
         let poll_interval = self.poll_interval;
-        
+
         tokio::spawn(async move {
             let rest_client = super::supabase::SupabaseRestClient::new(config);
-            
+
             loop {
                 match rest_client.get_pending_tasks(&device_id).await {
                     Ok(tasks_json) => {
@@ -227,11 +249,11 @@ impl PollingTaskListener {
                         tracing::error!("轮询任务失败: {}", e);
                     }
                 }
-                
+
                 tokio::time::sleep(poll_interval).await;
             }
         });
-        
+
         Ok(rx)
     }
 }
@@ -254,12 +276,12 @@ impl HybridTaskListener {
     /// 启动监听（自动降级）
     pub async fn start(&self) -> Result<mpsc::Receiver<Task>> {
         let (tx, rx) = mpsc::channel(100);
-        
+
         // 尝试 Realtime
         match self.realtime.start().await {
             Ok(mut realtime_rx) => {
                 tracing::info!("使用 Realtime 模式");
-                
+
                 let tx_clone = tx.clone();
                 tokio::spawn(async move {
                     while let Some(task) = realtime_rx.recv().await {
@@ -271,7 +293,7 @@ impl HybridTaskListener {
             }
             Err(e) => {
                 tracing::warn!("Realtime 连接失败，降级到轮询模式: {}", e);
-                
+
                 match self.polling.start().await {
                     Ok(mut polling_rx) => {
                         tokio::spawn(async move {
@@ -283,15 +305,12 @@ impl HybridTaskListener {
                         });
                     }
                     Err(e) => {
-                        return Err(QueueError::Internal(format!(
-                            "轮询模式也失败: {}",
-                            e
-                        )));
+                        return Err(QueueError::Internal(format!("轮询模式也失败: {}", e)));
                     }
                 }
             }
         }
-        
+
         Ok(rx)
     }
 }
@@ -311,11 +330,8 @@ mod tests {
     #[tokio::test]
     async fn test_polling_listener_creation() {
         let config = SupabaseConfig::default();
-        let listener = PollingTaskListener::new(
-            config,
-            "device-1".to_string(),
-            Duration::from_secs(10),
-        );
+        let listener =
+            PollingTaskListener::new(config, "device-1".to_string(), Duration::from_secs(10));
         assert_eq!(listener.device_id, "device-1");
         assert_eq!(listener.poll_interval, Duration::from_secs(10));
     }

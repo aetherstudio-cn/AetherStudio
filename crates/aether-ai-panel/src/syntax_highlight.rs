@@ -201,7 +201,10 @@ mod tests {
 
     #[test]
     fn test_extract_language_from_fence() {
-        assert_eq!(extract_language_from_fence("```rust"), Some("rust".to_string()));
+        assert_eq!(
+            extract_language_from_fence("```rust"),
+            Some("rust".to_string())
+        );
         assert_eq!(
             extract_language_from_fence("```python:main.py"),
             Some("python".to_string())

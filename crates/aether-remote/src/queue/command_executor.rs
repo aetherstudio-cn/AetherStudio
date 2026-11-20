@@ -35,31 +35,33 @@ impl CommandExecutor {
     pub async fn execute(&self, task: Task) -> Result<TaskResult> {
         let start_time = chrono::Utc::now();
         let start_instant = std::time::Instant::now();
-        
+
         tracing::info!("开始执行任务: {} ({})", task.title, task.id);
-        
+
         // 记录开始日志
         let _ = self.store.append_log(&TaskLog::info(
             task.id,
             format!("开始执行: {}", task.command),
         ));
-        
+
         // 同步状态到 Supabase
         if let Some(client) = &self.rest_client {
-            let _ = client.update_task_status(
-                &task.id.to_string(),
-                "running",
-                Some(0),
-                Some(vec![format!("> 开始执行: {}", task.command)]),
-            ).await;
+            let _ = client
+                .update_task_status(
+                    &task.id.to_string(),
+                    "running",
+                    Some(0),
+                    Some(vec![format!("> 开始执行: {}", task.command)]),
+                )
+                .await;
         }
-        
+
         // 执行命令
         let result = self.execute_command(&task).await;
-        
+
         let completed_at = chrono::Utc::now();
         let duration = start_instant.elapsed();
-        
+
         match result {
             Ok((exit_code, stdout, stderr)) => {
                 let status = if exit_code == 0 {
@@ -67,28 +69,27 @@ impl CommandExecutor {
                 } else {
                     TaskStatus::Failed
                 };
-                
+
                 // 记录完成日志
                 let _ = self.store.append_log(&TaskLog::info(
                     task.id,
                     format!("执行完成，退出码: {}", exit_code),
                 ));
-                
+
                 // 同步到 Supabase
                 if let Some(client) = &self.rest_client {
-                    let logs = vec![
-                        format!("> 执行完成"),
-                        format!("> 退出码: {}", exit_code),
-                    ];
-                    
-                    let _ = client.update_task_status(
-                        &task.id.to_string(),
-                        if exit_code == 0 { "done" } else { "failed" },
-                        Some(100),
-                        Some(logs),
-                    ).await;
+                    let logs = vec![format!("> 执行完成"), format!("> 退出码: {}", exit_code)];
+
+                    let _ = client
+                        .update_task_status(
+                            &task.id.to_string(),
+                            if exit_code == 0 { "done" } else { "failed" },
+                            Some(100),
+                            Some(logs),
+                        )
+                        .await;
                 }
-                
+
                 Ok(TaskResult {
                     task_id: task.id,
                     status,
@@ -103,21 +104,22 @@ impl CommandExecutor {
             }
             Err(e) => {
                 // 记录错误日志
-                let _ = self.store.append_log(&TaskLog::error(
-                    task.id,
-                    format!("执行失败: {}", e),
-                ));
-                
+                let _ = self
+                    .store
+                    .append_log(&TaskLog::error(task.id, format!("执行失败: {}", e)));
+
                 // 同步到 Supabase
                 if let Some(client) = &self.rest_client {
-                    let _ = client.update_task_status(
-                        &task.id.to_string(),
-                        "failed",
-                        Some(0),
-                        Some(vec![format!("> 执行失败: {}", e)]),
-                    ).await;
+                    let _ = client
+                        .update_task_status(
+                            &task.id.to_string(),
+                            "failed",
+                            Some(0),
+                            Some(vec![format!("> 执行失败: {}", e)]),
+                        )
+                        .await;
                 }
-                
+
                 Ok(TaskResult {
                     task_id: task.id,
                     status: TaskStatus::Failed,
@@ -137,12 +139,12 @@ impl CommandExecutor {
     async fn execute_command(&self, task: &Task) -> Result<(i32, String, String)> {
         let stdout_lines: Vec<String> = Vec::new();
         let stderr_lines: Vec<String> = Vec::new();
-        
+
         // 解析命令
         let (program, args) = Self::parse_command(&task.command)?;
-        
+
         tracing::debug!("执行命令: {} {:?}", program, args);
-        
+
         // 创建子进程
         let mut child = Command::new(program)
             .args(&args)
@@ -150,49 +152,51 @@ impl CommandExecutor {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| QueueError::ExecutionError(format!("启动进程失败: {}", e)))?;
-        
+
         // 读取 stdout
         if let Some(stdout) = child.stdout.take() {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
-            
+
             let task_id = task.id;
             let store = self.store.clone();
             let rest_client = self.rest_client.clone();
-            
+
             tokio::spawn(async move {
                 let mut line_count = 0;
                 while let Ok(Some(line)) = lines.next_line().await {
                     line_count += 1;
                     tracing::debug!("stdout: {}", line);
-                    
+
                     // 记录日志
                     let _ = store.append_log(&TaskLog::info(task_id, line.clone()));
-                    
+
                     // 每 10 行同步一次到 Supabase
                     if line_count % 10 == 0 {
                         if let Some(client) = &rest_client {
                             let progress = (line_count / 10).min(95) as i32;
-                            let _ = client.update_task_status(
-                                &task_id.to_string(),
-                                "running",
-                                Some(progress),
-                                None,
-                            ).await;
+                            let _ = client
+                                .update_task_status(
+                                    &task_id.to_string(),
+                                    "running",
+                                    Some(progress),
+                                    None,
+                                )
+                                .await;
                         }
                     }
                 }
             });
         }
-        
+
         // 读取 stderr
         if let Some(stderr) = child.stderr.take() {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
-            
+
             let task_id = task.id;
             let store = self.store.clone();
-            
+
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
                     tracing::warn!("stderr: {}", line);
@@ -200,7 +204,7 @@ impl CommandExecutor {
                 }
             });
         }
-        
+
         // 等待进程完成（带超时）
         let timeout = tokio::time::Duration::from_secs(task.timeout_seconds);
         let status = match tokio::time::timeout(timeout, child.wait()).await {
@@ -217,9 +221,9 @@ impl CommandExecutor {
                 )));
             }
         };
-        
+
         let exit_code = status.code().unwrap_or(-1);
-        
+
         Ok((exit_code, stdout_lines.join("\n"), stderr_lines.join("\n")))
     }
 
@@ -227,14 +231,14 @@ impl CommandExecutor {
     fn parse_command(command: &str) -> Result<(String, Vec<String>)> {
         let parts: Vec<String> = shell_words::split(command)
             .map_err(|e| QueueError::InvalidTask(format!("解析命令失败: {}", e)))?;
-        
+
         if parts.is_empty() {
             return Err(QueueError::InvalidTask("命令为空".to_string()));
         }
-        
+
         let program = parts[0].clone();
         let args = parts[1..].to_vec();
-        
+
         Ok((program, args))
     }
 }
@@ -276,7 +280,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     async fn test_execute_simple_command() {
         let (executor, _temp) = create_test_executor().await;
-        
+
         let mut task = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -284,7 +288,7 @@ mod tests {
             "cmd /c echo Hello".to_string(),
         );
         task.timeout_seconds = 10;
-        
+
         let result = executor.execute(task).await.unwrap();
         assert_eq!(result.status, TaskStatus::Completed);
         assert_eq!(result.exit_code, Some(0));
@@ -294,7 +298,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     async fn test_execute_simple_command() {
         let (executor, _temp) = create_test_executor().await;
-        
+
         let mut task = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -302,7 +306,7 @@ mod tests {
             "echo Hello".to_string(),
         );
         task.timeout_seconds = 10;
-        
+
         let result = executor.execute(task).await.unwrap();
         assert_eq!(result.status, TaskStatus::Completed);
         assert_eq!(result.exit_code, Some(0));
@@ -311,7 +315,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_failing_command() {
         let (executor, _temp) = create_test_executor().await;
-        
+
         let mut task = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -319,7 +323,7 @@ mod tests {
             "nonexistent_command_12345".to_string(),
         );
         task.timeout_seconds = 5;
-        
+
         let result = executor.execute(task).await.unwrap();
         assert_eq!(result.status, TaskStatus::Failed);
     }

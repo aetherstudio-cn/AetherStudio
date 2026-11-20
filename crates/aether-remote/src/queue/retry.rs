@@ -21,11 +21,7 @@ impl Default for RetryPolicy {
             initial_delay: Duration::from_secs(1),
             max_delay: Duration::from_secs(60),
             backoff_multiplier: 2.0,
-            retryable_errors: vec![
-                ErrorType::Network,
-                ErrorType::Timeout,
-                ErrorType::RateLimit,
-            ],
+            retryable_errors: vec![ErrorType::Network, ErrorType::Timeout, ErrorType::RateLimit],
         }
     }
 }
@@ -52,9 +48,9 @@ impl RetryPolicy {
 
     /// 计算下次重试延迟
     pub fn next_delay(&self, attempt: usize) -> Duration {
-        let delay_secs = self.initial_delay.as_secs_f64()
-            * self.backoff_multiplier.powi(attempt as i32);
-        
+        let delay_secs =
+            self.initial_delay.as_secs_f64() * self.backoff_multiplier.powi(attempt as i32);
+
         let capped_delay = delay_secs.min(self.max_delay.as_secs_f64());
         Duration::from_secs_f64(capped_delay)
     }
@@ -93,7 +89,7 @@ mod tests {
     #[test]
     fn test_default_policy() {
         let policy = RetryPolicy::default();
-        
+
         assert_eq!(policy.max_attempts, 3);
         assert_eq!(policy.initial_delay, Duration::from_secs(1));
         assert_eq!(policy.max_delay, Duration::from_secs(60));
@@ -103,13 +99,13 @@ mod tests {
     #[test]
     fn test_should_retry() {
         let policy = RetryPolicy::default();
-        
+
         let network_err = QueueError::NetworkError("connection failed".to_string());
         assert!(policy.should_retry(&network_err, 0));
         assert!(policy.should_retry(&network_err, 1));
         assert!(policy.should_retry(&network_err, 2));
         assert!(!policy.should_retry(&network_err, 3));
-        
+
         let invalid_err = QueueError::InvalidTask("bad task".to_string());
         assert!(!policy.should_retry(&invalid_err, 0));
     }
@@ -117,12 +113,12 @@ mod tests {
     #[test]
     fn test_next_delay() {
         let policy = RetryPolicy::default();
-        
+
         assert_eq!(policy.next_delay(0), Duration::from_secs(1));
         assert_eq!(policy.next_delay(1), Duration::from_secs(2));
         assert_eq!(policy.next_delay(2), Duration::from_secs(4));
         assert_eq!(policy.next_delay(3), Duration::from_secs(8));
-        
+
         // 测试最大延迟限制
         assert_eq!(policy.next_delay(10), Duration::from_secs(60));
     }
@@ -133,12 +129,12 @@ mod tests {
             .with_initial_delay(Duration::from_millis(500))
             .with_max_delay(Duration::from_secs(30))
             .with_backoff_multiplier(3.0);
-        
+
         assert_eq!(policy.max_attempts, 5);
         assert_eq!(policy.initial_delay, Duration::from_millis(500));
         assert_eq!(policy.max_delay, Duration::from_secs(30));
         assert_eq!(policy.backoff_multiplier, 3.0);
-        
+
         assert_eq!(policy.next_delay(0), Duration::from_millis(500));
         assert_eq!(policy.next_delay(1), Duration::from_millis(1500));
         assert_eq!(policy.next_delay(2), Duration::from_millis(4500));
@@ -146,9 +142,8 @@ mod tests {
 
     #[test]
     fn test_add_retryable_error() {
-        let policy = RetryPolicy::default()
-            .add_retryable_error(ErrorType::Execution);
-        
+        let policy = RetryPolicy::default().add_retryable_error(ErrorType::Execution);
+
         let exec_err = QueueError::ExecutionError("command failed".to_string());
         assert!(policy.should_retry(&exec_err, 0));
     }
@@ -159,7 +154,7 @@ mod tests {
             .with_initial_delay(Duration::from_secs(10))
             .with_max_delay(Duration::from_secs(15))
             .with_backoff_multiplier(2.0);
-        
+
         assert_eq!(policy.next_delay(0), Duration::from_secs(10));
         assert_eq!(policy.next_delay(1), Duration::from_secs(15)); // capped
         assert_eq!(policy.next_delay(2), Duration::from_secs(15)); // capped

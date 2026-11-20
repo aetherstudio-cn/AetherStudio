@@ -169,9 +169,9 @@ mod tests {
                     async move {
                         let current = running.fetch_add(1, Ordering::SeqCst) + 1;
                         max_running.fetch_max(current, Ordering::SeqCst);
-                        
+
                         tokio::time::sleep(Duration::from_millis(50)).await;
-                        
+
                         running.fetch_sub(1, Ordering::SeqCst);
                         counter.fetch_add(1, Ordering::SeqCst);
                         Ok(())
@@ -182,7 +182,7 @@ mod tests {
         }
 
         executor.wait_all().await;
-        
+
         assert_eq!(counter.load(Ordering::SeqCst), 5);
         assert!(max_running.load(Ordering::SeqCst) <= 2);
     }
@@ -224,7 +224,7 @@ mod tests {
 
         // 取消任务
         executor.cancel(task_id).await.unwrap();
-        
+
         // 等待一段时间
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(completed.load(Ordering::SeqCst), 0);
@@ -233,7 +233,7 @@ mod tests {
     #[tokio::test]
     async fn test_duplicate_task() {
         let executor = TaskExecutor::new(2);
-        
+
         let task = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -261,7 +261,7 @@ mod tests {
     #[tokio::test]
     async fn test_running_count() {
         let executor = TaskExecutor::new(3);
-        
+
         assert_eq!(executor.running_count(), 0);
         assert_eq!(executor.available_slots(), 3);
 

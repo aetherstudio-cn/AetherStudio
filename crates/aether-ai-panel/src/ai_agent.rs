@@ -1429,9 +1429,7 @@ cargo test\n\
 
     #[test]
     fn test_has_workspace_scoped_markers() {
-        assert!(has_workspace_scoped_markers(
-            "<<<<<<< AETHER_FILE a.rs\n"
-        ));
+        assert!(has_workspace_scoped_markers("<<<<<<< AETHER_FILE a.rs\n"));
         assert!(has_workspace_scoped_markers("前言\n<<<<<<< AETHER_RUN\n"));
         assert!(has_workspace_scoped_markers(
             "<<<<<<< AETHER_READ src/main.rs\n"
@@ -1441,9 +1439,7 @@ cargo test\n\
             "普通文本，行内提到 AETHER_FILE 字样"
         ));
         // 浏览器工具不依赖工作区，不触发"请先打开文件夹"拦截
-        assert!(!has_workspace_scoped_markers(
-            "<<<<<<< AETHER_OPEN 百度\n"
-        ));
+        assert!(!has_workspace_scoped_markers("<<<<<<< AETHER_OPEN 百度\n"));
         assert!(!has_workspace_scoped_markers(
             "<<<<<<< AETHER_READPAGE https://example.com\n"
         ));
@@ -1501,10 +1497,9 @@ cargo test\n\
             AgentDisplayBlock::ReadPage { url } if url == "当前页面"
         )));
         // 纯探查回合过滤开场白，但 OPEN 卡片保留
-        assert!(!blocks.iter().any(|b| matches!(
-            b,
-            AgentDisplayBlock::Text(_)
-        )));
+        assert!(!blocks
+            .iter()
+            .any(|b| matches!(b, AgentDisplayBlock::Text(_))));
     }
 
     #[test]

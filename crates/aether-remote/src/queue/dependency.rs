@@ -108,9 +108,7 @@ impl DependencyGraph {
     pub fn topological_sort(&self) -> Result<Vec<Uuid>> {
         match toposort(&self.graph, None) {
             Ok(nodes) => Ok(nodes.into_iter().map(|n| self.graph[n]).collect()),
-            Err(_) => Err(QueueError::CircularDependency(
-                "依赖图存在循环".to_string(),
-            )),
+            Err(_) => Err(QueueError::CircularDependency("依赖图存在循环".to_string())),
         }
     }
 
@@ -160,15 +158,15 @@ mod tests {
     #[test]
     fn test_add_task() {
         let mut graph = DependencyGraph::new();
-        
+
         let task1 = create_task(vec![]);
         let task2 = create_task(vec![task1.id]);
         let task3 = create_task(vec![task2.id]);
-        
+
         graph.add_task(&task1).unwrap();
         graph.add_task(&task2).unwrap();
         graph.add_task(&task3).unwrap();
-        
+
         assert_eq!(graph.len(), 3);
         assert!(graph.contains(task1.id));
         assert!(graph.contains(task2.id));
@@ -178,15 +176,15 @@ mod tests {
     #[test]
     fn test_get_ready_tasks() {
         let mut graph = DependencyGraph::new();
-        
+
         let task1 = create_task(vec![]);
         let task2 = create_task(vec![]);
         let task3 = create_task(vec![task1.id, task2.id]);
-        
+
         graph.add_task(&task1).unwrap();
         graph.add_task(&task2).unwrap();
         graph.add_task(&task3).unwrap();
-        
+
         let ready = graph.get_ready_tasks();
         assert_eq!(ready.len(), 2);
         assert!(ready.contains(&task1.id));
@@ -197,15 +195,15 @@ mod tests {
     #[test]
     fn test_get_dependencies() {
         let mut graph = DependencyGraph::new();
-        
+
         let task1 = create_task(vec![]);
         let task2 = create_task(vec![]);
         let task3 = create_task(vec![task1.id, task2.id]);
-        
+
         graph.add_task(&task1).unwrap();
         graph.add_task(&task2).unwrap();
         graph.add_task(&task3).unwrap();
-        
+
         let deps = graph.get_dependencies(task3.id);
         assert_eq!(deps.len(), 2);
         assert!(deps.contains(&task1.id));
@@ -215,15 +213,15 @@ mod tests {
     #[test]
     fn test_get_dependents() {
         let mut graph = DependencyGraph::new();
-        
+
         let task1 = create_task(vec![]);
         let task2 = create_task(vec![task1.id]);
         let task3 = create_task(vec![task1.id]);
-        
+
         graph.add_task(&task1).unwrap();
         graph.add_task(&task2).unwrap();
         graph.add_task(&task3).unwrap();
-        
+
         let dependents = graph.get_dependents(task1.id);
         assert_eq!(dependents.len(), 2);
         assert!(dependents.contains(&task2.id));
@@ -233,24 +231,24 @@ mod tests {
     #[test]
     fn test_circular_dependency() {
         let mut graph = DependencyGraph::new();
-        
+
         let task1 = create_task(vec![]);
         let task1_id = task1.id;
-        
+
         graph.add_task(&task1).unwrap();
-        
+
         let mut task2 = create_task(vec![task1_id]);
         let task2_id = task2.id;
         graph.add_task(&task2).unwrap();
-        
+
         // 创建循环依赖：task1 依赖 task2
         let mut task1_updated = create_task(vec![task2_id]);
         task1_updated.id = task1_id;
-        
+
         // 移除旧的 task1，添加新的
         graph.remove_task(task1_id);
         let result = graph.add_task(&task1_updated);
-        
+
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -261,15 +259,15 @@ mod tests {
     #[test]
     fn test_remove_task() {
         let mut graph = DependencyGraph::new();
-        
+
         let task1 = create_task(vec![]);
         let task2 = create_task(vec![task1.id]);
-        
+
         graph.add_task(&task1).unwrap();
         graph.add_task(&task2).unwrap();
-        
+
         assert_eq!(graph.len(), 2);
-        
+
         graph.remove_task(task1.id);
         assert_eq!(graph.len(), 1);
         assert!(!graph.contains(task1.id));
@@ -279,23 +277,23 @@ mod tests {
     #[test]
     fn test_topological_sort() {
         let mut graph = DependencyGraph::new();
-        
+
         let task1 = create_task(vec![]);
         let task2 = create_task(vec![task1.id]);
         let task3 = create_task(vec![task2.id]);
-        
+
         graph.add_task(&task1).unwrap();
         graph.add_task(&task2).unwrap();
         graph.add_task(&task3).unwrap();
-        
+
         let sorted = graph.topological_sort().unwrap();
         assert_eq!(sorted.len(), 3);
-        
+
         // 验证顺序
         let pos1 = sorted.iter().position(|&id| id == task1.id).unwrap();
         let pos2 = sorted.iter().position(|&id| id == task2.id).unwrap();
         let pos3 = sorted.iter().position(|&id| id == task3.id).unwrap();
-        
+
         assert!(pos1 < pos2);
         assert!(pos2 < pos3);
     }
@@ -303,10 +301,10 @@ mod tests {
     #[test]
     fn test_duplicate_task() {
         let mut graph = DependencyGraph::new();
-        
+
         let task = create_task(vec![]);
         graph.add_task(&task).unwrap();
-        
+
         let result = graph.add_task(&task);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), QueueError::DuplicateTask(_)));
@@ -315,15 +313,15 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut graph = DependencyGraph::new();
-        
+
         let task1 = create_task(vec![]);
         let task2 = create_task(vec![task1.id]);
-        
+
         graph.add_task(&task1).unwrap();
         graph.add_task(&task2).unwrap();
-        
+
         assert_eq!(graph.len(), 2);
-        
+
         graph.clear();
         assert!(graph.is_empty());
     }

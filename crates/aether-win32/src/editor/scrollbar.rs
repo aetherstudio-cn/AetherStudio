@@ -49,15 +49,14 @@ pub fn geometry(state: &EditorState, region: &Region) -> Geometry {
     let char_width = state.win.text_renderer.char_width();
 
     // 可滚动总高 = 文档总高 + 底部留白（与 cursor::scroll 的钳制口径一致）
-    let total_h =
-        state.editor.content.buffer.len_lines() as f32 * line_height
-            + line_height * SCROLL_PAD_BOTTOM_LINES;
+    let total_h = state.editor.content.buffer.len_lines() as f32 * line_height
+        + line_height * SCROLL_PAD_BOTTOM_LINES;
     let view_h = region.height;
     let v_max = (total_h - view_h).max(0.0);
 
     // 水平可视宽与 scroll_horizontal 的钳制口径一致（行号 60 + 内边距 5 + 右侧留白）
-    let content_w = state.editor.content.content_width_chars as f32 * char_width
-        + SCROLL_PAD_RIGHT_PX;
+    let content_w =
+        state.editor.content.content_width_chars as f32 * char_width + SCROLL_PAD_RIGHT_PX;
     let view_w = (region.width - 60.0 - 5.0).max(1.0);
     let h_max = (content_w - view_w).max(0.0);
 

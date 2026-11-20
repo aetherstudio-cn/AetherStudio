@@ -984,40 +984,40 @@ unsafe fn omm_ai_hover(
 
     // 1. 左侧边栏：对话标签页悬浮
     let tab_hover_changed = if sidebar_region.contains(mouse_x, mouse_y) {
-            let old_tab_hover = st.ai.ai_panel.hover_tab;
-            st.ai.ai_panel.hover_tab = st
-                .ai
-                .ai_panel
-                .agent_tab_regions
-                .iter()
-                .find(|(_, rx, ry, rw, rh)| {
-                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
-                })
-                .map(|(i, ..)| *i);
-            old_tab_hover != st.ai.ai_panel.hover_tab
-        } else {
-            // 鼠标不在侧边栏，清除标签页悬浮状态
-            let old_tab_hover = st.ai.ai_panel.hover_tab;
-            st.ai.ai_panel.hover_tab = None;
-            old_tab_hover.is_some()
-        };
+        let old_tab_hover = st.ai.ai_panel.hover_tab;
+        st.ai.ai_panel.hover_tab = st
+            .ai
+            .ai_panel
+            .agent_tab_regions
+            .iter()
+            .find(|(_, rx, ry, rw, rh)| {
+                mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+            })
+            .map(|(i, ..)| *i);
+        old_tab_hover != st.ai.ai_panel.hover_tab
+    } else {
+        // 鼠标不在侧边栏，清除标签页悬浮状态
+        let old_tab_hover = st.ai.ai_panel.hover_tab;
+        st.ai.ai_panel.hover_tab = None;
+        old_tab_hover.is_some()
+    };
 
-        // 2. 中间 AI 面板区域：图片 chip 悬浮
-        let center_region = layout.editor_content_region(false);
-        let chip_hover = if center_region.contains(mouse_x, mouse_y) {
-            let rel_x = mouse_x - center_region.x;
-            let rel_y = mouse_y - center_region.y;
-            let old_chip = st.ai.ai_panel.hover_image_chip;
-            st.ai.ai_panel.hover_image_chip = st.ai.ai_panel.hit_test_image_chip(rel_x, rel_y);
-            old_chip != st.ai.ai_panel.hover_image_chip
-        } else if st.ai.ai_panel.hover_image_chip.is_some() {
-            st.ai.ai_panel.hover_image_chip = None;
-            true
-        } else {
-            false
-        };
+    // 2. 中间 AI 面板区域：图片 chip 悬浮
+    let center_region = layout.editor_content_region(false);
+    let chip_hover = if center_region.contains(mouse_x, mouse_y) {
+        let rel_x = mouse_x - center_region.x;
+        let rel_y = mouse_y - center_region.y;
+        let old_chip = st.ai.ai_panel.hover_image_chip;
+        st.ai.ai_panel.hover_image_chip = st.ai.ai_panel.hit_test_image_chip(rel_x, rel_y);
+        old_chip != st.ai.ai_panel.hover_image_chip
+    } else if st.ai.ai_panel.hover_image_chip.is_some() {
+        st.ai.ai_panel.hover_image_chip = None;
+        true
+    } else {
+        false
+    };
 
-        return tab_hover_changed || chip_hover;
+    return tab_hover_changed || chip_hover;
 }
 
 /// SubTask 10.1: 状态栏分区悬停更新。返回是否有变化。

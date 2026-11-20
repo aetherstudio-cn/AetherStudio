@@ -27,50 +27,55 @@ impl SessionManager {
     /// 登录并保存会话
     pub async fn login(&self, email: &str, password: &str) -> Result<AuthSession> {
         let session = self.auth_client.sign_in(email, password).await?;
-        
+
         // 保存到内存
         {
             let mut sess = self.current_session.write().await;
             *sess = Some(session.clone());
         }
-        
+
         // 保存到文件
         self.save_session(&session).await?;
-        
+
         Ok(session)
     }
 
     /// 注册并保存会话
-    pub async fn signup(&self, email: &str, password: &str, tenant_id: Option<String>) -> Result<AuthSession> {
+    pub async fn signup(
+        &self,
+        email: &str,
+        password: &str,
+        tenant_id: Option<String>,
+    ) -> Result<AuthSession> {
         let session = self.auth_client.sign_up(email, password, tenant_id).await?;
-        
+
         // 保存到内存
         {
             let mut sess = self.current_session.write().await;
             *sess = Some(session.clone());
         }
-        
+
         // 保存到文件
         self.save_session(&session).await?;
-        
+
         Ok(session)
     }
 
     /// 登出并清除会话
     pub async fn logout(&self) -> Result<()> {
         self.auth_client.sign_out().await?;
-        
+
         // 清除内存
         {
             let mut sess = self.current_session.write().await;
             *sess = None;
         }
-        
+
         // 删除文件
         if self.session_file.exists() {
             std::fs::remove_file(&self.session_file)?;
         }
-        
+
         Ok(())
     }
 
@@ -89,15 +94,15 @@ impl SessionManager {
             let now = chrono::Utc::now().timestamp();
             if now >= expires_at {
                 tracing::info!("会话已过期，尝试刷新");
-                
+
                 // 尝试刷新 Token
                 match self.auth_client.refresh_token().await {
                     Ok(new_session) => {
                         self.save_session(&new_session).await?;
-                        
+
                         let mut sess = self.current_session.write().await;
                         *sess = Some(new_session.clone());
-                        
+
                         return Ok(Some(new_session));
                     }
                     Err(e) => {
@@ -147,7 +152,7 @@ impl SessionManager {
 
         let content = serde_json::to_string_pretty(session)?;
         std::fs::write(&self.session_file, content)?;
-        
+
         tracing::debug!("会话已保存到: {}", self.session_file.display());
         Ok(())
     }
@@ -166,18 +171,18 @@ mod tests {
     async fn create_test_session_manager() -> (SessionManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let session_file = temp_dir.path().join("session.json");
-        
+
         let config = crate::queue::supabase::SupabaseConfig::default();
         let auth_client = Arc::new(SupabaseAuthClient::new(config));
         let manager = SessionManager::new(auth_client, session_file);
-        
+
         (manager, temp_dir)
     }
 
     #[tokio::test]
     async fn test_session_manager_creation() {
         let (manager, _temp) = create_test_session_manager().await;
-        
+
         assert!(!manager.is_authenticated().await);
         assert!(manager.get_session().await.is_none());
     }
@@ -185,7 +190,7 @@ mod tests {
     #[tokio::test]
     async fn test_restore_nonexistent_session() {
         let (manager, _temp) = create_test_session_manager().await;
-        
+
         let session = manager.restore_session().await.unwrap();
         assert!(session.is_none());
     }

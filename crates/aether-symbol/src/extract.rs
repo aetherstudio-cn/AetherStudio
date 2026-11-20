@@ -159,8 +159,8 @@ fn kw_name(t: &str, kw: &str) -> Option<String> {
     // 要求关键词作为完整单词出现，其后是空白或 < ( : 等
     let mut search = t;
     while let Some(pos) = search.find(kw) {
-        let before_ok = pos == 0
-            || !search[..pos].ends_with(|c: char| c.is_alphanumeric() || c == '_');
+        let before_ok =
+            pos == 0 || !search[..pos].ends_with(|c: char| c.is_alphanumeric() || c == '_');
         let rest = &search[pos + kw.len()..];
         let after_ok = rest.starts_with(' ') || rest.starts_with('\t');
         if before_ok && after_ok {
@@ -183,7 +183,14 @@ fn signature(t: &str) -> String {
     }
 }
 
-fn push(out: &mut Vec<Symbol>, kind: SymbolKind, name: String, line_no: usize, t: &str, limit: usize) {
+fn push(
+    out: &mut Vec<Symbol>,
+    kind: SymbolKind,
+    name: String,
+    line_no: usize,
+    t: &str,
+    limit: usize,
+) {
     if out.len() >= limit {
         return;
     }
@@ -207,7 +214,14 @@ fn extract_rust(indent: usize, t: &str, line_no: usize, out: &mut Vec<Symbol>) {
     // 去除属性与可见性前缀后统一匹配
     let body = strip_rust_prefixes(t);
     if let Some(name) = kw_name(body, "fn") {
-        push(out, SymbolKind::Function, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+        push(
+            out,
+            SymbolKind::Function,
+            name,
+            line_no,
+            t,
+            MAX_SYMBOLS_PER_FILE,
+        );
         return;
     }
     for (kw, kind) in [
@@ -231,16 +245,40 @@ fn extract_rust(indent: usize, t: &str, line_no: usize, out: &mut Vec<Symbol>) {
             .filter(|s| !s.is_empty())
             .unwrap_or(seg)
             .to_string();
-        push(out, SymbolKind::Impl, format!("impl {}", name), line_no, t, MAX_SYMBOLS_PER_FILE);
+        push(
+            out,
+            SymbolKind::Impl,
+            format!("impl {}", name),
+            line_no,
+            t,
+            MAX_SYMBOLS_PER_FILE,
+        );
         return;
     }
     if let Some(rest) = body.strip_prefix("const ") {
         if let Some(name) = ident_after(rest) {
-            push(out, SymbolKind::Constant, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+            push(
+                out,
+                SymbolKind::Constant,
+                name,
+                line_no,
+                t,
+                MAX_SYMBOLS_PER_FILE,
+            );
         }
-    } else if let Some(rest) = body.strip_prefix("static ").or_else(|| body.strip_prefix("pub static ")) {
+    } else if let Some(rest) = body
+        .strip_prefix("static ")
+        .or_else(|| body.strip_prefix("pub static "))
+    {
         if let Some(name) = ident_after(rest) {
-            push(out, SymbolKind::Static, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+            push(
+                out,
+                SymbolKind::Static,
+                name,
+                line_no,
+                t,
+                MAX_SYMBOLS_PER_FILE,
+            );
         }
     }
 }
@@ -250,7 +288,9 @@ fn strip_rust_prefixes(t: &str) -> &str {
     let mut s = t.trim_start();
     loop {
         let next = if let Some(rest) = s.strip_prefix("#[") {
-            rest.split_once(']').map(|(_, r)| r.trim_start()).unwrap_or("")
+            rest.split_once(']')
+                .map(|(_, r)| r.trim_start())
+                .unwrap_or("")
         } else if let Some(rest) = s.strip_prefix("pub") {
             let rest = rest.trim_start();
             if rest.starts_with('(') {
@@ -266,7 +306,9 @@ fn strip_rust_prefixes(t: &str) -> &str {
         } else if let Some(rest) = s.strip_prefix("async ") {
             rest.trim_start()
         } else if let Some(rest) = s.strip_prefix("extern ") {
-            rest.split_once(' ').map(|(_, r)| r.trim_start()).unwrap_or("")
+            rest.split_once(' ')
+                .map(|(_, r)| r.trim_start())
+                .unwrap_or("")
         } else {
             break;
         };
@@ -282,13 +324,27 @@ fn extract_python(indent: usize, t: &str, line_no: usize, out: &mut Vec<Symbol>)
     }
     if let Some(rest) = body.strip_prefix("def ") {
         if let Some(name) = ident_after(rest) {
-            push(out, SymbolKind::Function, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+            push(
+                out,
+                SymbolKind::Function,
+                name,
+                line_no,
+                t,
+                MAX_SYMBOLS_PER_FILE,
+            );
         }
         return;
     }
     if let Some(rest) = body.strip_prefix("class ") {
         if let Some(name) = ident_after(rest) {
-            push(out, SymbolKind::Class, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+            push(
+                out,
+                SymbolKind::Class,
+                name,
+                line_no,
+                t,
+                MAX_SYMBOLS_PER_FILE,
+            );
         }
         return;
     }
@@ -300,9 +356,7 @@ fn extract_python(indent: usize, t: &str, line_no: usize, out: &mut Vec<Symbol>)
                 return;
             }
             let valid = !lhs.is_empty()
-                && lhs
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_')
+                && lhs.chars().all(|c| c.is_alphanumeric() || c == '_')
                 && !lhs.starts_with(char::is_numeric);
             if valid {
                 let kind = if lhs.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()) {
@@ -320,7 +374,14 @@ fn extract_ts_js(t: &str, line_no: usize, out: &mut Vec<Symbol>) {
     let body = strip_ts_prefixes(t);
     if let Some(rest) = body.strip_prefix("function ") {
         if let Some(name) = ident_after(rest) {
-            push(out, SymbolKind::Function, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+            push(
+                out,
+                SymbolKind::Function,
+                name,
+                line_no,
+                t,
+                MAX_SYMBOLS_PER_FILE,
+            );
         }
         return;
     }
@@ -335,7 +396,14 @@ fn extract_ts_js(t: &str, line_no: usize, out: &mut Vec<Symbol>) {
     }
     if let Some(rest) = body.strip_prefix("type ") {
         if let Some(name) = ident_after(rest) {
-            push(out, SymbolKind::TypeAlias, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+            push(
+                out,
+                SymbolKind::TypeAlias,
+                name,
+                line_no,
+                t,
+                MAX_SYMBOLS_PER_FILE,
+            );
         }
         return;
     }
@@ -391,8 +459,8 @@ fn strip_ts_prefixes(t: &str) -> &str {
 
 /// C 控制流/杂项关键词，函数定义启发式需排除
 const C_NON_FUNC: &[&str] = &[
-    "if", "for", "while", "switch", "return", "do", "else", "sizeof", "typedef", "case",
-    "delete", "new", "throw", "catch", "defined",
+    "if", "for", "while", "switch", "return", "do", "else", "sizeof", "typedef", "case", "delete",
+    "new", "throw", "catch", "defined",
 ];
 
 fn extract_c_cpp(indent: usize, t: &str, line_no: usize, out: &mut Vec<Symbol>) {
@@ -408,7 +476,14 @@ fn extract_c_cpp(indent: usize, t: &str, line_no: usize, out: &mut Vec<Symbol>) 
         }
     }
     if let Some(name) = kw_name(t, "namespace") {
-        push(out, SymbolKind::Module, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+        push(
+            out,
+            SymbolKind::Module,
+            name,
+            line_no,
+            t,
+            MAX_SYMBOLS_PER_FILE,
+        );
         return;
     }
     // 函数定义启发式：顶格、含 ( ) 、不以分号结尾、首词非控制关键词
@@ -435,7 +510,14 @@ fn extract_c_cpp(indent: usize, t: &str, line_no: usize, out: &mut Vec<Symbol>) 
                         .rev()
                         .collect();
                     if !name.is_empty() && !name.chars().next().unwrap().is_numeric() {
-                        push(out, SymbolKind::Function, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+                        push(
+                            out,
+                            SymbolKind::Function,
+                            name,
+                            line_no,
+                            t,
+                            MAX_SYMBOLS_PER_FILE,
+                        );
                     }
                 }
             }
@@ -456,7 +538,14 @@ fn extract_go(t: &str, line_no: usize, out: &mut Vec<Symbol>) {
             ident_after(rest)
         };
         if let Some(name) = name {
-            push(out, SymbolKind::Function, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+            push(
+                out,
+                SymbolKind::Function,
+                name,
+                line_no,
+                t,
+                MAX_SYMBOLS_PER_FILE,
+            );
         }
         return;
     }
@@ -471,7 +560,10 @@ fn extract_go(t: &str, line_no: usize, out: &mut Vec<Symbol>) {
         }
         return;
     }
-    for (kw, kind) in [("var ", SymbolKind::Variable), ("const ", SymbolKind::Constant)] {
+    for (kw, kind) in [
+        ("var ", SymbolKind::Variable),
+        ("const ", SymbolKind::Constant),
+    ] {
         if let Some(rest) = t.strip_prefix(kw) {
             if let Some(name) = ident_after(rest) {
                 push(out, kind, name, line_no, t, MAX_SYMBOLS_PER_FILE);
@@ -493,7 +585,14 @@ fn extract_java(indent: usize, t: &str, line_no: usize, out: &mut Vec<Symbol>) {
     }
     if t.starts_with("package ") {
         if let Some(name) = kw_name(t, "package") {
-            push(out, SymbolKind::Module, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+            push(
+                out,
+                SymbolKind::Module,
+                name,
+                line_no,
+                t,
+                MAX_SYMBOLS_PER_FILE,
+            );
         }
         return;
     }
@@ -518,7 +617,14 @@ fn extract_java(indent: usize, t: &str, line_no: usize, out: &mut Vec<Symbol>) {
             let is_kw_like = ["public", "private", "protected", "static", "new", "return"]
                 .contains(&name.as_str());
             if !name.is_empty() && !is_kw_like && indent <= 12 {
-                push(out, SymbolKind::Function, name, line_no, t, MAX_SYMBOLS_PER_FILE);
+                push(
+                    out,
+                    SymbolKind::Function,
+                    name,
+                    line_no,
+                    t,
+                    MAX_SYMBOLS_PER_FILE,
+                );
             }
         }
     }

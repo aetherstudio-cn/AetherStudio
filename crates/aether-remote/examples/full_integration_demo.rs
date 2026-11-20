@@ -1,8 +1,6 @@
 //! 完整集成演示：设备注册 + Realtime 监听 + 任务执行 + 状态同步
 
-use aether_remote::queue::{
-    Device, QueueConfig, SupabaseConfig, Task, TaskQueueSystem,
-};
+use aether_remote::queue::{Device, QueueConfig, SupabaseConfig, Task, TaskQueueSystem};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -20,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
         PathBuf::from("data/full_demo.aedb"),
         "My Windows PC".to_string(),
     );
-    
+
     // 配置 Supabase
     config.supabase_config = SupabaseConfig::default();
     config.tenant_id = "00000000-0000-0000-0000-000000000000".to_string();
@@ -44,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  - 启动心跳机制...");
     println!("  - 启动 Realtime 监听...");
     println!("  - 启动任务调度器...");
-    
+
     match system.start().await {
         Ok(_) => println!("✓ 任务队列系统已启动\n"),
         Err(e) => {
@@ -72,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 6. 提交示例任务
     println!("提交示例任务...");
-    
+
     let tenant_id = Uuid::parse_str("00000000-0000-0000-0000-000000000000")?;
     let user_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001")?;
 
@@ -87,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
             "ls -la".to_string()
         },
     );
-    
+
     system.submit_task(task1.clone()).await?;
     println!("  ✓ 已提交任务: {}", task1.title);
 
@@ -102,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
             "uname -a".to_string()
         },
     );
-    
+
     system.submit_task(task2.clone()).await?;
     println!("  ✓ 已提交任务: {}", task2.title);
 
@@ -118,12 +116,12 @@ async fn main() -> anyhow::Result<()> {
     println!("等待任务完成...");
     for i in 1..=10 {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        
+
         let status1 = system.get_task_status(task1.id).await;
         let status2 = system.get_task_status(task2.id).await;
-        
+
         println!("  [{}s] 任务 1: {:?}, 任务 2: {:?}", i, status1, status2);
-        
+
         if status1 == Some(aether_remote::queue::TaskStatus::Completed)
             && status2 == Some(aether_remote::queue::TaskStatus::Completed)
         {
@@ -135,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 9. 查看任务结果
     println!("任务结果:");
-    
+
     if let Some(result) = system.get_task_result(task1.id).await {
         println!("  任务 1:");
         println!("    - 状态: {:?}", result.status);
@@ -145,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
             println!("    - 输出: {} 行", result.stdout.lines().count());
         }
     }
-    
+
     if let Some(result) = system.get_task_result(task2.id).await {
         println!("  任务 2:");
         println!("    - 状态: {:?}", result.status);
@@ -178,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  - 设备离线...");
     println!("  - 等待任务完成...");
     println!("  - 保存队列状态...");
-    
+
     system.shutdown().await?;
     println!("✓ 任务队列系统已关闭\n");
 

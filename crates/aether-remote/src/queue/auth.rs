@@ -76,7 +76,7 @@ impl SupabaseAuthClient {
         let client = reqwest::Client::builder()
             .build()
             .expect("Failed to create HTTP client");
-        
+
         Self {
             config,
             client,
@@ -85,21 +85,27 @@ impl SupabaseAuthClient {
     }
 
     /// 用户注册
-    pub async fn sign_up(&self, email: &str, password: &str, tenant_id: Option<String>) -> Result<AuthSession> {
+    pub async fn sign_up(
+        &self,
+        email: &str,
+        password: &str,
+        tenant_id: Option<String>,
+    ) -> Result<AuthSession> {
         let url = format!("{}/auth/v1/signup", self.config.url);
-        
+
         let mut data = serde_json::json!({});
         if let Some(tid) = tenant_id {
             data["tenant_id"] = serde_json::json!(tid);
         }
-        
+
         let request = SignupRequest {
             email: email.to_string(),
             password: password.to_string(),
             data: Some(data),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("apikey", &self.config.anon_key)
             .header("Content-Type", "application/json")
@@ -110,7 +116,10 @@ impl SupabaseAuthClient {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(QueueError::NetworkError(format!("注册失败: {}", error_text)));
+            return Err(QueueError::NetworkError(format!(
+                "注册失败: {}",
+                error_text
+            )));
         }
 
         let session: AuthSession = response
@@ -131,13 +140,14 @@ impl SupabaseAuthClient {
     /// 用户登录
     pub async fn sign_in(&self, email: &str, password: &str) -> Result<AuthSession> {
         let url = format!("{}/auth/v1/token?grant_type=password", self.config.url);
-        
+
         let request = LoginRequest {
             email: email.to_string(),
             password: password.to_string(),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("apikey", &self.config.anon_key)
             .header("Content-Type", "application/json")
@@ -148,7 +158,10 @@ impl SupabaseAuthClient {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(QueueError::NetworkError(format!("登录失败: {}", error_text)));
+            return Err(QueueError::NetworkError(format!(
+                "登录失败: {}",
+                error_text
+            )));
         }
 
         let session: AuthSession = response
@@ -176,12 +189,11 @@ impl SupabaseAuthClient {
         };
 
         let url = format!("{}/auth/v1/token?grant_type=refresh_token", self.config.url);
-        
-        let request = RefreshTokenRequest {
-            refresh_token,
-        };
 
-        let response = self.client
+        let request = RefreshTokenRequest { refresh_token };
+
+        let response = self
+            .client
             .post(&url)
             .header("apikey", &self.config.anon_key)
             .header("Content-Type", "application/json")
@@ -192,7 +204,10 @@ impl SupabaseAuthClient {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(QueueError::NetworkError(format!("刷新 Token 失败: {}", error_text)));
+            return Err(QueueError::NetworkError(format!(
+                "刷新 Token 失败: {}",
+                error_text
+            )));
         }
 
         let session: AuthSession = response
@@ -221,7 +236,8 @@ impl SupabaseAuthClient {
 
         let url = format!("{}/auth/v1/logout", self.config.url);
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("apikey", &self.config.anon_key)
             .header("Authorization", format!("Bearer {}", access_token))
@@ -231,7 +247,10 @@ impl SupabaseAuthClient {
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            return Err(QueueError::NetworkError(format!("登出失败: {}", error_text)));
+            return Err(QueueError::NetworkError(format!(
+                "登出失败: {}",
+                error_text
+            )));
         }
 
         // 清除会话
@@ -271,14 +290,14 @@ impl SupabaseAuthClient {
     /// 检查 Token 是否过期
     pub async fn is_token_expired(&self) -> bool {
         let sess = self.session.read().await;
-        
+
         if let Some(session) = sess.as_ref() {
             if let Some(expires_at) = session.expires_at {
                 let now = chrono::Utc::now().timestamp();
                 return now >= expires_at;
             }
         }
-        
+
         false
     }
 
@@ -303,7 +322,7 @@ mod tests {
     async fn test_auth_client_creation() {
         let config = SupabaseConfig::default();
         let client = SupabaseAuthClient::new(config);
-        
+
         assert!(!client.is_authenticated().await);
         assert!(client.get_session().await.is_none());
     }

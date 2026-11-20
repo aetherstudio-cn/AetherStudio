@@ -11,9 +11,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::editor::EditorState;
 
-use super::super::super::{
-    invalidate_window, LP_THRESHOLD_MS, LP_TIMER_ID,
-};
+use super::super::super::{invalidate_window, LP_THRESHOLD_MS, LP_TIMER_ID};
 
 /// 对话框优先拦截点击（SSH / 克隆 / 新建项目 / 设置弹窗）。
 pub(super) unsafe fn lbd_dialogs(

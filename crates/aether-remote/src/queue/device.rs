@@ -18,7 +18,7 @@ impl DeviceManager {
     /// 创建新的设备管理器
     pub fn new(config: SupabaseConfig) -> Self {
         let rest_client = Arc::new(SupabaseRestClient::new(config));
-        
+
         Self {
             rest_client,
             device: Arc::new(RwLock::new(None)),
@@ -35,21 +35,24 @@ impl DeviceManager {
     /// 注册设备
     pub async fn register(&self, device: Device) -> Result<String> {
         tracing::info!("注册设备: {}", device.device_name);
-        
-        let registered_device = self.rest_client
+
+        let registered_device = self
+            .rest_client
             .register_device(&device)
             .await
             .map_err(|e| QueueError::NetworkError(format!("设备注册失败: {}", e)))?;
-        
-        let device_id = registered_device.id.clone()
+
+        let device_id = registered_device
+            .id
+            .clone()
             .ok_or_else(|| QueueError::Internal("设备 ID 为空".to_string()))?;
-        
+
         // 保存设备信息
         {
             let mut dev = self.device.write().await;
             *dev = Some(registered_device);
         }
-        
+
         tracing::info!("设备注册成功: {}", device_id);
         Ok(device_id)
     }
@@ -62,16 +65,16 @@ impl DeviceManager {
                 .and_then(|d| d.id.clone())
                 .ok_or_else(|| QueueError::Internal("设备未注册".to_string()))?
         };
-        
+
         let rest_client = self.rest_client.clone();
         let interval = self.heartbeat_interval;
-        
+
         tokio::spawn(async move {
             let mut interval_timer = tokio::time::interval(interval);
-            
+
             loop {
                 interval_timer.tick().await;
-                
+
                 match rest_client.update_device_heartbeat(&device_id).await {
                     Ok(_) => {
                         tracing::debug!("心跳发送成功");
@@ -82,7 +85,7 @@ impl DeviceManager {
                 }
             }
         });
-        
+
         tracing::info!("心跳已启动，间隔: {:?}", interval);
         Ok(())
     }
@@ -95,12 +98,12 @@ impl DeviceManager {
                 .and_then(|d| d.id.clone())
                 .ok_or_else(|| QueueError::Internal("设备未注册".to_string()))?
         };
-        
+
         self.rest_client
             .update_device_status(&device_id, status)
             .await
             .map_err(|e| QueueError::NetworkError(format!("更新设备状态失败: {}", e)))?;
-        
+
         tracing::info!("设备状态已更新: {}", status);
         Ok(())
     }
@@ -136,7 +139,7 @@ mod tests {
     async fn test_device_manager_creation() {
         let config = SupabaseConfig::default();
         let manager = DeviceManager::new(config);
-        
+
         assert_eq!(manager.heartbeat_interval, Duration::from_secs(30));
         assert!(manager.device_id().await.is_none());
     }
@@ -144,9 +147,8 @@ mod tests {
     #[tokio::test]
     async fn test_device_manager_with_custom_interval() {
         let config = SupabaseConfig::default();
-        let manager = DeviceManager::new(config)
-            .with_heartbeat_interval(Duration::from_secs(60));
-        
+        let manager = DeviceManager::new(config).with_heartbeat_interval(Duration::from_secs(60));
+
         assert_eq!(manager.heartbeat_interval, Duration::from_secs(60));
     }
 }

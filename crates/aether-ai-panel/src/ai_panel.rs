@@ -820,18 +820,53 @@ pub fn relative_time(updated_at: u64, now: u64) -> String {
 /// 输入需已转小写（中文不受影响，英文站点名按小写匹配）。
 pub fn looks_like_browse_request(input_lower: &str) -> bool {
     const STRONG_WEB_TOKENS: [&str; 18] = [
-        "浏览器", "上网", "联网", "外链", "网站", "网页", "http", "www.", "域名", "百度", "baidu",
-        "谷歌", "google", "必应", "bing", "stack", "github.com", "youtube",
+        "浏览器",
+        "上网",
+        "联网",
+        "外链",
+        "网站",
+        "网页",
+        "http",
+        "www.",
+        "域名",
+        "百度",
+        "baidu",
+        "谷歌",
+        "google",
+        "必应",
+        "bing",
+        "stack",
+        "github.com",
+        "youtube",
     ];
     if STRONG_WEB_TOKENS.iter().any(|k| input_lower.contains(k)) {
         return true;
     }
     const BROWSE_VERBS: [&str; 12] = [
-        "打开", "访问", "跳转", "进入", "浏览", "搜索", "搜一下", "搜一搜", "查一下", "open",
-        "visit", "browse",
+        "打开",
+        "访问",
+        "跳转",
+        "进入",
+        "浏览",
+        "搜索",
+        "搜一下",
+        "搜一搜",
+        "查一下",
+        "open",
+        "visit",
+        "browse",
     ];
     const WEB_OBJECT_TOKENS: [&str; 10] = [
-        "官网", "官方", "文档", "教程", "资料", "链接", "页面", "网上", "互联网", "在线",
+        "官网",
+        "官方",
+        "文档",
+        "教程",
+        "资料",
+        "链接",
+        "页面",
+        "网上",
+        "互联网",
+        "在线",
     ];
     BROWSE_VERBS.iter().any(|v| input_lower.contains(v))
         && WEB_OBJECT_TOKENS.iter().any(|o| input_lower.contains(o))
@@ -4381,7 +4416,9 @@ mod tests {
     #[test]
     fn browse_intent_hits_strong_web_tokens() {
         assert!(looks_like_browse_request("帮我打开百度"));
-        assert!(looks_like_browse_request("用浏览器访问 https://example.com"));
+        assert!(looks_like_browse_request(
+            "用浏览器访问 https://example.com"
+        ));
         assert!(looks_like_browse_request("上网查一下 rust 异步"));
         assert!(looks_like_browse_request("open www.github.com"));
     }

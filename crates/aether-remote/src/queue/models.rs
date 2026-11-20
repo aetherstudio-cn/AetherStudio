@@ -28,12 +28,7 @@ pub struct Task {
 
 impl Task {
     /// 创建新任务
-    pub fn new(
-        tenant_id: Uuid,
-        user_id: Uuid,
-        title: String,
-        command: String,
-    ) -> Self {
+    pub fn new(tenant_id: Uuid, user_id: Uuid, title: String, command: String) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),

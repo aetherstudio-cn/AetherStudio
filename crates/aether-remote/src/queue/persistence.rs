@@ -28,11 +28,12 @@ impl AetherTaskStore {
     /// 保存任务元数据
     pub fn save_task(&self, task: &Task) -> Result<()> {
         let payload = serde_json::to_vec(task)?;
-        
-        let mut db = self.db.write().map_err(|e| {
-            QueueError::Internal(format!("获取写锁失败: {}", e))
-        })?;
-        
+
+        let mut db = self
+            .db
+            .write()
+            .map_err(|e| QueueError::Internal(format!("获取写锁失败: {}", e)))?;
+
         db.put(
             kind::TASK_META,
             &task.id.to_string(),
@@ -40,7 +41,7 @@ impl AetherTaskStore {
             &payload,
             None, // 无向量
         )?;
-        
+
         Ok(())
     }
 
@@ -57,7 +58,7 @@ impl AetherTaskStore {
             Ok(db) => db,
             Err(_) => return Vec::new(),
         };
-        
+
         db.scan_by_tag(kind::TASK_META, queue_name)
             .into_iter()
             .filter_map(|r| serde_json::from_slice(&r.payload).ok())
@@ -70,7 +71,7 @@ impl AetherTaskStore {
             Ok(db) => db,
             Err(_) => return Vec::new(),
         };
-        
+
         db.scan(kind::TASK_META)
             .into_iter()
             .filter_map(|r| serde_json::from_slice::<Task>(&r.payload).ok())
@@ -84,7 +85,7 @@ impl AetherTaskStore {
             Ok(db) => db,
             Err(_) => return Vec::new(),
         };
-        
+
         db.scan(kind::TASK_META)
             .into_iter()
             .filter_map(|r| serde_json::from_slice(&r.payload).ok())
@@ -94,11 +95,12 @@ impl AetherTaskStore {
     /// 保存任务结果
     pub fn save_result(&self, result: &TaskResult) -> Result<()> {
         let payload = serde_json::to_vec(result)?;
-        
-        let mut db = self.db.write().map_err(|e| {
-            QueueError::Internal(format!("获取写锁失败: {}", e))
-        })?;
-        
+
+        let mut db = self
+            .db
+            .write()
+            .map_err(|e| QueueError::Internal(format!("获取写锁失败: {}", e)))?;
+
         db.put(
             kind::TASK_RESULT,
             &result.task_id.to_string(),
@@ -106,7 +108,7 @@ impl AetherTaskStore {
             &payload,
             None,
         )?;
-        
+
         Ok(())
     }
 
@@ -120,7 +122,7 @@ impl AetherTaskStore {
     /// 追加任务日志
     pub fn append_log(&self, log: &TaskLog) -> Result<()> {
         let payload = serde_json::to_vec(log)?;
-        
+
         // 使用复合 key: task_id/timestamp_millis/nanos
         let key = format!(
             "{}/{}/{}",
@@ -128,11 +130,12 @@ impl AetherTaskStore {
             log.timestamp.timestamp_millis(),
             log.timestamp.timestamp_subsec_nanos()
         );
-        
-        let mut db = self.db.write().map_err(|e| {
-            QueueError::Internal(format!("获取写锁失败: {}", e))
-        })?;
-        
+
+        let mut db = self
+            .db
+            .write()
+            .map_err(|e| QueueError::Internal(format!("获取写锁失败: {}", e)))?;
+
         db.put(
             kind::TASK_LOG,
             &key,
@@ -140,7 +143,7 @@ impl AetherTaskStore {
             &payload,
             None,
         )?;
-        
+
         Ok(())
     }
 
@@ -150,7 +153,7 @@ impl AetherTaskStore {
             Ok(db) => db,
             Err(_) => return Vec::new(),
         };
-        
+
         db.scan_by_tag(kind::TASK_LOG, &task_id.to_string())
             .into_iter()
             .filter_map(|r| serde_json::from_slice(&r.payload).ok())
@@ -160,19 +163,14 @@ impl AetherTaskStore {
     /// 保存队列状态快照
     pub fn save_queue_state(&self, state: &QueueState) -> Result<()> {
         let payload = serde_json::to_vec(state)?;
-        
-        let mut db = self.db.write().map_err(|e| {
-            QueueError::Internal(format!("获取写锁失败: {}", e))
-        })?;
-        
-        db.put(
-            kind::QUEUE_STATE,
-            &state.queue_name,
-            "",
-            &payload,
-            None,
-        )?;
-        
+
+        let mut db = self
+            .db
+            .write()
+            .map_err(|e| QueueError::Internal(format!("获取写锁失败: {}", e)))?;
+
+        db.put(kind::QUEUE_STATE, &state.queue_name, "", &payload, None)?;
+
         Ok(())
     }
 
@@ -185,31 +183,33 @@ impl AetherTaskStore {
 
     /// 删除任务（级联删除结果和日志）
     pub fn delete_task(&self, task_id: Uuid) -> Result<()> {
-        let mut db = self.db.write().map_err(|e| {
-            QueueError::Internal(format!("获取写锁失败: {}", e))
-        })?;
-        
+        let mut db = self
+            .db
+            .write()
+            .map_err(|e| QueueError::Internal(format!("获取写锁失败: {}", e)))?;
+
         // 删除元数据
         db.delete(kind::TASK_META, &task_id.to_string())?;
-        
+
         // 删除结果
         db.delete(kind::TASK_RESULT, &task_id.to_string())?;
-        
+
         // 删除日志（按 tag 级联删除）
         db.delete_by_tag(kind::TASK_LOG, &task_id.to_string())?;
-        
+
         Ok(())
     }
 
     /// 清理已完成任务的旧数据
     pub fn cleanup_old_tasks(&self, days: i64) -> Result<usize> {
         let cutoff = Utc::now() - chrono::Duration::days(days);
-        
+
         let old_tasks: Vec<String> = {
-            let db = self.db.read().map_err(|e| {
-                QueueError::Internal(format!("获取读锁失败: {}", e))
-            })?;
-            
+            let db = self
+                .db
+                .read()
+                .map_err(|e| QueueError::Internal(format!("获取读锁失败: {}", e)))?;
+
             db.scan(kind::TASK_META)
                 .into_iter()
                 .filter_map(|r| {
@@ -222,36 +222,38 @@ impl AetherTaskStore {
                 })
                 .collect()
         };
-        
+
         let count = old_tasks.len();
         for task_id in old_tasks {
             if let Ok(uuid) = Uuid::parse_str(&task_id) {
                 let _ = self.delete_task(uuid);
             }
         }
-        
+
         Ok(count)
     }
 
     /// 强制 compaction（定期维护）
     pub fn compact(&self) -> Result<()> {
-        let mut db = self.db.write().map_err(|e| {
-            QueueError::Internal(format!("获取写锁失败: {}", e))
-        })?;
+        let mut db = self
+            .db
+            .write()
+            .map_err(|e| QueueError::Internal(format!("获取写锁失败: {}", e)))?;
         db.force_compact()?;
         Ok(())
     }
 
     /// 获取数据库统计信息
     pub fn stats(&self) -> Result<StoreStats> {
-        let db = self.db.read().map_err(|e| {
-            QueueError::Internal(format!("获取读锁失败: {}", e))
-        })?;
-        
+        let db = self
+            .db
+            .read()
+            .map_err(|e| QueueError::Internal(format!("获取读锁失败: {}", e)))?;
+
         let total_tasks = db.scan(kind::TASK_META).len();
         let total_logs = db.scan(kind::TASK_LOG).len();
         let total_results = db.scan(kind::TASK_RESULT).len();
-        
+
         Ok(StoreStats {
             total_tasks,
             total_logs,
@@ -283,16 +285,16 @@ mod tests {
     #[test]
     fn test_save_and_get_task() {
         let (store, _temp) = create_test_store();
-        
+
         let task = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
             "Test Task".to_string(),
             "echo hello".to_string(),
         );
-        
+
         store.save_task(&task).unwrap();
-        
+
         let retrieved = store.get_task(task.id).unwrap();
         assert_eq!(retrieved.id, task.id);
         assert_eq!(retrieved.title, task.title);
@@ -302,7 +304,7 @@ mod tests {
     #[test]
     fn test_get_tasks_by_queue() {
         let (store, _temp) = create_test_store();
-        
+
         let mut task1 = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -310,7 +312,7 @@ mod tests {
             "cmd1".to_string(),
         );
         task1.queue_name = "queue_a".to_string();
-        
+
         let mut task2 = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -318,10 +320,10 @@ mod tests {
             "cmd2".to_string(),
         );
         task2.queue_name = "queue_b".to_string();
-        
+
         store.save_task(&task1).unwrap();
         store.save_task(&task2).unwrap();
-        
+
         let queue_a_tasks = store.get_tasks_by_queue("queue_a");
         assert_eq!(queue_a_tasks.len(), 1);
         assert_eq!(queue_a_tasks[0].id, task1.id);
@@ -330,7 +332,7 @@ mod tests {
     #[test]
     fn test_get_tasks_by_status() {
         let (store, _temp) = create_test_store();
-        
+
         let mut task1 = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -338,7 +340,7 @@ mod tests {
             "cmd1".to_string(),
         );
         task1.status = TaskStatus::Queued;
-        
+
         let mut task2 = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -346,10 +348,10 @@ mod tests {
             "cmd2".to_string(),
         );
         task2.status = TaskStatus::Running;
-        
+
         store.save_task(&task1).unwrap();
         store.save_task(&task2).unwrap();
-        
+
         let queued_tasks = store.get_tasks_by_status(TaskStatus::Queued);
         assert_eq!(queued_tasks.len(), 1);
         assert_eq!(queued_tasks[0].id, task1.id);
@@ -358,7 +360,7 @@ mod tests {
     #[test]
     fn test_save_and_get_result() {
         let (store, _temp) = create_test_store();
-        
+
         let task_id = Uuid::new_v4();
         let result = TaskResult {
             task_id,
@@ -371,9 +373,9 @@ mod tests {
             completed_at: Utc::now(),
             duration_ms: 1000,
         };
-        
+
         store.save_result(&result).unwrap();
-        
+
         let retrieved = store.get_result(task_id).unwrap();
         assert_eq!(retrieved.task_id, task_id);
         assert_eq!(retrieved.exit_code, Some(0));
@@ -382,14 +384,14 @@ mod tests {
     #[test]
     fn test_append_and_get_logs() {
         let (store, _temp) = create_test_store();
-        
+
         let task_id = Uuid::new_v4();
         let log1 = TaskLog::info(task_id, "Log 1".to_string());
         let log2 = TaskLog::error(task_id, "Log 2".to_string());
-        
+
         store.append_log(&log1).unwrap();
         store.append_log(&log2).unwrap();
-        
+
         let logs = store.get_task_logs(task_id);
         assert_eq!(logs.len(), 2);
     }
@@ -397,17 +399,17 @@ mod tests {
     #[test]
     fn test_delete_task() {
         let (store, _temp) = create_test_store();
-        
+
         let task = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
             "Test Task".to_string(),
             "cmd".to_string(),
         );
-        
+
         store.save_task(&task).unwrap();
         assert!(store.get_task(task.id).is_some());
-        
+
         store.delete_task(task.id).unwrap();
         assert!(store.get_task(task.id).is_none());
     }
@@ -415,7 +417,7 @@ mod tests {
     #[test]
     fn test_cleanup_old_tasks() {
         let (store, _temp) = create_test_store();
-        
+
         let mut old_task = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -424,17 +426,17 @@ mod tests {
         );
         old_task.status = TaskStatus::Completed;
         old_task.updated_at = Utc::now() - chrono::Duration::days(40);
-        
+
         let new_task = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
             "New Task".to_string(),
             "cmd".to_string(),
         );
-        
+
         store.save_task(&old_task).unwrap();
         store.save_task(&new_task).unwrap();
-        
+
         let cleaned = store.cleanup_old_tasks(30).unwrap();
         assert_eq!(cleaned, 1);
         assert!(store.get_task(old_task.id).is_none());
@@ -444,16 +446,16 @@ mod tests {
     #[test]
     fn test_stats() {
         let (store, _temp) = create_test_store();
-        
+
         let task = Task::new(
             Uuid::new_v4(),
             Uuid::new_v4(),
             "Test".to_string(),
             "cmd".to_string(),
         );
-        
+
         store.save_task(&task).unwrap();
-        
+
         let stats = store.stats().unwrap();
         assert_eq!(stats.total_tasks, 1);
     }

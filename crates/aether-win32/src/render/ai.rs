@@ -557,7 +557,9 @@ impl EditorState {
                             render_items.push(AiRenderItem::Symbol { name: name.clone() });
                         }
                         crate::ai_panel::AgentDisplayBlock::Open { query } => {
-                            render_items.push(AiRenderItem::Open { query: query.clone() });
+                            render_items.push(AiRenderItem::Open {
+                                query: query.clone(),
+                            });
                         }
                         crate::ai_panel::AgentDisplayBlock::ReadPage { url } => {
                             render_items.push(AiRenderItem::ReadPage { url: url.clone() });
@@ -622,7 +624,11 @@ impl EditorState {
                 for item in &render_items {
                     // AI 文件/命令操作 → 渲染为清晰的操作卡片；其余按文本/代码段渲染
                     let (is_code, seg_text, seg_lang) = match item {
-                        AiRenderItem::Seg { is_code, text, lang } => (is_code, text, lang),
+                        AiRenderItem::Seg {
+                            is_code,
+                            text,
+                            lang,
+                        } => (is_code, text, lang),
                         // 询问卡片：问题文本 + 选项按钮 + 自定义回答入口
                         AiRenderItem::Ask { question, options } => {
                             let seq = ask_block_seq;
@@ -1546,37 +1552,31 @@ impl EditorState {
                     } else {
                         // 代码段：应用语法高亮样式
                         for range in &highlight_ranges {
-                            let dwrite_range = windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_RANGE {
-                                startPosition: range.start,
-                                length: range.len,
-                            };
-                    
+                            let dwrite_range =
+                                windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_RANGE {
+                                    startPosition: range.start,
+                                    length: range.len,
+                                };
+
                             // 应用前景色
                             let (r, g, b, a) = range.fg_color;
-                            if let Ok(brush) = self.win.render_ctx.brush_cache.get_brush(
-                                target,
-                                &color_f(r, g, b, a),
-                            ) {
-                                let _ = layout.SetDrawingEffect(
-                                    &brush,
-                                    dwrite_range,
-                                );
+                            if let Ok(brush) = self
+                                .win
+                                .render_ctx
+                                .brush_cache
+                                .get_brush(target, &color_f(r, g, b, a))
+                            {
+                                let _ = layout.SetDrawingEffect(&brush, dwrite_range);
                             }
-                    
+
                             // 应用粗体
                             if range.bold {
-                                let _ = layout.SetFontWeight(
-                                    DWRITE_FONT_WEIGHT_BOLD,
-                                    dwrite_range,
-                                );
+                                let _ = layout.SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, dwrite_range);
                             }
-                    
+
                             // 应用斜体
                             if range.italic {
-                                let _ = layout.SetFontStyle(
-                                    DWRITE_FONT_STYLE_ITALIC,
-                                    dwrite_range,
-                                );
+                                let _ = layout.SetFontStyle(DWRITE_FONT_STYLE_ITALIC, dwrite_range);
                             }
                         }
                     }
@@ -2790,12 +2790,9 @@ fn agent_op_display(
             query.clone(),
             color_f(0.45, 0.72, 0.95, 1.0),
         ),
-        AiRenderItem::ReadPage { url } => (
-            "◉",
-            "读取网页",
-            url.clone(),
-            color_f(0.40, 0.82, 0.78, 1.0),
-        ),
+        AiRenderItem::ReadPage { url } => {
+            ("◉", "读取网页", url.clone(), color_f(0.40, 0.82, 0.78, 1.0))
+        }
         AiRenderItem::Incomplete { path } => (
             "!",
             "生成中断",

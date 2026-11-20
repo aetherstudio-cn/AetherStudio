@@ -88,11 +88,15 @@ impl PriorityTaskQueue {
     /// 根据 ID 弹出任务
     pub fn pop_by_id(&mut self, task_id: Uuid) -> Option<Task> {
         let task = self.task_map.remove(&task_id)?;
-        
+
         // 重建堆（移除指定任务）
-        let tasks: Vec<_> = self.heap.drain().filter(|pt| pt.task.id != task_id).collect();
+        let tasks: Vec<_> = self
+            .heap
+            .drain()
+            .filter(|pt| pt.task.id != task_id)
+            .collect();
         self.heap = tasks.into_iter().collect();
-        
+
         Some(task)
     }
 
@@ -156,47 +160,47 @@ mod tests {
     #[test]
     fn test_push_and_pop() {
         let mut queue = PriorityTaskQueue::new(10);
-        
+
         let task1 = create_task(1, "low");
         let task2 = create_task(5, "high");
         let task3 = create_task(3, "medium");
-        
+
         queue.push(task1.clone()).unwrap();
         queue.push(task2.clone()).unwrap();
         queue.push(task3.clone()).unwrap();
-        
+
         assert_eq!(queue.len(), 3);
-        
+
         // 应该按优先级弹出
         let popped = queue.pop().unwrap();
         assert_eq!(popped.title, "high");
-        
+
         let popped = queue.pop().unwrap();
         assert_eq!(popped.title, "medium");
-        
+
         let popped = queue.pop().unwrap();
         assert_eq!(popped.title, "low");
-        
+
         assert!(queue.is_empty());
     }
 
     #[test]
     fn test_pop_by_id() {
         let mut queue = PriorityTaskQueue::new(10);
-        
+
         let task1 = create_task(1, "task1");
         let task2 = create_task(2, "task2");
         let task3 = create_task(3, "task3");
-        
+
         let id1 = task1.id;
         let id2 = task2.id;
-        
+
         queue.push(task1).unwrap();
         queue.push(task2).unwrap();
         queue.push(task3).unwrap();
-        
+
         assert_eq!(queue.len(), 3);
-        
+
         let popped = queue.pop_by_id(id2).unwrap();
         assert_eq!(popped.id, id2);
         assert_eq!(queue.len(), 2);
@@ -207,12 +211,12 @@ mod tests {
     #[test]
     fn test_queue_full() {
         let mut queue = PriorityTaskQueue::new(2);
-        
+
         queue.push(create_task(1, "task1")).unwrap();
         queue.push(create_task(2, "task2")).unwrap();
-        
+
         assert!(queue.is_full());
-        
+
         let result = queue.push(create_task(3, "task3"));
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), QueueError::QueueFull(2)));
@@ -221,10 +225,10 @@ mod tests {
     #[test]
     fn test_duplicate_task() {
         let mut queue = PriorityTaskQueue::new(10);
-        
+
         let task = create_task(1, "task");
         queue.push(task.clone()).unwrap();
-        
+
         let result = queue.push(task);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), QueueError::DuplicateTask(_)));
@@ -233,13 +237,13 @@ mod tests {
     #[test]
     fn test_peek() {
         let mut queue = PriorityTaskQueue::new(10);
-        
+
         let task1 = create_task(1, "low");
         let task2 = create_task(5, "high");
-        
+
         queue.push(task1).unwrap();
         queue.push(task2).unwrap();
-        
+
         let peeked = queue.peek().unwrap();
         assert_eq!(peeked.title, "high");
         assert_eq!(queue.len(), 2); // peek 不移除
@@ -248,12 +252,12 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut queue = PriorityTaskQueue::new(10);
-        
+
         queue.push(create_task(1, "task1")).unwrap();
         queue.push(create_task(2, "task2")).unwrap();
-        
+
         assert_eq!(queue.len(), 2);
-        
+
         queue.clear();
         assert!(queue.is_empty());
     }

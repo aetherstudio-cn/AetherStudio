@@ -1613,7 +1613,11 @@ impl EditorState {
                     s.signature
                 ));
             }
-            let mut out = format!("找到 {} 处定义（精确→前缀→子串排序）：\n{}", hits.len(), listing.join("\n"));
+            let mut out = format!(
+                "找到 {} 处定义（精确→前缀→子串排序）：\n{}",
+                hits.len(),
+                listing.join("\n")
+            );
             // 最佳命中回读完整源码（最多 3 处、共享字符预算），让模型一次看懂实现
             const SRC_BUDGET: usize = 6000;
             let mut used = 0usize;
@@ -1709,18 +1713,23 @@ impl EditorState {
                 ToolRequest::ReadPage(url) => match self.agent_browser_read(url) {
                     Ok(id) => {
                         let shown = if url.trim().is_empty() {
-                            self.browser.get(id).map(|i| i.url.clone()).unwrap_or_default()
+                            self.browser
+                                .get(id)
+                                .map(|i| i.url.clone())
+                                .unwrap_or_default()
                         } else {
                             crate::browser::normalize_url(url)
                         };
                         display.push(format!("◍ 正在读取网页 `{}`", shown));
-                        self.browser.pending_reads.push(crate::browser::PendingPageRead {
-                            id,
-                            conv_idx,
-                            started: std::time::Instant::now(),
-                            url: shown,
-                            extra_feedback: String::new(),
-                        });
+                        self.browser
+                            .pending_reads
+                            .push(crate::browser::PendingPageRead {
+                                id,
+                                conv_idx,
+                                started: std::time::Instant::now(),
+                                url: shown,
+                                extra_feedback: String::new(),
+                            });
                         async_pending = true;
                         self.win.dirty_tracker.mark_full_window();
                     }
@@ -1753,7 +1762,10 @@ impl EditorState {
     /// 把 `[网页内容]` 作为工具结果回喂对应会话，驱动「搜索 → 阅读 → 回答」循环。
     pub fn handle_agent_page_read_results(
         &mut self,
-        results: Vec<(crate::browser::PendingPageRead, std::result::Result<String, String>)>,
+        results: Vec<(
+            crate::browser::PendingPageRead,
+            std::result::Result<String, String>,
+        )>,
     ) {
         for (task, result) in results {
             let body = match result {
@@ -1785,7 +1797,10 @@ impl EditorState {
                 // 后台会话：不回喂续跑（避免与活动会话并发抢占模型请求）
                 self.ai.ai_panel.add_assistant_message_to(
                     task.conv_idx,
-                    format!("（该会话未激活，网页内容未自动续跑：{}）", truncate_chars(&feedback, 200)),
+                    format!(
+                        "（该会话未激活，网页内容未自动续跑：{}）",
+                        truncate_chars(&feedback, 200)
+                    ),
                 );
                 continue;
             }
@@ -1796,9 +1811,10 @@ impl EditorState {
                 .ai_panel
                 .continue_agent_with_tool_result(&settings, feedback, mode)
             {
-                self.ai
-                    .ai_panel
-                    .add_assistant_message_to(task.conv_idx, format!("（{}，如需继续请手动发消息）", e));
+                self.ai.ai_panel.add_assistant_message_to(
+                    task.conv_idx,
+                    format!("（{}，如需继续请手动发消息）", e),
+                );
             }
         }
     }
@@ -2266,15 +2282,14 @@ const SYMBOL_INDEX_TTL_SECS: u64 = 60;
 
 /// 以缓存索引执行查询闭包（首次/过期时在调用线程同步构建——纯 std 单遍遍历，
 /// 常规仓库毫秒级，无需语言服务器进程）。
-fn with_cached_symbol_index<T>(
-    root: &Path,
-    f: impl FnOnce(&aether_symbol::SymbolIndex) -> T,
-) -> T {
+fn with_cached_symbol_index<T>(root: &Path, f: impl FnOnce(&aether_symbol::SymbolIndex) -> T) -> T {
     let mut cache = SYMBOL_INDEX_CACHE
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let stale = match cache.as_ref() {
-        Some((r, built, _)) => r.as_path() != root || built.elapsed().as_secs() > SYMBOL_INDEX_TTL_SECS,
+        Some((r, built, _)) => {
+            r.as_path() != root || built.elapsed().as_secs() > SYMBOL_INDEX_TTL_SECS
+        }
         None => true,
     };
     if stale {

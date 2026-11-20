@@ -43,17 +43,16 @@ fn editor_view_height(state: &EditorState) -> f32 {
 pub fn scroll(state: &mut EditorState, delta_y: f32) {
     // 用户主动滚动时，停止之前的平滑滚动动画
     stop_smooth_scroll(state);
-    
+
     let line_height = state.win.text_renderer.line_height();
     let total_height = state.editor.content.buffer.len_lines() as f32 * line_height;
     // 滚动范围 = 文档总高 + 底部留白 - 实际可视高度（含底部面板扣除）
     let max_scroll =
-        (total_height + line_height * SCROLL_PAD_BOTTOM_LINES - editor_view_height(state))
-            .max(0.0);
-    
+        (total_height + line_height * SCROLL_PAD_BOTTOM_LINES - editor_view_height(state)).max(0.0);
+
     // 计算目标滚动位置
     let target = (state.editor.content.scroll_y + delta_y).clamp(0.0, max_scroll);
-    
+
     // 如果启用了平滑滚动，设置目标位置而不是直接跳转
     if state.editor.smooth_scroll.is_scrolling {
         state.editor.smooth_scroll.target_y = target;
@@ -61,7 +60,7 @@ pub fn scroll(state: &mut EditorState, delta_y: f32) {
         // 否则直接设置滚动位置
         state.editor.content.scroll_y = target;
     }
-    
+
     state.emit_event(crate::events::EditorEvent::Scrolled);
 }
 
@@ -71,10 +70,10 @@ pub fn update_smooth_scroll(state: &mut EditorState, dt: f32) -> bool {
     if !state.editor.smooth_scroll.is_scrolling {
         return false;
     }
-    
+
     let smooth = &mut state.editor.smooth_scroll;
     let diff = smooth.target_y - smooth.current_y;
-    
+
     // 如果已经接近目标位置，直接到达并停止
     if diff.abs() < 0.5 {
         smooth.current_y = smooth.target_y;
@@ -82,12 +81,12 @@ pub fn update_smooth_scroll(state: &mut EditorState, dt: f32) -> bool {
         state.editor.content.scroll_y = smooth.current_y;
         return false;
     }
-    
+
     // 使用缓动函数计算新位置（ease-out）
     let speed = 8.0; // 滚动速度系数
     smooth.current_y += diff * speed * dt;
     state.editor.content.scroll_y = smooth.current_y;
-    
+
     true
 }
 
@@ -96,9 +95,8 @@ pub fn smooth_scroll_to(state: &mut EditorState, target_y: f32) {
     let line_height = state.win.text_renderer.line_height();
     let total_height = state.editor.content.buffer.len_lines() as f32 * line_height;
     let max_scroll =
-        (total_height + line_height * SCROLL_PAD_BOTTOM_LINES - editor_view_height(state))
-            .max(0.0);
-    
+        (total_height + line_height * SCROLL_PAD_BOTTOM_LINES - editor_view_height(state)).max(0.0);
+
     state.editor.smooth_scroll.target_y = target_y.clamp(0.0, max_scroll);
     state.editor.smooth_scroll.current_y = state.editor.content.scroll_y;
     state.editor.smooth_scroll.is_scrolling = true;

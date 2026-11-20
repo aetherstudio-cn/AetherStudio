@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 4. 提交一些示例任务
     println!("提交示例任务...");
-    
+
     let tenant_id = Uuid::new_v4();
     let user_id = Uuid::new_v4();
 
@@ -56,7 +56,10 @@ async fn main() -> anyhow::Result<()> {
     );
     task2.priority = 10;
     system.submit_task(task2.clone()).await?;
-    println!("  - 已提交任务: {} (优先级: {})", task2.title, task2.priority);
+    println!(
+        "  - 已提交任务: {} (优先级: {})",
+        task2.title, task2.priority
+    );
 
     // 任务 3: 带依赖的任务
     let mut task3 = Task::new(
@@ -78,7 +81,11 @@ async fn main() -> anyhow::Result<()> {
     );
     task4.dependencies = vec![task2.id, task3.id];
     system.submit_task(task4.clone()).await?;
-    println!("  - 已提交任务: {} (依赖: {} 个任务)", task4.title, task4.dependencies.len());
+    println!(
+        "  - 已提交任务: {} (依赖: {} 个任务)",
+        task4.title,
+        task4.dependencies.len()
+    );
 
     println!("\n队列状态:");
     println!("  - 队列大小: {}", system.queue_size().await);

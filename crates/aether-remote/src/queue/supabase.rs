@@ -94,8 +94,12 @@ impl SupabaseRestClient {
         let client = reqwest::Client::builder()
             .build()
             .expect("Failed to create HTTP client");
-        
-        Self { config, client, access_token: None }
+
+        Self {
+            config,
+            client,
+            access_token: None,
+        }
     }
 
     /// 设置访问 Token
@@ -116,8 +120,9 @@ impl SupabaseRestClient {
     pub async fn register_device(&self, device: &Device) -> Result<Device, reqwest::Error> {
         let url = format!("{}/devices", self.config.rest_url());
         let token = self.auth_header();
-        
-        let response = self.client
+
+        let response = self
+            .client
             .post(&url)
             .header("apikey", &self.config.anon_key)
             .header("Authorization", format!("Bearer {}", token))
@@ -135,7 +140,7 @@ impl SupabaseRestClient {
     pub async fn update_device_heartbeat(&self, device_id: &str) -> Result<(), reqwest::Error> {
         let url = format!("{}/devices?id=eq.{}", self.config.rest_url(), device_id);
         let token = self.auth_header();
-        
+
         let now = chrono::Utc::now().to_rfc3339();
         let body = serde_json::json!({
             "last_seen_at": now,
@@ -155,10 +160,14 @@ impl SupabaseRestClient {
     }
 
     /// 更新设备状态
-    pub async fn update_device_status(&self, device_id: &str, status: &str) -> Result<(), reqwest::Error> {
+    pub async fn update_device_status(
+        &self,
+        device_id: &str,
+        status: &str,
+    ) -> Result<(), reqwest::Error> {
         let url = format!("{}/devices?id=eq.{}", self.config.rest_url(), device_id);
         let token = self.auth_header();
-        
+
         let body = serde_json::json!({
             "status": status,
             "updated_at": chrono::Utc::now().to_rfc3339(),
@@ -186,7 +195,7 @@ impl SupabaseRestClient {
     ) -> Result<(), reqwest::Error> {
         let url = format!("{}/agent_tasks?id=eq.{}", self.config.rest_url(), task_id);
         let token = self.auth_header();
-        
+
         let mut body = serde_json::json!({
             "status": status,
             "updated_at": chrono::Utc::now().to_rfc3339(),
@@ -213,7 +222,10 @@ impl SupabaseRestClient {
     }
 
     /// 获取待处理任务
-    pub async fn get_pending_tasks(&self, device_id: &str) -> Result<Vec<serde_json::Value>, reqwest::Error> {
+    pub async fn get_pending_tasks(
+        &self,
+        device_id: &str,
+    ) -> Result<Vec<serde_json::Value>, reqwest::Error> {
         let url = format!(
             "{}/agent_tasks?device_id=eq.{}&status=eq.queued&order=priority.desc,created_at.asc",
             self.config.rest_url(),
@@ -221,7 +233,8 @@ impl SupabaseRestClient {
         );
         let token = self.auth_header();
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .header("apikey", &self.config.anon_key)
             .header("Authorization", format!("Bearer {}", token))

@@ -87,7 +87,7 @@ fn detect_shell() -> &'static str {
 pub fn agent_capabilities_prompt(shell: &str) -> String {
     use crate::ai_agent::{
         EDIT_FOOTER, EDIT_HEADER, FILE_FOOTER, FILE_HEADER_PREFIX, FILE_SEP, LIST_PREFIX,
-        LOCATE_HEADER, OPEN_PREFIX, READ_PREFIX, READPAGE_PREFIX, RUN_FOOTER, RUN_HEADER,
+        LOCATE_HEADER, OPEN_PREFIX, READPAGE_PREFIX, READ_PREFIX, RUN_FOOTER, RUN_HEADER,
         SEARCH_PREFIX, SYMBOL_PREFIX,
     };
     format!(

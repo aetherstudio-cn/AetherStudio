@@ -618,7 +618,8 @@ impl BrowserState {
                     if task.started.elapsed() >= timeout {
                         done.push((
                             task,
-                            Err("网页加载超时，未能提取正文（可稍后重试或改用其他来源）".to_string()),
+                            Err("网页加载超时，未能提取正文（可稍后重试或改用其他来源）"
+                                .to_string()),
                         ));
                     } else {
                         keep.push(task);
@@ -799,8 +800,9 @@ impl BrowserState {
                             for inst in &mut self.instances {
                                 if inst.read_requested {
                                     inst.read_requested = false;
-                                    inst.last_script_error =
-                                        Some("系统缺少 WebView2 Runtime，内置浏览器不可用".to_string());
+                                    inst.last_script_error = Some(
+                                        "系统缺少 WebView2 Runtime，内置浏览器不可用".to_string(),
+                                    );
                                 }
                             }
                             tracing::error!("内置浏览器: WebView2 环境初始化失败 {e:?}（系统可能缺少 WebView2 Runtime）");
@@ -818,8 +820,7 @@ impl BrowserState {
                             // 排队中的正文采集直接失败，避免上层等到超时
                             if inst.read_requested {
                                 inst.read_requested = false;
-                                inst.last_script_error =
-                                    Some(format!("网页视图创建失败：{e:?}"));
+                                inst.last_script_error = Some(format!("网页视图创建失败：{e:?}"));
                             }
                         }
                     }
@@ -958,8 +959,9 @@ impl crate::editor::EditorState {
         let hwnd = self.win.hwnd;
         let trimmed = url_input.trim();
         let id = if trimmed.is_empty() {
-            self.active_browser_id()
-                .ok_or_else(|| "当前没有已打开的网页，请先用 AETHER_OPEN 打开页面再读取。".to_string())?
+            self.active_browser_id().ok_or_else(|| {
+                "当前没有已打开的网页，请先用 AETHER_OPEN 打开页面再读取。".to_string()
+            })?
         } else {
             let url = crate::browser::normalize_url(trimmed);
             match self.active_browser_id() {
@@ -1021,10 +1023,10 @@ mod tests {
         // 视图尚未创建（WebView2 异步初始化中）：只登记采集意图，不执行脚本
         let mut state = BrowserState::new();
         let id = state.add_instance("https://example.com");
-        state
-            .get_mut(id)
-            .unwrap()
-            .arm_read(Some("https://example.com".to_string()), HWND(std::ptr::null_mut()));
+        state.get_mut(id).unwrap().arm_read(
+            Some("https://example.com".to_string()),
+            HWND(std::ptr::null_mut()),
+        );
         let inst = state.get(id).unwrap();
         assert!(inst.read_requested);
         assert_eq!(inst.read_target_url.as_deref(), Some("https://example.com"));
@@ -1060,7 +1062,8 @@ mod tests {
 
     #[test]
     fn test_format_page_content_body_text() {
-        let json = r#"{"title":"示例","url":"https://example.com","text":"第一行\n第二行","entries":[]}"#;
+        let json =
+            r#"{"title":"示例","url":"https://example.com","text":"第一行\n第二行","entries":[]}"#;
         let out = format_page_content(json, 6000);
         assert!(out.contains("正文"), "实际: {out}");
         assert!(out.contains("第一行\n第二行"));

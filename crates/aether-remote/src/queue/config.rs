@@ -11,46 +11,46 @@ use super::supabase::SupabaseConfig;
 pub struct QueueConfig {
     /// AetherDB 文件路径
     pub db_path: PathBuf,
-    
+
     /// 最大并发任务数
     pub max_concurrent: usize,
-    
+
     /// 内存队列最大容量
     pub max_queue_size: usize,
-    
+
     /// 任务保留天数
     pub retention_days: i64,
-    
+
     /// 重试策略
     pub retry_policy: RetryPolicy,
-    
+
     /// Supabase 配置
     pub supabase_config: SupabaseConfig,
-    
+
     /// 租户 ID
     pub tenant_id: String,
-    
+
     /// 用户 ID
     pub user_id: String,
-    
+
     /// 设备名称
     pub device_name: String,
-    
+
     /// 设备类型
     pub device_type: String,
-    
+
     /// Realtime 重连间隔
     pub realtime_reconnect_interval: Duration,
-    
+
     /// 轮询间隔（降级模式）
     pub polling_interval: Duration,
-    
+
     /// 维护任务间隔
     pub maintenance_interval: Duration,
-    
+
     /// 心跳间隔
     pub heartbeat_interval: Duration,
-    
+
     /// 是否启用监控
     pub enable_metrics: bool,
 }
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = QueueConfig::default();
-        
+
         assert_eq!(config.max_concurrent, 4);
         assert_eq!(config.max_queue_size, 1000);
         assert_eq!(config.retention_days, 30);
@@ -153,15 +153,12 @@ mod tests {
 
     #[test]
     fn test_custom_config() {
-        let config = QueueConfig::new(
-            PathBuf::from("/tmp/test.aedb"),
-            "device-1".to_string(),
-        )
-        .with_max_concurrent(8)
-        .with_max_queue_size(2000)
-        .with_retention_days(60)
-        .with_enable_metrics(false);
-        
+        let config = QueueConfig::new(PathBuf::from("/tmp/test.aedb"), "device-1".to_string())
+            .with_max_concurrent(8)
+            .with_max_queue_size(2000)
+            .with_retention_days(60)
+            .with_enable_metrics(false);
+
         assert_eq!(config.max_concurrent, 8);
         assert_eq!(config.max_queue_size, 2000);
         assert_eq!(config.retention_days, 60);
@@ -174,7 +171,7 @@ mod tests {
         let config = QueueConfig::default()
             .with_max_concurrent(16)
             .with_polling_interval(Duration::from_secs(60));
-        
+
         assert_eq!(config.max_concurrent, 16);
         assert_eq!(config.polling_interval, Duration::from_secs(60));
     }

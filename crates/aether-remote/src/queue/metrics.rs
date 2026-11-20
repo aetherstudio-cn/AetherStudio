@@ -6,19 +6,19 @@ use std::time::Duration;
 /// 队列监控指标
 pub struct QueueMetrics {
     registry: Registry,
-    
+
     // 计数器
     pub tasks_submitted: Counter,
     pub tasks_completed: Counter,
     pub tasks_failed: Counter,
     pub tasks_cancelled: Counter,
     pub tasks_retried: Counter,
-    
+
     // 仪表盘
     pub queue_size: Gauge,
     pub running_tasks: Gauge,
     pub available_slots: Gauge,
-    
+
     // 直方图
     pub execution_duration: Histogram,
     pub queue_wait_duration: Histogram,
@@ -28,61 +28,90 @@ impl QueueMetrics {
     /// 创建新的监控指标
     pub fn new() -> Self {
         let registry = Registry::new();
-        
-        let tasks_submitted = Counter::with_opts(
-            Opts::new("queue_tasks_submitted_total", "Total number of tasks submitted")
-        ).unwrap();
-        
-        let tasks_completed = Counter::with_opts(
-            Opts::new("queue_tasks_completed_total", "Total number of tasks completed")
-        ).unwrap();
-        
-        let tasks_failed = Counter::with_opts(
-            Opts::new("queue_tasks_failed_total", "Total number of tasks failed")
-        ).unwrap();
-        
-        let tasks_cancelled = Counter::with_opts(
-            Opts::new("queue_tasks_cancelled_total", "Total number of tasks cancelled")
-        ).unwrap();
-        
-        let tasks_retried = Counter::with_opts(
-            Opts::new("queue_tasks_retried_total", "Total number of tasks retried")
-        ).unwrap();
-        
-        let queue_size = Gauge::with_opts(
-            Opts::new("queue_size", "Current queue size")
-        ).unwrap();
-        
-        let running_tasks = Gauge::with_opts(
-            Opts::new("queue_running_tasks", "Current number of running tasks")
-        ).unwrap();
-        
-        let available_slots = Gauge::with_opts(
-            Opts::new("queue_available_slots", "Current number of available execution slots")
-        ).unwrap();
-        
+
+        let tasks_submitted = Counter::with_opts(Opts::new(
+            "queue_tasks_submitted_total",
+            "Total number of tasks submitted",
+        ))
+        .unwrap();
+
+        let tasks_completed = Counter::with_opts(Opts::new(
+            "queue_tasks_completed_total",
+            "Total number of tasks completed",
+        ))
+        .unwrap();
+
+        let tasks_failed = Counter::with_opts(Opts::new(
+            "queue_tasks_failed_total",
+            "Total number of tasks failed",
+        ))
+        .unwrap();
+
+        let tasks_cancelled = Counter::with_opts(Opts::new(
+            "queue_tasks_cancelled_total",
+            "Total number of tasks cancelled",
+        ))
+        .unwrap();
+
+        let tasks_retried = Counter::with_opts(Opts::new(
+            "queue_tasks_retried_total",
+            "Total number of tasks retried",
+        ))
+        .unwrap();
+
+        let queue_size = Gauge::with_opts(Opts::new("queue_size", "Current queue size")).unwrap();
+
+        let running_tasks = Gauge::with_opts(Opts::new(
+            "queue_running_tasks",
+            "Current number of running tasks",
+        ))
+        .unwrap();
+
+        let available_slots = Gauge::with_opts(Opts::new(
+            "queue_available_slots",
+            "Current number of available execution slots",
+        ))
+        .unwrap();
+
         let execution_duration = Histogram::with_opts(
-            HistogramOpts::new("queue_execution_duration_seconds", "Task execution duration")
-                .buckets(vec![0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0])
-        ).unwrap();
-        
+            HistogramOpts::new(
+                "queue_execution_duration_seconds",
+                "Task execution duration",
+            )
+            .buckets(vec![0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0]),
+        )
+        .unwrap();
+
         let queue_wait_duration = Histogram::with_opts(
             HistogramOpts::new("queue_wait_duration_seconds", "Task queue wait duration")
-                .buckets(vec![0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0])
-        ).unwrap();
-        
+                .buckets(vec![0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0]),
+        )
+        .unwrap();
+
         // 注册指标
-        registry.register(Box::new(tasks_submitted.clone())).unwrap();
-        registry.register(Box::new(tasks_completed.clone())).unwrap();
+        registry
+            .register(Box::new(tasks_submitted.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(tasks_completed.clone()))
+            .unwrap();
         registry.register(Box::new(tasks_failed.clone())).unwrap();
-        registry.register(Box::new(tasks_cancelled.clone())).unwrap();
+        registry
+            .register(Box::new(tasks_cancelled.clone()))
+            .unwrap();
         registry.register(Box::new(tasks_retried.clone())).unwrap();
         registry.register(Box::new(queue_size.clone())).unwrap();
         registry.register(Box::new(running_tasks.clone())).unwrap();
-        registry.register(Box::new(available_slots.clone())).unwrap();
-        registry.register(Box::new(execution_duration.clone())).unwrap();
-        registry.register(Box::new(queue_wait_duration.clone())).unwrap();
-        
+        registry
+            .register(Box::new(available_slots.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(execution_duration.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(queue_wait_duration.clone()))
+            .unwrap();
+
         Self {
             registry,
             tasks_submitted,
@@ -173,7 +202,7 @@ mod tests {
     #[test]
     fn test_metrics_creation() {
         let metrics = QueueMetrics::new();
-        
+
         assert_eq!(metrics.tasks_submitted.get(), 0.0);
         assert_eq!(metrics.tasks_completed.get(), 0.0);
         assert_eq!(metrics.tasks_failed.get(), 0.0);
@@ -182,10 +211,10 @@ mod tests {
     #[test]
     fn test_record_task_submitted() {
         let metrics = QueueMetrics::new();
-        
+
         metrics.record_task_submitted();
         assert_eq!(metrics.tasks_submitted.get(), 1.0);
-        
+
         metrics.record_task_submitted();
         assert_eq!(metrics.tasks_submitted.get(), 2.0);
     }
@@ -193,20 +222,20 @@ mod tests {
     #[test]
     fn test_record_task_completed() {
         let metrics = QueueMetrics::new();
-        
+
         let duration = Duration::from_secs(2);
         metrics.record_task_completed(duration);
-        
+
         assert_eq!(metrics.tasks_completed.get(), 1.0);
     }
 
     #[test]
     fn test_update_queue_size() {
         let metrics = QueueMetrics::new();
-        
+
         metrics.update_queue_size(10);
         assert_eq!(metrics.queue_size.get(), 10.0);
-        
+
         metrics.update_queue_size(5);
         assert_eq!(metrics.queue_size.get(), 5.0);
     }
@@ -214,10 +243,10 @@ mod tests {
     #[test]
     fn test_export() {
         let metrics = QueueMetrics::new();
-        
+
         metrics.record_task_submitted();
         metrics.record_task_completed(Duration::from_secs(1));
-        
+
         let exported = metrics.export();
         assert!(exported.contains("queue_tasks_submitted_total"));
         assert!(exported.contains("queue_tasks_completed_total"));

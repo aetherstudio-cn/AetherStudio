@@ -129,7 +129,8 @@ mod tests {
 
     #[test]
     fn braces_in_strings_and_comments() {
-        let text = "fn f() {\n    let s = \"} { {\";\n    // } 注释里的花括号\n    /* { 块注释 } */\n}\n";
+        let text =
+            "fn f() {\n    let s = \"} { {\";\n    // } 注释里的花括号\n    /* { 块注释 } */\n}\n";
         let src = symbol_source(text, 1, Lang::Rust).unwrap();
         assert_eq!(src.lines().count(), 5);
     }

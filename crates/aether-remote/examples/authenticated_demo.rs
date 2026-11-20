@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
         PathBuf::from("data/auth_demo.aedb"),
         "My Windows PC".to_string(),
     );
-    
+
     config.supabase_config = SupabaseConfig::default();
 
     // 2. 创建任务队列系统
@@ -30,18 +30,18 @@ async fn main() -> anyhow::Result<()> {
     // 3. 检查是否有保存的会话
     if system.session_manager().is_authenticated().await {
         println!("✓ 检测到已保存的会话");
-        
+
         if let Some(session) = system.session_manager().get_session().await {
             println!("  - 用户: {}", session.user.email);
             println!("  - 租户 ID: {:?}", session.user.tenant_id());
         }
-        
+
         println!("\n是否使用此会话？(y/n): ");
         io::stdout().flush()?;
-        
+
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
-        
+
         if input.trim().to_lowercase() != "y" {
             system.logout().await?;
             println!("已清除会话\n");
@@ -55,10 +55,10 @@ async fn main() -> anyhow::Result<()> {
         println!("2. 注册");
         print!("请选择 (1/2): ");
         io::stdout().flush()?;
-        
+
         let mut choice = String::new();
         io::stdin().read_line(&mut choice)?;
-        
+
         match choice.trim() {
             "1" => {
                 // 登录
@@ -67,13 +67,13 @@ async fn main() -> anyhow::Result<()> {
                 let mut email = String::new();
                 io::stdin().read_line(&mut email)?;
                 let email = email.trim();
-                
+
                 print!("密码: ");
                 io::stdout().flush()?;
                 let mut password = String::new();
                 io::stdin().read_line(&mut password)?;
                 let password = password.trim();
-                
+
                 println!("\n正在登录...");
                 match system.login(email, password).await {
                     Ok(_) => println!("✓ 登录成功\n"),
@@ -90,13 +90,13 @@ async fn main() -> anyhow::Result<()> {
                 let mut email = String::new();
                 io::stdin().read_line(&mut email)?;
                 let email = email.trim();
-                
+
                 print!("密码: ");
                 io::stdout().flush()?;
                 let mut password = String::new();
                 io::stdin().read_line(&mut password)?;
                 let password = password.trim();
-                
+
                 print!("租户 ID (可选，留空创建新租户): ");
                 io::stdout().flush()?;
                 let mut tenant_id = String::new();
@@ -107,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     Some(tenant_id.to_string())
                 };
-                
+
                 println!("\n正在注册...");
                 match system.signup(email, password, tenant_id).await {
                     Ok(_) => println!("✓ 注册成功\n"),
@@ -138,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  - 注册设备...");
     println!("  - 启动心跳...");
     println!("  - 启动 Realtime 监听...");
-    
+
     match system.start().await {
         Ok(_) => println!("✓ 系统已启动\n"),
         Err(e) => {
@@ -157,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 8. 提交示例任务
     println!("提交示例任务...");
-    
+
     let session = system.session_manager().get_session().await.unwrap();
     let tenant_id = Uuid::parse_str(&session.user.tenant_id().unwrap())?;
     let user_id = Uuid::parse_str(&session.user.id)?;
@@ -172,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
             "echo Hello from AetherStudio".to_string()
         },
     );
-    
+
     system.submit_task(task.clone()).await?;
     println!("✓ 任务已提交: {}\n", task.title);
 
@@ -180,10 +180,10 @@ async fn main() -> anyhow::Result<()> {
     println!("等待任务执行...");
     for i in 1..=5 {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        
+
         if let Some(status) = system.get_task_status(task.id).await {
             println!("  [{}s] 任务状态: {:?}", i, status);
-            
+
             if status == aether_remote::queue::TaskStatus::Completed {
                 break;
             }

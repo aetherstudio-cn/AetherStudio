@@ -9,10 +9,9 @@ pub(crate) use windows::Win32::Graphics::Direct2D::{
     D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_DRAW_TEXT_OPTIONS_NONE,
 };
 pub(crate) use windows::Win32::Graphics::DirectWrite::{
-    IDWriteTextFormat, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL,
-    DWRITE_FONT_STYLE_ITALIC, DWRITE_MEASURING_MODE_NATURAL,
-    DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
-    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
+    IDWriteTextFormat, DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_WEIGHT_BOLD,
+    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+    DWRITE_PARAGRAPH_ALIGNMENT_NEAR, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
     DWRITE_TEXT_ALIGNMENT_TRAILING,
 };
 
@@ -348,8 +347,7 @@ impl EditorState {
                     .map(|t| !t.is_file())
                     .unwrap_or(true)
             };
-            if is_special(self.input.prev.active_tab)
-                || is_special(self.editor.tab_bar.active_tab)
+            if is_special(self.input.prev.active_tab) || is_special(self.editor.tab_bar.active_tab)
             {
                 self.win.dirty_tracker.mark_full_window();
             } else {
