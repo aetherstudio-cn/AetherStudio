@@ -812,6 +812,31 @@ pub fn relative_time(updated_at: u64, now: u64) -> String {
     }
 }
 
+/// 浏览器意图识别：命中则自动切到 Agent 模式（该模式才会附带 AETHER_OPEN / AETHER_READPAGE 工具说明）。
+///
+/// 两级判定以避免误伤项目内的普通提问（如"打开这个文件看看"、"查一下这个函数"）：
+/// 1. 强网络词（浏览器 / 上网 / 网站 / http / www. / 具体站点名）单独出现即判定；
+/// 2. 弱浏览动词（打开 / 访问 / 搜索 / 查 / open / visit）需与网络对象词共现才判定。
+/// 输入需已转小写（中文不受影响，英文站点名按小写匹配）。
+pub fn looks_like_browse_request(input_lower: &str) -> bool {
+    const STRONG_WEB_TOKENS: [&str; 18] = [
+        "浏览器", "上网", "联网", "外链", "网站", "网页", "http", "www.", "域名", "百度", "baidu",
+        "谷歌", "google", "必应", "bing", "stack", "github.com", "youtube",
+    ];
+    if STRONG_WEB_TOKENS.iter().any(|k| input_lower.contains(k)) {
+        return true;
+    }
+    const BROWSE_VERBS: [&str; 12] = [
+        "打开", "访问", "跳转", "进入", "浏览", "搜索", "搜一下", "搜一搜", "查一下", "open",
+        "visit", "browse",
+    ];
+    const WEB_OBJECT_TOKENS: [&str; 10] = [
+        "官网", "官方", "文档", "教程", "资料", "链接", "页面", "网上", "互联网", "在线",
+    ];
+    BROWSE_VERBS.iter().any(|v| input_lower.contains(v))
+        && WEB_OBJECT_TOKENS.iter().any(|o| input_lower.contains(o))
+}
+
 /// 多任务编排流水线状态（CoT 任务分解：规划器 → 逐任务独立 AI 调用）。
 ///
 /// 由规划器产出 tasks 后创建；每个 FILE 任务发起一次聚焦 worker 调用生成，
@@ -2002,7 +2027,9 @@ impl AiPanel {
     /// 1. 如果输入包含文件操作关键词（如"创建文件"、"修改代码"、"删除文件"等），则使用 Agent 模式
     /// 2. 如果输入包含命令执行关键词（如"运行命令"、"执行脚本"等），则使用 Agent 模式
     /// 3. 如果输入包含多步骤任务关键词（如"步骤"、"计划"、"任务"等），则使用 Agent 模式
-    /// 4. 否则使用 Ask 模式（简单问答）
+    /// 4. 如果输入是浏览器意图（如"打开百度"、"帮我搜一下X"），则使用 Agent 模式
+    ///    （只有 Agent 模式会下发内置浏览器工具标记说明）
+    /// 5. 否则使用 Ask 模式（简单问答）
     fn detect_mode_from_input(&self, input: &str) -> AiMode {
         let input_lower = input.to_lowercase();
 
@@ -2091,6 +2118,11 @@ impl AiPanel {
             if input_lower.contains(keyword) {
                 return AiMode::Agent;
             }
+        }
+
+        // 浏览器意图（"打开百度"、"帮我搜一下 X"）：只有 Agent 模式才会下发浏览器工具标记
+        if looks_like_browse_request(&input_lower) {
+            return AiMode::Agent;
         }
 
         // 默认为简单问答模式
@@ -4342,5 +4374,36 @@ mod tests {
         assert!(p
             .last_assistant_text_matching_of(p.active, |t| t.contains("不存在"))
             .is_none());
+    }
+
+    // ===== 内置浏览器意图识别（决定能否用 AETHER_OPEN / AETHER_READPAGE） =====
+
+    #[test]
+    fn browse_intent_hits_strong_web_tokens() {
+        assert!(looks_like_browse_request("帮我打开百度"));
+        assert!(looks_like_browse_request("用浏览器访问 https://example.com"));
+        assert!(looks_like_browse_request("上网查一下 rust 异步"));
+        assert!(looks_like_browse_request("open www.github.com"));
+    }
+
+    #[test]
+    fn browse_intent_requires_verb_with_web_object() {
+        // 动词 + 网络对象词共现才算浏览器意图
+        assert!(looks_like_browse_request("搜一下这个库的官方文档"));
+        assert!(looks_like_browse_request("打开官网看看最新教程"));
+        // 纯项目内提问不误判为浏览器意图
+        assert!(!looks_like_browse_request("打开这个文件看看"));
+        assert!(!looks_like_browse_request("查一下这个函数为什么报错"));
+        assert!(!looks_like_browse_request("解释一下这段代码"));
+    }
+
+    #[test]
+    fn browse_intent_switches_to_agent_mode() {
+        let p = test_panel();
+        assert_eq!(
+            p.detect_mode_from_input("帮我打开百度"),
+            AiMode::Agent,
+            "浏览器意图应进入 Agent 模式（该模式才下发浏览器工具）"
+        );
     }
 }

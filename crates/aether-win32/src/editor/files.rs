@@ -476,7 +476,6 @@ pub(crate) fn on_folder_scan_batch_ref(state: &mut EditorState, batch: &ScannedB
                 state.ui.status_bar.update_git_branch(None);
             }
             state.ui.status_message = format!("已打开文件夹: {}", folder.display());
-            state.ui.welcome_focus_action = None;
             // 自动打开 README（若存在）
             try_open_readme(state, &folder);
         }
@@ -562,7 +561,6 @@ pub fn close_workspace(state: &mut EditorState) {
     state.fs.file_tree_rows_dirty = true;
     state.fs.file_tree_rows_tree_len = 0;
     state.fs.sidebar_scroll_y = 0.0;
-    state.ui.welcome_focus_action = None;
     // 释放旧工作区的 LSP 诊断与补全缓存（否则随 Url key 永久驻留）
     state.lsp.lsp.diagnostics.clear();
     state.lsp.lsp.completion_items.clear();

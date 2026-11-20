@@ -16,6 +16,7 @@ members = [
     "crates/aether-terminal",
     "crates/aether-ui",
     "crates/aether-render-win",
+    "crates/aether-symbol",
 ]
 resolver = "2"
 

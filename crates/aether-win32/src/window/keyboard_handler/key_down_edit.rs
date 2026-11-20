@@ -62,9 +62,8 @@ unsafe fn okd_agent_ai_scroll(hwnd: HWND, vk: VIRTUAL_KEY) -> bool {
             .as_ref()
             .map(|state| {
                 let st = state.borrow();
-                // 智能体模式 + AI 面板可见 + 输入框未聚焦 + 历史浮窗未打开
-                st.editor_mode.is_agent()
-                    && st.ai.ai_panel.visible
+                // AI 面板可见 + 输入框未聚焦 + 历史浮窗未打开
+                st.ai.ai_panel.visible
                     && !st.ai.ai_panel.input_focused
                     && !st.ai.ai_panel.history_open
             })

@@ -12,3 +12,4 @@ pub mod diff;
 pub mod embedding;
 pub mod memory_store;
 pub mod reflector;
+pub mod syntax_highlight;

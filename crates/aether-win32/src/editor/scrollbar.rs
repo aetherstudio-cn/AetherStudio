@@ -4,6 +4,7 @@
 //! 滑块可拖拽；点击轨道跳转至点击位置并可继续拖拽。
 //! 无内容溢出时对应滚动条不绘制、不命中。
 
+use super::cursor::{SCROLL_PAD_BOTTOM_LINES, SCROLL_PAD_RIGHT_PX};
 use super::*;
 use crate::layout::Region;
 use aether_render::d2d::factory::color_f;
@@ -47,12 +48,16 @@ pub fn geometry(state: &EditorState, region: &Region) -> Geometry {
     let line_height = state.win.text_renderer.line_height();
     let char_width = state.win.text_renderer.char_width();
 
-    let total_h = state.editor.content.buffer.len_lines() as f32 * line_height;
+    // 可滚动总高 = 文档总高 + 底部留白（与 cursor::scroll 的钳制口径一致）
+    let total_h =
+        state.editor.content.buffer.len_lines() as f32 * line_height
+            + line_height * SCROLL_PAD_BOTTOM_LINES;
     let view_h = region.height;
     let v_max = (total_h - view_h).max(0.0);
 
-    // 水平可视宽与 scroll_horizontal 的钳制口径一致（行号 60 + 内边距 5）
-    let content_w = state.editor.content.content_width_chars as f32 * char_width;
+    // 水平可视宽与 scroll_horizontal 的钳制口径一致（行号 60 + 内边距 5 + 右侧留白）
+    let content_w = state.editor.content.content_width_chars as f32 * char_width
+        + SCROLL_PAD_RIGHT_PX;
     let view_w = (region.width - 60.0 - 5.0).max(1.0);
     let h_max = (content_w - view_w).max(0.0);
 
@@ -227,7 +232,6 @@ pub fn jump_and_grab(
 }
 
 /// 左键按下统一入口：命中滚动条则进入拖拽并捕获鼠标，返回 true 表示事件已消费。
-/// 经典模式与智能体模式的编辑器点击处理器共用。
 ///
 /// # Safety
 /// 内部调用 Win32 `SetCapture`，须在窗口消息处理的 unsafe 上下文中调用。
@@ -261,7 +265,6 @@ pub enum MoveOutcome {
 }
 
 /// 鼠标移动统一入口：拖拽中应用滚动；否则更新悬停高亮。
-/// 经典模式与智能体模式的 WM_MOUSEMOVE 处理器共用。
 pub fn handle_move(state: &mut EditorState, mx: f32, my: f32) -> MoveOutcome {
     let Some(region) = state.active_code_editor_region() else {
         if state.editor.scrollbar_hover.is_some() {
@@ -286,10 +289,9 @@ pub fn handle_move(state: &mut EditorState, mx: f32, my: f32) -> MoveOutcome {
 
 impl EditorState {
     /// 当前视图是否渲染代码编辑器（滚动条仅在该场景出现）。
-    /// 与 render 主流程（经典中间区 / 智能体右侧标签面板）的分支条件保持一致。
+    /// 与 render 主流程（右侧标签面板）的分支条件保持一致。
     pub fn scrollbars_active(&self) -> bool {
-        !self.show_welcome()
-            && !self.ntp_active()
+        !self.ntp_active()
             && !self.active_tab_is_new_tab()
             && !self.active_tab_is_browser()
             && !self.active_tab_is_settings()
@@ -302,28 +304,24 @@ impl EditorState {
 
     /// 当前活动代码编辑器的渲染区域（当前视图非代码编辑器时 None）。
     ///
-    /// 经典模式 = 中间编辑内容区；智能体模式 = 右侧标签面板内容区（扣除标签栏）。
+    /// 代码编辑器位于右侧标签面板内容区（扣除标签栏）。
     /// 滚动条渲染 / 命中 / 拖拽 / 滚轮路由的统一几何入口，与渲染几何保持一致。
     pub fn active_code_editor_region(&self) -> Option<Region> {
         if !self.scrollbars_active() {
             return None;
         }
-        if self.editor_mode.is_agent() {
-            let r = self.ui.layout.right_panel_region();
-            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
-                0.0
-            } else {
-                crate::layout::TAB_BAR_HEIGHT
-            };
-            Some(Region::new(
-                r.x,
-                r.y + tab_h,
-                r.width,
-                (r.height - tab_h).max(0.0),
-            ))
+        let r = self.ui.layout.right_panel_region();
+        let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+            0.0
         } else {
-            Some(self.ui.layout.editor_content_region(self.show_tab_bar()))
-        }
+            crate::layout::TAB_BAR_HEIGHT
+        };
+        Some(Region::new(
+            r.x,
+            r.y + tab_h,
+            r.width,
+            (r.height - tab_h).max(0.0),
+        ))
     }
 
     /// 绘制编辑区覆盖式滚动条（在编辑内容裁剪弹出后调用，浮于文本之上）。

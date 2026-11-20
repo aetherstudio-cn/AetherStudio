@@ -465,8 +465,6 @@ pub struct WindowRenderState {
     pub dirty_tracker: crate::dirty_rect::DirtyRectTracker,
     /// EndDraw 连续失败计数：限制失败后自动重绘的重试次数，防止忙循环
     pub end_draw_fail_streak: u8,
-    /// Logo 位图（aether-512.png），懒加载，用于欢迎页和空占位页
-    pub(crate) logo_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
     /// 图片预览位图（设备相关缓存），由当前标签的 image_data 惰性创建；
     /// 设备丢失/切换标签时清空重建
     pub(crate) image_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
@@ -507,6 +505,8 @@ pub struct EditorContentState {
     pub markdown_toggle_btn: Option<crate::layout::Region>,
     /// P3.1: 内联补全服务（占位）
     pub inline_completion_service: crate::inline_completion::InlineCompletionService,
+    /// 平滑滚动状态
+    pub smooth_scroll: cursor::SmoothScrollState,
 }
 
 /// 文件树与工作区状态
@@ -609,11 +609,7 @@ pub struct UiPanelState {
     pub update_checking: bool,
     /// 侧边栏宽度调整手柄的悬停状态
     pub hover_sidebar_resize: bool,
-    /// 欢迎页悬停的操作项
-    pub welcome_hover_action: Option<crate::welcome::WelcomeAction>,
-    /// 欢迎页键盘焦点项
-    pub welcome_focus_action: Option<crate::welcome::WelcomeAction>,
-    /// 全局矢量图标缓存（欢迎页/状态栏/命令面板等共用）
+    /// 全局矢量图标缓存（状态栏/命令面板等共用）
     pub icons: crate::icons::IconCache,
     /// C-09: Git 后台克隆中（防止重复触发，控制状态栏提示）
     pub git_cloning: bool,
@@ -677,8 +673,6 @@ pub struct EditorState {
     pub remote: RemoteState,
     /// 空闲内存优化：Frozen 冰冻态管理（最小化/长期空闲时释放内存）
     pub power: crate::power::PowerManager,
-    /// 当前编辑器模式（开发者/智能体），从 app_settings.ui.editor_mode 同步
-    pub editor_mode: crate::layout::EditorMode,
 }
 
 /// 工作区 AI 面板快照：保存切换工作区时的完整对话标签页组状态
@@ -767,26 +761,6 @@ impl EditorState {
     /// P2.3: 大文件阈值（字节数）
     pub(crate) const LARGE_FILE_BYTE_THRESHOLD: usize = 2 * 1024 * 1024;
 
-    /// 确保 logo 位图已加载（懒加载，仅在首次需要时从文件读取）
-    pub(crate) fn ensure_logo_bitmap(
-        &mut self,
-        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
-    ) {
-        if self.win.logo_bitmap.is_some() {
-            return;
-        }
-        // 将吉祥物 PNG 嵌入二进制，避免运行时依赖外部资源文件
-        const PNG_BYTES: &[u8] = include_bytes!("../../resources/app_icons/source/aether-512.png");
-        match crate::bitmap_loader::load_png_to_bitmap(target, PNG_BYTES) {
-            Ok(bitmap) => {
-                self.win.logo_bitmap = Some(bitmap);
-            }
-            Err(e) => {
-                tracing::warn!("加载 logo 位图失败: {}", e);
-            }
-        }
-    }
-
     pub fn new(hwnd: HWND, is_main_window: bool) -> Result<Self> {
         let d2d_factory = D2DFactory::new()?;
         let text_renderer = TextRenderer::new()?;
@@ -832,8 +806,6 @@ impl EditorState {
         let completion_items = Vec::new();
         let hover_content = None;
 
-        // 提前提取 editor_mode，避免 app_settings 被移动后无法借用
-        let editor_mode = app_settings.ui.editor_mode;
         let mut state = Self {
             win: WindowRenderState {
                 hwnd,
@@ -851,7 +823,6 @@ impl EditorState {
                 titlebar_forward_btn_x: 0.0,
                 dirty_tracker: crate::dirty_rect::DirtyRectTracker::new(1280.0, 800.0),
                 end_draw_fail_streak: 0,
-                logo_bitmap: None,
                 image_bitmap: None,
                 image_zoom: 1.0,
                 image_offset_x: 0.0,
@@ -872,6 +843,7 @@ impl EditorState {
                 markdown_preview: false,
                 markdown_toggle_btn: None,
                 inline_completion_service: crate::inline_completion::InlineCompletionService::new(),
+                smooth_scroll: cursor::SmoothScrollState::default(),
             },
             fs: FileTreeState {
                 file_tree: None,
@@ -941,8 +913,6 @@ impl EditorState {
                 update_available_version: None,
                 update_checking: false,
                 hover_sidebar_resize: false,
-                welcome_hover_action: None,
-                welcome_focus_action: None,
                 icons: crate::icons::IconCache::new(),
                 git_cloning: false,
                 settings_panel: crate::settings::SettingsPanel::from_settings(&app_settings),
@@ -982,10 +952,7 @@ impl EditorState {
                 ssh_connecting: false,
             },
             power: crate::power::PowerManager::new(),
-            editor_mode,
         };
-        // 加载 logo 位图（aether-512.png）
-        // 注意：此时还没有 render target，位图会在首次渲染时通过 ensure_logo_bitmap 懒加载
         // 应用持久化的活动栏/菜单栏顺序（空配置使用默认顺序）
         let activity_order = state.ui.app_settings.ui.activity_bar_order.clone();
         let menu_order = state.ui.app_settings.ui.menu_bar_order.clone();
@@ -2261,7 +2228,7 @@ mod ime;
 pub(crate) mod scrollbar;
 
 mod ai;
-mod cursor;
+pub(crate) mod cursor;
 mod editing;
 mod events;
 mod file_tree;

@@ -13,6 +13,7 @@ serde_json = "1.0"
 tracing = "0.1"
 ureq = { version = "2.9", features = ["json"] }
 sha2 = "0.10"
+syntect = { version = "5.2", features = ["default-fancy"] }
 ort = { version = "2.0.0-rc.9", default-features = false, features = ["std", "download-binaries", "tls-rustls"] }
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 memmap2 = "0.9"

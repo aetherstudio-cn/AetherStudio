@@ -43,20 +43,37 @@ pub const EDIT_HEADER: &str = "<<<<<<< AETHER_EDIT";
 pub const EDIT_FOOTER: &str = ">>>>>>> AETHER_END_EDIT";
 /// 工作区搜索标记（单行指令，关键词为参数）：`<<<<<<< AETHER_SEARCH <关键词>`
 pub const SEARCH_PREFIX: &str = "<<<<<<< AETHER_SEARCH";
+/// 符号查找标记（单行指令，标识符为参数）：`<<<<<<< AETHER_SYMBOL <函数/变量/类名>`
+/// 基于轻量符号索引定位定义，返回声明位置 + 完整源码，替代全量读取文件。
+pub const SYMBOL_PREFIX: &str = "<<<<<<< AETHER_SYMBOL";
+/// 浏览器打开标记（单行指令，网址/域名/搜索词为参数）：`<<<<<<< AETHER_OPEN <网址或关键词>`
+/// 在应用内 WebView2 内置浏览器标签打开；非域名参数按必应搜索处理。
+pub const OPEN_PREFIX: &str = "<<<<<<< AETHER_OPEN";
+/// 网页内容读取标记（单行指令，网址可为空表示当前活动页）：`<<<<<<< AETHER_READPAGE [网址]`
+/// 打开页面并提取正文/搜索结果条目，异步回喂给模型继续推理。
+pub const READPAGE_PREFIX: &str = "<<<<<<< AETHER_READPAGE";
 
-/// 快速判断回复是否包含任一 Agent 工具标记（用于"未打开工作区"等前置校验）。
-pub fn has_agent_markers(text: &str) -> bool {
+/// 快速判断回复是否包含需要工作区的 Agent 工具标记（用于"未打开工作区"前置校验）。
+///
+/// 只包含**需要工作区上下文**的标记（文件 / 终端 / 工作区探查）：
+/// 浏览器工具（OPEN / READPAGE）不依赖工作区，未打开文件夹时同样可执行，
+/// 因此不应触发"请先打开文件夹"的拦截。
+pub fn has_workspace_scoped_markers(text: &str) -> bool {
     text.lines().any(|l| {
         let t = l.trim_end();
+        // 单行指令用 parse_directive 判定（要求前缀后紧跟空白或行尾），
+        // 直接 starts_with 会让 AETHER_READ 误吞 AETHER_READPAGE。
         t.starts_with(FILE_HEADER_PREFIX)
             || t == RUN_HEADER
-            || t.starts_with(READ_PREFIX)
-            || t.starts_with(LIST_PREFIX)
-            || t.starts_with(SEARCH_PREFIX)
+            || parse_directive(t, READ_PREFIX).is_some()
+            || parse_directive(t, LIST_PREFIX).is_some()
+            || parse_directive(t, SEARCH_PREFIX).is_some()
+            || parse_directive(t, SYMBOL_PREFIX).is_some()
     })
 }
 
-/// 只读探查请求：读取文件 / 列出目录 / 搜索工作区。由编辑器同步执行并将结果回喂给模型。
+/// 只读探查 / 浏览器工具请求。
+/// 探查类由编辑器同步执行并将结果回喂给模型；浏览器类经内置 WebView2 异步采集后回喂。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolRequest {
     /// 读取文件内容（参数为工作区相对路径）
@@ -65,6 +82,13 @@ pub enum ToolRequest {
     List(String),
     /// 搜索工作区（参数为搜索关键词）
     Search(String),
+    /// 按标识符查找函数/变量/类型定义（参数为名称，支持子串），
+    /// 命中后直接返回定义位置与完整源码，避免全量读取文件
+    Symbol(String),
+    /// 在内置浏览器打开网页/搜索（参数为网址/域名/搜索词，仅展示不回喂）
+    Open(String),
+    /// 提取网页正文回喂模型（参数为网址，空串表示当前活动页面；异步采集）
+    ReadPage(String),
 }
 
 /// 解析单行指令标记，返回其后的参数（前缀后须紧跟空白或行尾）。
@@ -720,7 +744,31 @@ pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
             i += 1;
             continue;
         }
-        i += 1;
+        // 符号查找：标识符非空才有效
+        if let Some(p) = parse_directive(t, SYMBOL_PREFIX) {
+            if !p.is_empty() {
+                reqs.push(ToolRequest::Symbol(p));
+            }
+            i += 1;
+            continue;
+        }
+        // 浏览器打开：关键词非空才有效
+        // 注意 READPAGE 需在 READ 之前判断吗？不需要——parse_directive 要求前缀后
+        // 紧跟空白或行尾，"<<<<<<< AETHER_READPAGE x" 不会被 READ_PREFIX 误识别。
+        if let Some(p) = parse_directive(t, READPAGE_PREFIX) {
+            // 参数可为空（空表示读取当前活动页面）
+            reqs.push(ToolRequest::ReadPage(p));
+            i += 1;
+            continue;
+        }
+        if let Some(p) = parse_directive(t, OPEN_PREFIX) {
+            if !p.is_empty() {
+                reqs.push(ToolRequest::Open(p));
+            }
+            i += 1;
+            continue;
+        }
+        i += 1
     }
     reqs
 }
@@ -832,6 +880,18 @@ pub enum AgentDisplayBlock {
     },
     List {
         path: String,
+    },
+    /// 符号查找卡片：AI 按名称检索函数/变量/类型定义
+    Symbol {
+        name: String,
+    },
+    /// 浏览器打开卡片：在应用内内置浏览器打开网页/搜索
+    Open {
+        query: String,
+    },
+    /// 网页读取卡片：提取网页正文回喂 AI
+    ReadPage {
+        url: String,
     },
     /// 未闭合的文件块（流式截断）——通知用户该文件未落盘
     Incomplete {
@@ -1010,6 +1070,38 @@ pub fn parse_display_blocks(response: &str) -> Vec<AgentDisplayBlock> {
             i += 1;
             continue;
         }
+        if let Some(p) = parse_directive(trimmed, SYMBOL_PREFIX) {
+            if !p.is_empty() {
+                push_text_block(&mut blocks, &text_buf);
+                text_buf.clear();
+                blocks.push(AgentDisplayBlock::Symbol { name: p });
+            }
+            i += 1;
+            continue;
+        }
+        // 浏览器工具（单行指令）：READPAGE 前缀更长，须先判，避免被 READ 误吞
+        if let Some(p) = parse_directive(trimmed, READPAGE_PREFIX) {
+            push_text_block(&mut blocks, &text_buf);
+            text_buf.clear();
+            blocks.push(AgentDisplayBlock::ReadPage {
+                url: if p.is_empty() {
+                    "当前页面".to_string()
+                } else {
+                    p
+                },
+            });
+            i += 1;
+            continue;
+        }
+        if let Some(p) = parse_directive(trimmed, OPEN_PREFIX) {
+            if !p.is_empty() {
+                push_text_block(&mut blocks, &text_buf);
+                text_buf.clear();
+                blocks.push(AgentDisplayBlock::Open { query: p });
+            }
+            i += 1;
+            continue;
+        }
         // 询问卡片块（需求不清时向用户提问 + 选项）
         if trimmed == ASK_HEADER {
             if let Some((question, options, next_i)) = scan_ask_block(&lines, i) {
@@ -1072,12 +1164,15 @@ pub fn parse_display_blocks(response: &str) -> Vec<AgentDisplayBlock> {
     } else {
         push_text_block(&mut blocks, &text_buf);
     }
-    // 纯探查回合（仅 READ/LIST 卡片，无文件/命令操作）：开场白属于内部叙述，
-    // 整体过滤，只向用户展示工具卡片。
+    // 纯探查回合（仅 READ/LIST/SYMBOL/READPAGE 卡片，无文件/命令操作）：开场白属于内部叙述，
+    // 整体过滤，只向用户展示工具卡片（单独一轮的 OPEN 是可见动作，其说明文本保留）。
     let probe_only = blocks.iter().any(|b| {
         matches!(
             b,
-            AgentDisplayBlock::Read { .. } | AgentDisplayBlock::List { .. }
+            AgentDisplayBlock::Read { .. }
+                | AgentDisplayBlock::List { .. }
+                | AgentDisplayBlock::Symbol { .. }
+                | AgentDisplayBlock::ReadPage { .. }
         )
     }) && !blocks.iter().any(|b| {
         matches!(
@@ -1333,12 +1428,83 @@ cargo test\n\
     }
 
     #[test]
-    fn test_has_agent_markers() {
-        assert!(has_agent_markers("<<<<<<< AETHER_FILE a.rs\n"));
-        assert!(has_agent_markers("前言\n<<<<<<< AETHER_RUN\n"));
-        assert!(has_agent_markers("<<<<<<< AETHER_READ src/main.rs\n"));
-        assert!(has_agent_markers("<<<<<<< AETHER_LIST src\n"));
-        assert!(!has_agent_markers("普通文本，行内提到 AETHER_FILE 字样"));
+    fn test_has_workspace_scoped_markers() {
+        assert!(has_workspace_scoped_markers(
+            "<<<<<<< AETHER_FILE a.rs\n"
+        ));
+        assert!(has_workspace_scoped_markers("前言\n<<<<<<< AETHER_RUN\n"));
+        assert!(has_workspace_scoped_markers(
+            "<<<<<<< AETHER_READ src/main.rs\n"
+        ));
+        assert!(has_workspace_scoped_markers("<<<<<<< AETHER_LIST src\n"));
+        assert!(!has_workspace_scoped_markers(
+            "普通文本，行内提到 AETHER_FILE 字样"
+        ));
+        // 浏览器工具不依赖工作区，不触发"请先打开文件夹"拦截
+        assert!(!has_workspace_scoped_markers(
+            "<<<<<<< AETHER_OPEN 百度\n"
+        ));
+        assert!(!has_workspace_scoped_markers(
+            "<<<<<<< AETHER_READPAGE https://example.com\n"
+        ));
+    }
+
+    #[test]
+    fn test_parse_tool_requests_browser() {
+        let text = "这就打开：\n\
+<<<<<<< AETHER_OPEN 百度\n\
+<<<<<<< AETHER_READPAGE https://example.com\n\
+<<<<<<< AETHER_READPAGE\n";
+        let reqs = parse_tool_requests(text);
+        assert_eq!(
+            reqs,
+            vec![
+                ToolRequest::Open("百度".to_string()),
+                ToolRequest::ReadPage("https://example.com".to_string()),
+                ToolRequest::ReadPage("".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_requests_read_not_swallowed_by_readpage() {
+        // READPAGE 与 READ 共享前缀文本，必须各自独立识别，且顺序无关
+        let text = "<<<<<<< AETHER_READPAGE docs.rs\n<<<<<<< AETHER_READ src/main.rs\n";
+        let reqs = parse_tool_requests(text);
+        assert_eq!(
+            reqs,
+            vec![
+                ToolRequest::ReadPage("docs.rs".to_string()),
+                ToolRequest::Read("src/main.rs".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_requests_skips_browser_markers_inside_file_block() {
+        // 文件块正文里出现标记字样不应被当成工具请求
+        let text = "<<<<<<< AETHER_FILE demo.txt\n<<<<<<< AETHER_OPEN 百度\n======= AETHER_SEP\n新内容\n>>>>>>> AETHER_END_FILE\n<<<<<<< AETHER_OPEN baidu.com\n";
+        let reqs = parse_tool_requests(text);
+        assert_eq!(reqs, vec![ToolRequest::Open("baidu.com".to_string())]);
+    }
+
+    #[test]
+    fn test_display_blocks_browser() {
+        let text = "帮你打开看看：\n<<<<<<< AETHER_OPEN 百度\n<<<<<<< AETHER_READPAGE\n";
+        let blocks = parse_display_blocks(text);
+        assert!(blocks.iter().any(|b| matches!(
+            b,
+            AgentDisplayBlock::Open { query } if query == "百度"
+        )));
+        assert!(blocks.iter().any(|b| matches!(
+            b,
+            AgentDisplayBlock::ReadPage { url } if url == "当前页面"
+        )));
+        // 纯探查回合过滤开场白，但 OPEN 卡片保留
+        assert!(!blocks.iter().any(|b| matches!(
+            b,
+            AgentDisplayBlock::Text(_)
+        )));
     }
 
     #[test]
@@ -1378,6 +1544,37 @@ cargo test\n\
         // SEARCH 无关键词无效
         let reqs = parse_tool_requests("<<<<<<< AETHER_SEARCH\n");
         assert!(reqs.is_empty());
+    }
+
+    #[test]
+    fn test_parse_tool_requests_symbol() {
+        let text = "定位一下：\n\
+<<<<<<< AETHER_SYMBOL process_data\n\
+<<<<<<< AETHER_READ src/main.rs\n";
+        let reqs = parse_tool_requests(text);
+        assert_eq!(
+            reqs,
+            vec![
+                ToolRequest::Symbol("process_data".to_string()),
+                ToolRequest::Read("src/main.rs".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_requests_symbol_empty_ignored() {
+        let reqs = parse_tool_requests("<<<<<<< AETHER_SYMBOL\n");
+        assert!(reqs.is_empty());
+    }
+
+    #[test]
+    fn test_display_blocks_symbol() {
+        let text = "找函数\n<<<<<<< AETHER_SYMBOL handle_click\n";
+        let blocks = parse_display_blocks(text);
+        assert!(blocks.iter().any(|b| matches!(
+            b,
+            AgentDisplayBlock::Symbol { name } if name == "handle_click"
+        )));
     }
 
     #[test]

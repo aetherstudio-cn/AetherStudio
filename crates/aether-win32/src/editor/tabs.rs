@@ -90,11 +90,10 @@ impl EditorState {
             .unwrap_or(false)
     }
     /// 新标签页交互区当前是否生效：
-    /// 经典模式要求活动标签为新标签页；智能体模式标签栏为空时右面板始终保留 NTP 区域
+    /// 活动标签为新标签页，或标签栏为空时右面板始终保留 NTP 区域
     /// （渲染/点击/键盘/IME 共用，保证空标签场景行为一致）
     pub fn ntp_active(&self) -> bool {
-        self.active_tab_is_new_tab()
-            || (self.editor_mode.is_agent() && self.editor.tab_bar.tabs.is_empty())
+        self.active_tab_is_new_tab() || self.editor.tab_bar.tabs.is_empty()
     }
     /// 打开项目后若标签栏为空则创建默认新标签页；
     /// 无项目的新窗口显示欢迎页，不创建新标签页
@@ -178,12 +177,9 @@ impl EditorState {
         }
         self.terminal.terminal_panel.focused = true;
     }
-    /// 智能体模式下终端仅在终端标签激活时可见；切换/关闭标签后若终端不可见，
+    /// 终端仅在终端标签激活时可见；切换/关闭标签后若终端不可见，
     /// 释放焦点并恢复 IME，避免低层钩子继续拦截 Backspace 等按键。
     pub fn sync_terminal_focus_with_visibility(&mut self) {
-        if !self.editor_mode.is_agent() {
-            return;
-        }
         let terminal_active = self
             .editor
             .tab_bar
@@ -214,7 +210,18 @@ impl EditorState {
         }
     }
     /// 打开浏览器标签页（内嵌 WebView2，每次调用新开一个实例）
-    pub fn open_browser_tab(&mut self, url: &str) {
+    ///
+    /// 返回 Err 表示本机缺少 WebView2 Runtime（`env_failed`），调用方据此提示用户，
+    /// 不再静默打开一个空白标签页。
+    pub fn open_browser_tab(
+        &mut self,
+        url: &str,
+    ) -> std::result::Result<(), crate::browser::BrowserOpenError> {
+        if self.browser.is_unsupported() {
+            return Err(crate::browser::BrowserOpenError::Unsupported);
+        }
+        // 浏览器位于右侧面板：面板收起时先展开，否则打开后看不见
+        self.ui.layout.right_panel_visible = true;
         // 保存当前文件 tab 的内容到 tabs[active_tab]（如果是文件 tab）
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         let id = self.browser.add_instance(url);
@@ -229,6 +236,7 @@ impl EditorState {
         self.ui.status_message = "已打开浏览器".to_string();
         self.emit_event(crate::events::EditorEvent::TabChanged);
         self.dismiss_default_new_tab();
+        Ok(())
     }
     /// 标签关闭操作后清理不再被任何标签引用的浏览器实例（销毁 WebView2 控制器）
     pub fn cleanup_browser_instances(&mut self) {
@@ -325,6 +333,12 @@ impl EditorState {
             self.win.image_zoom = 1.0;
             self.win.image_offset_x = 0.0;
             self.win.image_offset_y = 0.0;
+
+            // 文件编辑区平滑滚动：切换到文件标签时，平滑滚动到该文件之前的滚动位置
+            if self.active_tab_is_file() {
+                let target_scroll = self.editor.content.scroll_y;
+                crate::editor::cursor::smooth_scroll_to(self, target_scroll);
+            }
 
             let title = self.editor.tab_bar.tabs[self.editor.tab_bar.active_tab].title();
             self.ui.status_message = format!("切换到: {}", title);
@@ -736,13 +750,13 @@ impl EditorState {
         }
         self.editor.tab_bar.hover_tab = None;
     }
-    /// 标签栏实际渲染区域：智能体模式下位于右侧面板顶部，开发者模式下位于编辑器区域顶部。
+    /// 标签栏实际渲染区域：位于右侧面板顶部。
     ///
     /// 所有标签栏交互（点击/悬停/滚轮/拖拽）必须基于该区域计算坐标，
-    /// 否则智能体模式下点击位置与渲染位置不一致。
+    /// 否则点击位置与渲染位置不一致。
     pub fn effective_tab_bar_region(&self) -> crate::layout::Region {
         let show = self.show_tab_bar();
-        if self.editor_mode.is_agent() && self.ui.layout.right_panel_visible {
+        if self.ui.layout.right_panel_visible {
             let rp = self.ui.layout.right_panel_region();
             let h = if show { TAB_BAR_HEIGHT } else { 0.0 };
             crate::layout::Region::new(rp.x, rp.y, rp.width, h)
@@ -750,79 +764,60 @@ impl EditorState {
             self.ui.layout.tab_bar_region(show)
         }
     }
-    /// 设置页渲染区域：经典模式占据编辑器区域，智能体模式占据右面板内容区（标签栏下方）。
+    /// 设置页渲染区域：占据右面板内容区（标签栏下方）。
     ///
     /// 设置页的点击/悬停命中必须以该区域为门槛，与 render_agent_right_panel 的
-    /// 内容区几何保持一致，否则智能体模式下设置页交互会失效。
+    /// 内容区几何保持一致，否则设置页交互会失效。
     pub fn settings_page_region(
         &self,
         layout: &crate::layout::LayoutManager,
     ) -> crate::layout::Region {
-        if self.editor_mode.is_agent() {
-            let rp = layout.right_panel_region();
-            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
-                0.0
-            } else {
-                TAB_BAR_HEIGHT
-            };
-            crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+        let rp = layout.right_panel_region();
+        let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+            0.0
         } else {
-            layout.editor_region()
-        }
+            TAB_BAR_HEIGHT
+        };
+        crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
     }
-    /// 整页标签（设置/沙盒评测）的渲染区域：经典模式占据编辑器内容区（标签栏下方），
-    /// 智能体模式占据右面板内容区（标签栏下方）。
+    /// 整页标签（设置/沙盒评测）的渲染区域：占据右面板内容区（标签栏下方）。
     ///
     /// 与 [`settings_page_region`] 不同，本方法用于滚轮等交互门控，
     /// 与 [`new_tab_page_region`] 的几何口径一致。
     pub fn full_page_region(&self, layout: &crate::layout::LayoutManager) -> crate::layout::Region {
-        if self.editor_mode.is_agent() {
-            let rp = layout.right_panel_region();
-            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
-                0.0
-            } else {
-                TAB_BAR_HEIGHT
-            };
-            crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+        let rp = layout.right_panel_region();
+        let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+            0.0
         } else {
-            layout.editor_content_region(self.show_tab_bar())
-        }
+            TAB_BAR_HEIGHT
+        };
+        crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
     }
-    /// 新标签页（NTP）内容区域：经典模式占据编辑器内容区（标签栏下方），
-    /// 智能体模式占据右面板内容区（标签栏下方）。渲染/点击/光标/IME 共用。
+    /// 新标签页（NTP）内容区域：占据右面板内容区（标签栏下方）。渲染/点击/光标/IME 共用。
     pub fn new_tab_page_region(
         &self,
         layout: &crate::layout::LayoutManager,
     ) -> crate::layout::Region {
-        if self.editor_mode.is_agent() {
-            let rp = layout.right_panel_region();
-            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
-                0.0
-            } else {
-                TAB_BAR_HEIGHT
-            };
-            crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+        let rp = layout.right_panel_region();
+        let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+            0.0
         } else {
-            layout.editor_content_region(self.show_tab_bar())
-        }
+            TAB_BAR_HEIGHT
+        };
+        crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
     }
-    /// 终端视图区域：智能体模式为右面板内容区（标签栏下方），经典模式为底部面板区。
-    /// 渲染/IME 定位/光标共用，保证坐标一致。
+    /// 终端视图区域：右面板内容区（标签栏下方）。渲染/IME 定位/光标共用，保证坐标一致。
     pub fn terminal_view_region(
         &self,
         layout: &crate::layout::LayoutManager,
     ) -> crate::layout::Region {
-        if self.editor_mode.is_agent() {
-            let rp = layout.right_panel_region();
-            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
-                0.0
-            } else {
-                TAB_BAR_HEIGHT
-            };
-            crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+        let rp = layout.right_panel_region();
+        let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+            0.0
         } else {
-            layout.bottom_panel_region()
-        }
+            TAB_BAR_HEIGHT
+        };
+        crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
     }
     /// Task 8.2: 命中检测——返回鼠标所在标签体的索引。
     ///
@@ -945,8 +940,8 @@ impl EditorState {
 
     /// 打开设置标签页（作为通用 tab 插入到标签栏）
     pub fn open_settings_tab(&mut self) {
-        // 智能体模式：标签页内容渲染在右侧面板，需确保其可见（弹窗方式已取消）
-        if self.editor_mode.is_agent() && !self.ui.layout.right_panel_visible {
+        // 标签页内容渲染在右侧面板，需确保其可见
+        if !self.ui.layout.right_panel_visible {
             self.ui.layout.toggle_right_panel();
         }
         self.ui.settings_panel.apply_settings(&self.ui.app_settings);

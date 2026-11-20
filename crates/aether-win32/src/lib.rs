@@ -54,5 +54,4 @@ pub mod uia;
 pub mod undo_delete;
 pub mod updater;
 pub mod user_menu;
-pub mod welcome;
 pub mod window;
