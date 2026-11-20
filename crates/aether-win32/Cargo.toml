@@ -20,8 +20,6 @@ aether-remote = { path = "../aether-remote" }
 aether-lsp = { path = "../aether-lsp" }
 aether-ai-panel = { path = "../aether-ai-panel" }
 aether-symbol = { path = "../aether-symbol" }
-aether-terminal = { path = "../aether-terminal" }
-aether-ui = { path = "../aether-ui" }
 tokio = { version = "1.35", features = ["rt-multi-thread", "sync"] }
 lsp-types = "0.95"
 url = "2"

@@ -257,33 +257,6 @@ where
 /// 保存文件，返回是否成功
 pub fn save_file(state: &mut EditorState) -> bool {
     if let Some(path) = &state.editor.content.file_path.clone() {
-        // 处理远程文件保存
-        if let Some(remote_path) = path.to_str().and_then(|s| s.strip_prefix("remote:")) {
-            // 远程路径仍需 &[u8]，这里不得不做一次全量拷贝
-            let mut buf: Vec<u8> = Vec::with_capacity(state.editor.content.buffer.len_bytes());
-            if let Err(e) = state.editor.content.buffer.write_to(&mut buf) {
-                state.ui.status_message = format!("保存失败: {}", e);
-                return false;
-            }
-            if let Some(session) = &state.remote.session {
-                match session.write_remote_file(remote_path, &buf) {
-                    Ok(()) => {
-                        state.editor.content.is_dirty = false;
-                        state.ui.status_message = format!("已保存到远程: {}", remote_path);
-                        // 同步自动保存状态（去重基线 / 冲突复位 / 停止防抖）
-                        state.note_save_succeeded();
-                        return true;
-                    }
-                    Err(e) => {
-                        state.ui.status_message = format!("保存远程文件失败: {}", e);
-                        return false;
-                    }
-                }
-            } else {
-                state.ui.status_message = "远程会话未连接".to_string();
-                return false;
-            }
-        }
         // 本地文件保存：直接将 buffer 流式写入临时文件，避免 get_all_text 的
         // 全量 String 分配和 UTF-8 lossy 转换。对未编辑的 mmap 大文件尤其显著。
         // P4-2: 仍保持原子写入语义（临时文件 + fsync + rename）。

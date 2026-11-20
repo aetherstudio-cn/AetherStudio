@@ -6,7 +6,7 @@
 //!
 //! 菜单项：
 //!   隐藏活动栏 / 分隔符 /
-//!   资源管理器 / 源代码管理 / 终端 / 远程管理 / AI 助手
+//!   资源管理器 / 终端 / AI 助手
 //!
 //! 当前活动视图的菜单项会显示勾选标记。
 
@@ -19,9 +19,7 @@ pub enum ActivityBarContextMenuCommand {
     CustomizeSort,
     Separator,
     SwitchToExplorer,
-    SwitchToSourceControl,
     SwitchToTerminal,
-    SwitchToRemoteManager,
     SwitchToAiAssistant,
 }
 
@@ -139,20 +137,10 @@ impl ActivityBarContextMenuState {
                 )
                 .checked_if(active_view == Explorer),
                 ActivityBarContextMenuItem::new(
-                    "源代码管理",
-                    ActivityBarContextMenuCommand::SwitchToSourceControl,
-                )
-                .checked_if(active_view == SourceControl),
-                ActivityBarContextMenuItem::new(
                     "终端",
                     ActivityBarContextMenuCommand::SwitchToTerminal,
                 )
                 .checked_if(active_view == Terminal),
-                ActivityBarContextMenuItem::new(
-                    "远程管理",
-                    ActivityBarContextMenuCommand::SwitchToRemoteManager,
-                )
-                .checked_if(active_view == RemoteManager),
                 ActivityBarContextMenuItem::new(
                     "AI 助手",
                     ActivityBarContextMenuCommand::SwitchToAiAssistant,
@@ -256,8 +244,8 @@ mod tests {
     fn test_build_items() {
         let m = build_menu(ActivityBarView::Explorer);
         assert!(m.visible);
-        // 8 项：1 隐藏 + 1 自定义排序 + 1 分隔符 + 5 视图切换
-        assert_eq!(m.items.len(), 8);
+        // 6 项：1 隐藏 + 1 自定义排序 + 1 分隔符 + 3 视图切换
+        assert_eq!(m.items.len(), 6);
         assert_eq!(
             m.items[0].command,
             ActivityBarContextMenuCommand::HideActivityBar
@@ -273,33 +261,23 @@ mod tests {
         );
         assert_eq!(
             m.items[4].command,
-            ActivityBarContextMenuCommand::SwitchToSourceControl
-        );
-        assert_eq!(
-            m.items[5].command,
             ActivityBarContextMenuCommand::SwitchToTerminal
         );
         assert_eq!(
-            m.items[6].command,
-            ActivityBarContextMenuCommand::SwitchToRemoteManager
-        );
-        assert_eq!(
-            m.items[7].command,
+            m.items[5].command,
             ActivityBarContextMenuCommand::SwitchToAiAssistant
         );
     }
 
     #[test]
     fn test_checked_marks_active_view() {
-        let m = build_menu(ActivityBarView::SourceControl);
+        let m = build_menu(ActivityBarView::Terminal);
         assert!(!m.items[3].checked); // Explorer
-        assert!(m.items[4].checked); // SourceControl
-        assert!(!m.items[5].checked); // Terminal
-        assert!(!m.items[6].checked); // RemoteManager
-        assert!(!m.items[7].checked); // AiAssistant
+        assert!(m.items[4].checked); // Terminal
+        assert!(!m.items[5].checked); // AiAssistant
 
         let m2 = build_menu(ActivityBarView::AiAssistant);
-        assert!(m2.items[7].checked);
+        assert!(m2.items[5].checked);
         assert!(!m2.items[3].checked);
     }
 
@@ -325,8 +303,8 @@ mod tests {
     fn test_menu_height_includes_padding_and_separator() {
         let m = build_menu(ActivityBarView::Explorer);
         let h = m.menu_height();
-        // 7 普通项 + 1 分隔符 + 上下 padding
-        let expected = 7.0 * ActivityBarContextMenuState::ITEM_HEIGHT
+        // 5 普通项 + 1 分隔符 + 上下 padding
+        let expected = 5.0 * ActivityBarContextMenuState::ITEM_HEIGHT
             + 1.0 * ActivityBarContextMenuState::SEPARATOR_HEIGHT
             + ActivityBarContextMenuState::TOP_PADDING
             + ActivityBarContextMenuState::BOTTOM_PADDING;

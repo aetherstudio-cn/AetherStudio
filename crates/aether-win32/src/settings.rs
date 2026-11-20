@@ -40,8 +40,6 @@ pub enum SettingsTab {
     Ai,
     /// 外观：侧边栏、密度等
     Appearance,
-    /// 远程：SSH 主机等
-    Remote,
     /// 模型管理
     Models,
     /// 策略库管理
@@ -56,7 +54,6 @@ impl SettingsTab {
             Self::General => "通用",
             Self::Ai => "AI",
             Self::Appearance => "外观",
-            Self::Remote => "远程",
             Self::Models => "模型",
             Self::Playbook => "策略",
             Self::Update => "更新",
@@ -65,10 +62,9 @@ impl SettingsTab {
 
     /// 导航中展示的标签页。AI 配置已并入「模型」页（新建/编辑模型时以内嵌表单形式出现），
     /// 因此不再单独列出 AI 项；账户功能当前不需要，也一并移除。
-    pub const ALL: [SettingsTab; 6] = [
+    pub const ALL: [SettingsTab; 5] = [
         SettingsTab::General,
         SettingsTab::Appearance,
-        SettingsTab::Remote,
         SettingsTab::Models,
         SettingsTab::Playbook,
         SettingsTab::Update,
@@ -970,7 +966,6 @@ impl SettingsPanel {
             SettingsTab::General => "general",
             SettingsTab::Ai => "ai",
             SettingsTab::Appearance => "appearance",
-            SettingsTab::Remote => "remote",
             SettingsTab::Models => "models",
             SettingsTab::Playbook => "playbook",
             SettingsTab::Update => "update",

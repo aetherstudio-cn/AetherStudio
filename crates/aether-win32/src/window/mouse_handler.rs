@@ -166,10 +166,7 @@ pub(crate) unsafe fn on_l_button_dblclk(
         let mut st = state.borrow_mut();
         // 仅在非对话框、非命令面板时处理编辑器区域双击
         // （settings_panel 在侧边栏，editor_region.contains 已排除）
-        if st.remote.ssh_dialog.visible
-            || st.remote.clone_dialog.visible
-            || st.ui.command_palette.visible
-        {
+        if st.remote.clone_dialog.visible || st.ui.command_palette.visible {
             return LRESULT(0);
         }
         let mouse_x = raw_x / st.win.dpi_scale;

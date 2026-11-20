@@ -34,15 +34,11 @@ pub(crate) use crate::layout::{
     ActivityBarView, LayoutManager, SidebarContent, SIDEBAR_RESIZE_GRAB, TAB_BAR_HEIGHT,
 };
 pub(crate) use crate::menu_bar::MenuBar;
-pub(crate) use crate::ssh::{
-    CloneRepoDialog, RemoteFileTree, RemoteSession, SshConnectionDialog, SshManagerPanel,
-};
+pub(crate) use crate::ssh::CloneRepoDialog;
 pub(crate) use crate::status_bar::StatusBar;
 pub(crate) use crate::tabs::{Tab, TabContent, TabLayout};
 pub(crate) use crate::terminal::TerminalPanel;
 pub(crate) use aether_shared::settings::AppSettings;
-// P0-1: RemoteFs trait 为 SshRemoteFs::list_dir 等方法提供作用域
-pub(crate) use aether_remote::RemoteFs;
 
 /// 查找替换焦点状态
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -96,28 +92,10 @@ pub struct LspState {
     pub(crate) frozen: bool,
 }
 
-/// 远程开发子系统状态（SSH/远程文件树/克隆，从 EditorState 聚类抽取）
+/// 远程开发子系统状态（克隆仓库，从 EditorState 聚类抽取）
 pub struct RemoteState {
-    /// SSH 连接对话框
-    pub ssh_dialog: SshConnectionDialog,
-    /// 远程会话
-    pub session: Option<RemoteSession>,
-    /// 远程文件树
-    pub file_tree: Option<RemoteFileTree>,
-    /// 选中的远程文件节点（P0-1: 改为路径标识，适配递归树）
-    pub selected_node: Option<String>,
-    /// 悬停的远程文件节点（P0-1: 改为路径标识，适配递归树）
-    pub hover_node: Option<String>,
-    /// 远程文件树滚动偏移
-    pub scroll_y: f32,
     /// 克隆仓库对话框
     pub clone_dialog: CloneRepoDialog,
-    /// SSH 管理面板（侧边栏服务器管理）
-    pub ssh_manager_panel: SshManagerPanel,
-    /// 当前连接的服务器配置索引（对应 app_settings.remote.ssh_servers）
-    pub active_ssh_index: Option<usize>,
-    /// C-09: SSH 后台连接中（防止重复触发，控制状态栏提示）
-    pub ssh_connecting: bool,
 }
 
 /// 标签栏状态（从 EditorState 聚类抽取）
@@ -375,26 +353,9 @@ pub(crate) struct SubdirScanResult {
     child_depth: u8,
 }
 
-/// C-09: SSH 异步连接结果（由后台线程通过 PostMessage 发送回 UI 线程）
-struct SshConnectResult {
-    session: Option<RemoteSession>,
-    entries: Option<Vec<aether_remote::RemoteDirEntry>>,
-    error: Option<String>,
-}
-
 /// C-09: Git 异步克隆结果（由后台线程通过 PostMessage 发送回 UI 线程）
 struct GitCloneResult {
     target_path: PathBuf,
-    error: Option<String>,
-}
-
-/// P0-1: 远程子目录异步列目录结果（由后台线程通过 PostMessage WM_APP+6 发送回 UI 线程）
-struct SshListDirResult {
-    /// 被列目录的节点路径
-    path: String,
-    /// 列目录成功时的条目
-    entries: Option<Vec<aether_remote::RemoteDirEntry>>,
-    /// 列目录失败时的错误
     error: Option<String>,
 }
 
@@ -621,8 +582,6 @@ pub struct UiPanelState {
     pub sandbox_eval: crate::sandbox_eval::SandboxEvalPanel,
     /// 标签栏面板
     pub tabs_panel: crate::open_tabs::TabsPanel,
-    /// Git 面板
-    pub git_panel: crate::git::GitIntegration,
     /// Git 集成
     pub git: GitIntegration,
     /// 用户菜单
@@ -919,7 +878,6 @@ impl EditorState {
                 app_settings,
                 sandbox_eval: crate::sandbox_eval::SandboxEvalPanel::new(),
                 tabs_panel: crate::open_tabs::TabsPanel::new(),
-                git_panel: crate::git::GitIntegration::new(),
                 git: GitIntegration::new(),
                 user_menu: crate::user_menu::UserMenu::new(),
                 context_menus: ContextMenusState {
@@ -940,16 +898,7 @@ impl EditorState {
                 event_queue: crate::events::EventQueue::new(),
             },
             remote: RemoteState {
-                ssh_dialog: SshConnectionDialog::new(),
-                session: None,
-                file_tree: None,
-                selected_node: None,
-                hover_node: None,
-                scroll_y: 0.0,
                 clone_dialog: CloneRepoDialog::new(),
-                ssh_manager_panel: SshManagerPanel::new(),
-                active_ssh_index: None,
-                ssh_connecting: false,
             },
             power: crate::power::PowerManager::new(),
         };
@@ -1195,9 +1144,6 @@ impl EditorState {
                     })
                     .unwrap_or(relative);
                 Some(abs)
-            }
-            crate::layout::SidebarContent::RemoteFileTree => {
-                self.remote.hover_node.clone().filter(|s| !s.is_empty())
             }
             _ => None,
         }
@@ -2223,7 +2169,6 @@ mod tests {
 
 mod dialogs;
 mod find;
-mod git;
 mod ime;
 pub(crate) mod scrollbar;
 

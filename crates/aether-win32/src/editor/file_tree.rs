@@ -821,12 +821,6 @@ impl EditorState {
             crate::layout::SidebarContent::FileTree => {
                 self.handle_file_tree_click(mouse_x, mouse_y)
             }
-            crate::layout::SidebarContent::SourceControlPanel => {
-                self.handle_git_panel_click(mouse_x, mouse_y)
-            }
-            crate::layout::SidebarContent::RemoteFileTree => {
-                self.handle_remote_tree_click(mouse_x, mouse_y)
-            }
             _ => false,
         }
     }
@@ -970,7 +964,6 @@ impl EditorState {
             crate::layout::SidebarContent::FileTree => {
                 self.update_local_tree_hover(mouse_x, mouse_y)
             }
-            crate::layout::SidebarContent::RemoteFileTree => self.update_remote_tree_hover(mouse_y),
             _ => {
                 let old = self.fs.hover_file_node.take();
                 let old_root = std::mem::take(&mut self.fs.hover_file_tree_root);

@@ -128,7 +128,7 @@ unsafe fn on_timer_hover(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
         let mut st = state.borrow_mut();
         // 仅在仍有悬停目标时计算 tooltip
-        if st.fs.hover_file_node.is_some() || st.remote.hover_node.is_some() {
+        if st.fs.hover_file_node.is_some() {
             if let Some(text) = st.compute_hover_tooltip_text() {
                 // tooltip 定位：鼠标右下方，预留 16px 间距
                 let tx = st.input.hover.last_mouse_x + 16.0;
@@ -581,24 +581,6 @@ pub(crate) unsafe fn on_browser_event(
     LRESULT(0)
 }
 
-/// msg if msg == WM_APP + 4
-pub(crate) unsafe fn on_wm_app_4(
-    hwnd: HWND,
-    _msg: u32,
-    wparam: WPARAM,
-    _lparam: LPARAM,
-) -> LRESULT {
-    // C-09: SSH 异步连接完成
-    let raw = wparam.0;
-    EDITOR_STATE.with(|s| {
-        if let Some(state) = s.borrow().as_ref() {
-            state.borrow_mut().on_ssh_connect_complete(raw);
-            invalidate_window(hwnd);
-        }
-    });
-    LRESULT(0)
-}
-
 /// msg if msg == WM_APP + 5
 pub(crate) unsafe fn on_wm_app_5(
     hwnd: HWND,
@@ -611,24 +593,6 @@ pub(crate) unsafe fn on_wm_app_5(
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             state.borrow_mut().on_git_clone_complete(raw);
-            invalidate_window(hwnd);
-        }
-    });
-    LRESULT(0)
-}
-
-/// msg if msg == WM_APP + 6
-pub(crate) unsafe fn on_wm_app_6(
-    hwnd: HWND,
-    _msg: u32,
-    wparam: WPARAM,
-    _lparam: LPARAM,
-) -> LRESULT {
-    // P0-1: 远程子目录异步列目录完成
-    let raw = wparam.0;
-    EDITOR_STATE.with(|s| {
-        if let Some(state) = s.borrow().as_ref() {
-            state.borrow_mut().on_ssh_list_dir_complete(raw);
             invalidate_window(hwnd);
         }
     });
