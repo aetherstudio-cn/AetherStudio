@@ -333,32 +333,6 @@ pub fn scroll_sidebar(state: &mut EditorState, delta_y: f32) {
             state.fs.sidebar_scroll_y =
                 (state.fs.sidebar_scroll_y + delta_y).clamp(0.0, max_scroll);
         }
-        crate::layout::SidebarContent::RemoteFileTree => {
-            let node_height = 16.0;
-            // P0-1: 按可见节点数（含展开的子节点）估算滚动高度
-            let visible_nodes = state
-                .remote
-                .file_tree
-                .as_ref()
-                .map(|t| t.count_visible_nodes())
-                .unwrap_or(0) as f32;
-            let total_height = visible_nodes * node_height + 40.0;
-            let sidebar_region = state.ui.layout.sidebar_region();
-            let visible_height = sidebar_region.height;
-            let max_scroll = (total_height - visible_height).max(0.0);
-            state.remote.scroll_y = (state.remote.scroll_y + delta_y).clamp(0.0, max_scroll);
-        }
-        crate::layout::SidebarContent::SourceControlPanel => {
-            let item_height = 22.0;
-            let staged = state.ui.git.staged_files().len() as f32;
-            let unstaged = state.ui.git.unstaged_files().len() as f32;
-            let untracked = state.ui.git.untracked_files().len() as f32;
-            let total_height = 100.0 + (staged + unstaged + untracked) * item_height + 60.0;
-            let sidebar_region = state.ui.layout.sidebar_region();
-            let visible_height = sidebar_region.height;
-            let max_scroll = (total_height - visible_height).max(0.0);
-            state.ui.git.scroll_y = (state.ui.git.scroll_y + delta_y).clamp(0.0, max_scroll);
-        }
         crate::layout::SidebarContent::AiAssistantPanel => {
             // 使用渲染实测的最大滚动量（消息换行后高度可变，固定估算会失真）
             let max_scroll = state.ai.ai_panel.content_height;

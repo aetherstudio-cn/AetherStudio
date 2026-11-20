@@ -348,33 +348,14 @@ unsafe fn okd_ctrl_zoom_cmd(hwnd: HWND, vk: VIRTUAL_KEY) {
             });
         }
         VK_G => {
-            if GetKeyState(VK_SHIFT.0 as i32) < 0 {
-                // Task 13.6: Ctrl+Shift+G 切换到源代码管理视图
-                EDITOR_STATE.with(|s| {
-                    if let Some(state) = s.borrow().as_ref() {
-                        let mut st = state.borrow_mut();
-                        st.ui
-                            .activity_bar
-                            .switch_to_view(crate::layout::ActivityBarView::SourceControl);
-                        st.ui.activity_view = crate::layout::ActivityBarView::SourceControl;
-                        if !st.ui.layout.sidebar_visible {
-                            st.ui.layout.toggle_sidebar();
-                        }
-                        st.ui.sidebar_content =
-                            crate::layout::SidebarContent::from_view(st.ui.activity_view);
-                        st.ui.status_message = "已切换到源代码管理".to_string();
-                        invalidate_window(hwnd);
-                    }
-                });
-            } else {
-                EDITOR_STATE.with(|s| {
-                    if let Some(state) = s.borrow().as_ref() {
-                        state.borrow_mut().ui.command_palette.show();
-                        state.borrow_mut().ui.command_palette.update_query(":");
-                        invalidate_window(hwnd);
-                    }
-                });
-            }
+            // Ctrl+G 打开命令面板（跳转行）
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().ui.command_palette.show();
+                    state.borrow_mut().ui.command_palette.update_query(":");
+                    invalidate_window(hwnd);
+                }
+            });
         }
         _ => {}
     }

@@ -34,9 +34,7 @@ impl Region {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivityBarView {
     Explorer,
-    SourceControl,
     Terminal,
-    RemoteManager,
     AiAssistant,
 }
 
@@ -44,9 +42,7 @@ impl ActivityBarView {
     pub fn label(&self) -> &'static str {
         match self {
             ActivityBarView::Explorer => "工作区",
-            ActivityBarView::SourceControl => "源代码管理",
             ActivityBarView::Terminal => "终端",
-            ActivityBarView::RemoteManager => "远程资源管理器",
             ActivityBarView::AiAssistant => "AI 助手",
         }
     }
@@ -54,9 +50,7 @@ impl ActivityBarView {
     pub fn icon(&self) -> crate::icons::IconKind {
         match self {
             ActivityBarView::Explorer => crate::icons::IconKind::Folder,
-            ActivityBarView::SourceControl => crate::icons::IconKind::GitBranch,
             ActivityBarView::Terminal => crate::icons::IconKind::Terminal,
-            ActivityBarView::RemoteManager => crate::icons::IconKind::Ssh,
             ActivityBarView::AiAssistant => crate::icons::IconKind::Bot,
         }
     }
@@ -65,32 +59,23 @@ impl ActivityBarView {
     pub fn key(&self) -> &'static str {
         match self {
             ActivityBarView::Explorer => "explorer",
-            ActivityBarView::SourceControl => "sourceControl",
             ActivityBarView::Terminal => "terminal",
-            ActivityBarView::RemoteManager => "remoteManager",
             ActivityBarView::AiAssistant => "aiAssistant",
         }
     }
 
     /// 默认顺序
     pub fn default_order() -> Vec<ActivityBarView> {
-        vec![
-            ActivityBarView::Explorer,
-            ActivityBarView::SourceControl,
-            ActivityBarView::RemoteManager,
-        ]
+        vec![ActivityBarView::Explorer]
     }
 
     /// 从字符串键解析
     pub fn from_key(key: &str) -> Option<ActivityBarView> {
         match key {
             "explorer" => Some(ActivityBarView::Explorer),
-            "sourceControl" => Some(ActivityBarView::SourceControl),
-            "terminal" => None, // 终端已迁移到标题栏按钮
-            "remoteManager" => Some(ActivityBarView::RemoteManager),
-            "openTabs" => Some(ActivityBarView::RemoteManager), // 兼容旧设置
-            "aiAssistant" => None,                              // AI助手已迁移到标题栏按钮
-            _ => None,
+            "terminal" => None,    // 终端已迁移到标题栏按钮
+            "aiAssistant" => None, // AI助手已迁移到标题栏按钮
+            _ => None,             // 旧版 sourceControl/remoteManager/openTabs 等开发者入口已移除
         }
     }
 }
@@ -99,10 +84,7 @@ impl ActivityBarView {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SidebarContent {
     FileTree,
-    SourceControlPanel,
     TerminalPanel,
-    RemoteManagerPanel,
-    RemoteFileTree,
     AiAssistantPanel,
 }
 
@@ -110,9 +92,7 @@ impl SidebarContent {
     pub fn from_view(view: ActivityBarView) -> Self {
         match view {
             ActivityBarView::Explorer => SidebarContent::FileTree,
-            ActivityBarView::SourceControl => SidebarContent::SourceControlPanel,
             ActivityBarView::Terminal => SidebarContent::TerminalPanel,
-            ActivityBarView::RemoteManager => SidebarContent::RemoteManagerPanel,
             ActivityBarView::AiAssistant => SidebarContent::AiAssistantPanel,
         }
     }
@@ -686,14 +666,7 @@ mod tests {
     #[test]
     fn test_activity_bar_view_default_order() {
         let order = ActivityBarView::default_order();
-        assert_eq!(
-            order,
-            vec![
-                ActivityBarView::Explorer,
-                ActivityBarView::SourceControl,
-                ActivityBarView::RemoteManager,
-            ]
-        );
+        assert_eq!(order, vec![ActivityBarView::Explorer]);
     }
 
     #[test]
@@ -702,18 +675,9 @@ mod tests {
             ActivityBarView::from_key("explorer"),
             Some(ActivityBarView::Explorer)
         );
-        assert_eq!(
-            ActivityBarView::from_key("sourceControl"),
-            Some(ActivityBarView::SourceControl)
-        );
-        assert_eq!(
-            ActivityBarView::from_key("remoteManager"),
-            Some(ActivityBarView::RemoteManager)
-        );
-        assert_eq!(
-            ActivityBarView::from_key("openTabs"),
-            Some(ActivityBarView::RemoteManager)
-        );
+        assert_eq!(ActivityBarView::from_key("sourceControl"), None);
+        assert_eq!(ActivityBarView::from_key("remoteManager"), None);
+        assert_eq!(ActivityBarView::from_key("openTabs"), None);
         assert_eq!(ActivityBarView::from_key("terminal"), None);
         assert_eq!(ActivityBarView::from_key("aiAssistant"), None);
         assert_eq!(ActivityBarView::from_key("unknown"), None);
@@ -726,16 +690,8 @@ mod tests {
             SidebarContent::FileTree
         );
         assert_eq!(
-            SidebarContent::from_view(ActivityBarView::SourceControl),
-            SidebarContent::SourceControlPanel
-        );
-        assert_eq!(
             SidebarContent::from_view(ActivityBarView::Terminal),
             SidebarContent::TerminalPanel
-        );
-        assert_eq!(
-            SidebarContent::from_view(ActivityBarView::RemoteManager),
-            SidebarContent::RemoteManagerPanel
         );
         assert_eq!(
             SidebarContent::from_view(ActivityBarView::AiAssistant),

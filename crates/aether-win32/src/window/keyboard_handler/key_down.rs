@@ -67,16 +67,10 @@ pub(crate) unsafe fn on_key_down(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
     if let Some(r) = okd_sandbox_field(hwnd, vk) {
         return r;
     }
-    if let Some(r) = okd_ssh_dialog(hwnd, vk, ctrl) {
-        return r;
-    }
     if let Some(r) = okd_clone_dialog(hwnd, vk, ctrl) {
         return r;
     }
     if let Some(r) = okd_new_project_dialog(hwnd, vk, ctrl, msg, wparam) {
-        return r;
-    }
-    if let Some(r) = okd_ssh_manager(hwnd, vk) {
         return r;
     }
     if let Some(r) = okd_command_palette(hwnd, vk) {
@@ -710,73 +704,6 @@ unsafe fn okd_sandbox_field(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
     }
 }
 
-/// SSH 对话框激活时优先处理键盘
-unsafe fn okd_ssh_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRESULT> {
-    let active = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| state.borrow().remote.ssh_dialog.visible)
-            .unwrap_or(false)
-    });
-    if !active {
-        return None;
-    }
-    match vk {
-        VK_ESCAPE => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().remote.ssh_dialog.visible = false;
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_RETURN => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    let mut st = state.borrow_mut();
-                    // C-09: SSH 连接移至后台线程，避免阻塞 UI
-                    if st.remote.ssh_connecting {
-                        // 正在连接中，忽略
-                    } else if let Some(config) = st.remote.ssh_dialog.to_config() {
-                        st.start_ssh_connect(config);
-                    } else {
-                        st.remote.ssh_dialog.error_message = Some("请填写主机和用户名".to_string());
-                    }
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_TAB => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().remote.ssh_dialog.next_field();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_BACK => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().handle_ssh_dialog_backspace();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_V if ctrl => {
-            // P2-4: Ctrl+V 粘贴到当前 SSH 对话框字段
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().paste_into_ssh_dialog();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        _ => {}
-    }
-    // ssh_dialog_active 时所有未匹配键也被消费（原始代码 return LRESULT(0)）
-    Some(LRESULT(0))
-}
-
 /// 克隆对话框激活时优先处理键盘
 unsafe fn okd_clone_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
@@ -915,80 +842,6 @@ unsafe fn okd_new_project_dialog(
             Some(DefWindowProcW(hwnd, msg, wparam, LPARAM(0)))
         }
     }
-}
-
-/// SSH 管理面板编辑模式键盘处理
-unsafe fn okd_ssh_manager(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
-    let active = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| {
-                state.borrow().ui.sidebar_content
-                    == crate::layout::SidebarContent::RemoteManagerPanel
-                    && state.borrow().remote.ssh_manager_panel.editing
-            })
-            .unwrap_or(false)
-    });
-    if !active {
-        return None;
-    }
-    match vk {
-        VK_ESCAPE => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().remote.ssh_manager_panel.cancel_edit();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_RETURN => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    let mut st = state.borrow_mut();
-                    match st.save_ssh_server_from_form() {
-                        Ok(()) => {
-                            st.ui.status_message = "服务器配置已保存".to_string();
-                        }
-                        Err(e) => {
-                            st.remote.ssh_manager_panel.error_message = Some(e);
-                        }
-                    }
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_TAB => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    let mut st = state.borrow_mut();
-                    st.remote.ssh_manager_panel.focus_field =
-                        (st.remote.ssh_manager_panel.focus_field + 1) % 5;
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_BACK => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    let mut st = state.borrow_mut();
-                    let field = st.remote.ssh_manager_panel.focus_field;
-                    let field_str = match field {
-                        0 => &mut st.remote.ssh_manager_panel.form_name,
-                        1 => &mut st.remote.ssh_manager_panel.form_host,
-                        2 => &mut st.remote.ssh_manager_panel.form_port,
-                        3 => &mut st.remote.ssh_manager_panel.form_username,
-                        4 => &mut st.remote.ssh_manager_panel.form_key_path,
-                        _ => &mut st.remote.ssh_manager_panel.form_name,
-                    };
-                    field_str.pop();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        _ => {}
-    }
-    // ssh_mgr_editing 时所有未匹配键也被消费（原始代码 return LRESULT(0)）
-    Some(LRESULT(0))
 }
 
 /// 命令面板激活时优先处理键盘导航

@@ -331,9 +331,7 @@ impl EditorState {
             self.ui.layout.bottom_panel_visible != self.input.prev.bottom_panel_visible;
         let status_changed = self.ui.status_message != self.input.prev.status_message;
         let active_tab_changed = self.editor.tab_bar.active_tab != self.input.prev.active_tab;
-        let dialog_visible = self.remote.ssh_dialog.visible
-            || self.remote.clone_dialog.visible
-            || self.ui.command_palette.visible;
+        let dialog_visible = self.remote.clone_dialog.visible || self.ui.command_palette.visible;
 
         // P5-2: 标签页切换只影响标签栏高亮、编辑器内容、状态栏三个区域，
         // 侧边栏/活动栏/AI 面板与活动标签无关，改为精确标记省去 ~60% 绘制面积。
@@ -801,17 +799,12 @@ impl EditorState {
             self.render_command_palette(&target, palette_x, palette_y, palette_width);
         }
 
-        // 9. SSH 连接对话框
-        if self.remote.ssh_dialog.visible {
-            self.render_ssh_dialog(&target);
-        }
-
-        // 10. 克隆仓库对话框
+        // 9. 克隆仓库对话框
         if self.remote.clone_dialog.visible {
             self.render_clone_dialog(&target);
         }
 
-        // 11. 新建项目对话框
+        // 10. 新建项目对话框
         if self.ui.new_project_dialog.visible {
             self.render_new_project_dialog(&target);
         }

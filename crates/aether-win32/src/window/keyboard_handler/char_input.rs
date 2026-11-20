@@ -70,16 +70,10 @@ pub(crate) unsafe fn on_char(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LPA
             if let Some(r) = oc_search_panel(hwnd, c) {
                 return r;
             }
-            if let Some(r) = oc_ssh_dialog(hwnd, c) {
-                return r;
-            }
             if let Some(r) = oc_clone_dialog(hwnd, c) {
                 return r;
             }
             if let Some(r) = oc_new_project(hwnd, c) {
-                return r;
-            }
-            if let Some(r) = oc_ssh_manager(hwnd, c) {
                 return r;
             }
             if let Some(r) = oc_command_palette(hwnd, c) {
@@ -199,27 +193,6 @@ unsafe fn oc_search_panel(hwnd: HWND, c: char) -> Option<LRESULT> {
     }
 }
 
-/// SSH 对话框激活时，输入字符进入对话框
-unsafe fn oc_ssh_dialog(hwnd: HWND, c: char) -> Option<LRESULT> {
-    let active = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| state.borrow().remote.ssh_dialog.visible)
-            .unwrap_or(false)
-    });
-    if active {
-        EDITOR_STATE.with(|s| {
-            if let Some(state) = s.borrow().as_ref() {
-                state.borrow_mut().handle_ssh_dialog_key(c);
-                invalidate_window(hwnd);
-            }
-        });
-        Some(LRESULT(0))
-    } else {
-        None
-    }
-}
-
 /// 克隆对话框激活时，输入字符进入对话框
 unsafe fn oc_clone_dialog(hwnd: HWND, c: char) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
@@ -259,41 +232,6 @@ unsafe fn oc_new_project(hwnd: HWND, c: char) -> Option<LRESULT> {
                     .project_name
                     .push(c);
                 state.borrow_mut().ui.new_project_dialog.error_message = None;
-                invalidate_window(hwnd);
-            }
-        });
-        Some(LRESULT(0))
-    } else {
-        None
-    }
-}
-
-/// SSH 管理面板编辑模式：输入字符到当前焦点字段
-unsafe fn oc_ssh_manager(hwnd: HWND, c: char) -> Option<LRESULT> {
-    let active = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| {
-                state.borrow().ui.sidebar_content
-                    == crate::layout::SidebarContent::RemoteManagerPanel
-                    && state.borrow().remote.ssh_manager_panel.editing
-            })
-            .unwrap_or(false)
-    });
-    if active {
-        EDITOR_STATE.with(|s| {
-            if let Some(state) = s.borrow().as_ref() {
-                let mut st = state.borrow_mut();
-                let field = st.remote.ssh_manager_panel.focus_field;
-                let field_str = match field {
-                    0 => &mut st.remote.ssh_manager_panel.form_name,
-                    1 => &mut st.remote.ssh_manager_panel.form_host,
-                    2 => &mut st.remote.ssh_manager_panel.form_port,
-                    3 => &mut st.remote.ssh_manager_panel.form_username,
-                    4 => &mut st.remote.ssh_manager_panel.form_key_path,
-                    _ => &mut st.remote.ssh_manager_panel.form_name,
-                };
-                field_str.push(c);
                 invalidate_window(hwnd);
             }
         });

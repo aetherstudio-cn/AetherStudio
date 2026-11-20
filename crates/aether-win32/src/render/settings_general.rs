@@ -252,130 +252,6 @@ impl EditorState {
         card_top + card_h
     }
 
-    /// 渲染空态占位（外观 / 远程等尚未实现的页面）
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn render_settings_empty_state(
-        &mut self,
-        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        title: &str,
-        desc: &str,
-    ) {
-        unsafe {
-            // 占位块整体高度：图标 40 + 间距 16 + 标题 20 + 间距 6 + 说明 16
-            let block_h = 98.0f32;
-            let top = (y + (h - block_h) / 2.0).max(y + 20.0);
-            let cx = x + w / 2.0;
-
-            // 矢量时钟图标：圆环 + 两根指针
-            let icon_color = color_f(0.35, 0.35, 0.38, 1.0);
-            let icon_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &icon_color)
-                .unwrap();
-            let icon_cy = top + 20.0;
-            let ring = windows::Win32::Graphics::Direct2D::D2D1_ELLIPSE {
-                point: D2D_POINT_2F { x: cx, y: icon_cy },
-                radiusX: 20.0,
-                radiusY: 20.0,
-            };
-            target.DrawEllipse(&ring, &icon_brush, 1.5, None);
-            target.DrawLine(
-                D2D_POINT_2F { x: cx, y: icon_cy },
-                D2D_POINT_2F {
-                    x: cx,
-                    y: icon_cy - 9.0,
-                },
-                &icon_brush,
-                1.5,
-                None,
-            );
-            target.DrawLine(
-                D2D_POINT_2F { x: cx, y: icon_cy },
-                D2D_POINT_2F {
-                    x: cx + 7.0,
-                    y: icon_cy + 4.0,
-                },
-                &icon_brush,
-                1.5,
-                None,
-            );
-
-            // 标题
-            let title_format = self
-                .win
-                .render_ctx
-                .text_format_cache
-                .get_format(
-                    14.0,
-                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-                    DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
-                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
-                )
-                .unwrap();
-            let title_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &color_f(0.75, 0.75, 0.78, 1.0))
-                .unwrap();
-            let title_wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-            let title_rect = D2D_RECT_F {
-                left: x,
-                top: top + 56.0,
-                right: x + w,
-                bottom: top + 76.0,
-            };
-            target.DrawText(
-                &title_wide,
-                &title_format,
-                &title_rect,
-                &title_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-
-            // 说明
-            let desc_format = self
-                .win
-                .render_ctx
-                .text_format_cache
-                .get_format(
-                    12.0,
-                    DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-                    DWRITE_TEXT_ALIGNMENT_CENTER.0 as u32,
-                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
-                )
-                .unwrap();
-            let desc_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &color_f(0.52, 0.52, 0.55, 1.0))
-                .unwrap();
-            let desc_wide: Vec<u16> = desc.encode_utf16().chain(Some(0)).collect();
-            let desc_rect = D2D_RECT_F {
-                left: x,
-                top: top + 82.0,
-                right: x + w,
-                bottom: top + 98.0,
-            };
-            target.DrawText(
-                &desc_wide,
-                &desc_format,
-                &desc_rect,
-                &desc_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-        }
-    }
-
     /// 渲染设置面板：左侧导航 + 右侧内容
     pub(super) fn render_settings_sidebar(
         &mut self,
@@ -667,7 +543,6 @@ impl EditorState {
                 crate::settings::SettingsTab::Ai => ("AI", "AI 接口配置"),
                 crate::settings::SettingsTab::Playbook => ("策略", "管理 AI 沉淀策略库"),
                 crate::settings::SettingsTab::Appearance => ("外观", "主题与界面自定义"),
-                crate::settings::SettingsTab::Remote => ("远程", "SSH 与容器远程连接"),
                 crate::settings::SettingsTab::Update => ("更新", "版本与更新策略"),
             };
             let page_title_wide: Vec<u16> = page_title.encode_utf16().chain(Some(0)).collect();
@@ -787,17 +662,6 @@ impl EditorState {
                         page_y,
                         &label_format,
                         text_brush,
-                    );
-                }
-                crate::settings::SettingsTab::Remote => {
-                    self.render_settings_empty_state(
-                        target,
-                        page_x,
-                        page_y,
-                        page_w,
-                        (content_h - 96.0).max(120.0),
-                        "远程开发即将推出",
-                        "SSH 与容器远程连接功能正在开发中",
                     );
                 }
                 crate::settings::SettingsTab::Update => {

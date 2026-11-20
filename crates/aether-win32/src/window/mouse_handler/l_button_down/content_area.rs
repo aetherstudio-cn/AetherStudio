@@ -147,7 +147,7 @@ pub(super) unsafe fn lbd_panel_resizing(
     None
 }
 
-/// 侧边栏点击（SSH 管理面板 / 通用侧边栏）。
+/// 侧边栏点击（通用侧边栏）。
 pub(super) unsafe fn lbd_sidebar(
     hwnd: HWND,
     state: &Rc<RefCell<EditorState>>,
@@ -160,10 +160,6 @@ pub(super) unsafe fn lbd_sidebar(
         return None;
     }
     let mut st = state.borrow_mut();
-    if st.ui.sidebar_content == crate::layout::SidebarContent::RemoteManagerPanel {
-        drop(st);
-        return lbd_ssh_manager_panel(hwnd, state, mouse_x, mouse_y);
-    }
 
     // 处理左侧边栏的对话标签页点击
     // 1. 新会话按钮
@@ -204,104 +200,6 @@ pub(super) unsafe fn lbd_sidebar(
         return Some(LRESULT(0));
     }
     // 点击已确认在侧边栏区域内，即使未命中任何交互元素也应消费事件
-    invalidate_window(hwnd);
-    Some(LRESULT(0))
-}
-
-/// SSH 管理面板按钮点击（连接/编辑/删除/添加/保存/取消）。
-unsafe fn lbd_ssh_manager_panel(
-    hwnd: HWND,
-    state: &Rc<RefCell<EditorState>>,
-    mouse_x: f32,
-    mouse_y: f32,
-) -> Option<LRESULT> {
-    // 操作按钮（连接/编辑/删除）
-    if lbd_ssh_manager_buttons(hwnd, state, mouse_x, mouse_y).is_some() {
-        return Some(LRESULT(0));
-    }
-    // 添加按钮 + 保存/取消 + 回退
-    let mut st = state.borrow_mut();
-    let panel = &st.remote.ssh_manager_panel;
-    // 检测添加按钮
-    if let Some(ref rect) = panel.add_btn_rect {
-        if rect.contains(mouse_x, mouse_y) {
-            st.remote.ssh_manager_panel.start_add();
-            invalidate_window(hwnd);
-            return Some(LRESULT(0));
-        }
-    }
-    // 检测保存/取消按钮（编辑模式）
-    if panel.editing {
-        if let Some(ref rect) = panel.save_btn_rect {
-            if rect.contains(mouse_x, mouse_y) {
-                match st.save_ssh_server_from_form() {
-                    Ok(()) => st.ui.status_message = "服务器配置已保存".to_string(),
-                    Err(e) => st.remote.ssh_manager_panel.error_message = Some(e),
-                }
-                invalidate_window(hwnd);
-                return Some(LRESULT(0));
-            }
-        }
-        if let Some(ref rect) = panel.cancel_btn_rect {
-            if rect.contains(mouse_x, mouse_y) {
-                st.remote.ssh_manager_panel.cancel_edit();
-                invalidate_window(hwnd);
-                return Some(LRESULT(0));
-            }
-        }
-    }
-    invalidate_window(hwnd);
-    Some(LRESULT(0))
-}
-
-/// SSH 管理面板操作按钮（连接/编辑/删除/认证方式切换）。
-unsafe fn lbd_ssh_manager_buttons(
-    hwnd: HWND,
-    state: &Rc<RefCell<EditorState>>,
-    mouse_x: f32,
-    mouse_y: f32,
-) -> Option<LRESULT> {
-    let mut st = state.borrow_mut();
-    let panel = &st.remote.ssh_manager_panel;
-    let mut clicked_btn = None;
-    for &(idx, action, ref rect) in &panel.item_btn_rects {
-        if rect.contains(mouse_x, mouse_y) {
-            clicked_btn = Some((idx, action));
-            break;
-        }
-    }
-    let (idx, action) = clicked_btn?;
-    if idx < 997 {
-        match action {
-            0 => {
-                if st.is_ssh_connected(idx) {
-                    st.disconnect_ssh();
-                } else {
-                    st.connect_ssh_server(idx);
-                }
-            }
-            1 => {
-                if let Some(config) = st.ssh_servers().get(idx).cloned() {
-                    st.remote.ssh_manager_panel.start_edit(idx, &config);
-                }
-            }
-            2 => st.delete_ssh_server(idx),
-            _ => {}
-        }
-    } else if idx == 997 {
-        st.remote.ssh_manager_panel.start_add();
-    } else if idx == 998 {
-        match action {
-            0 => match st.save_ssh_server_from_form() {
-                Ok(()) => st.ui.status_message = "服务器配置已保存".to_string(),
-                Err(e) => st.remote.ssh_manager_panel.error_message = Some(e),
-            },
-            1 => st.remote.ssh_manager_panel.cancel_edit(),
-            _ => {}
-        }
-    } else if idx == 999 {
-        st.remote.ssh_manager_panel.cycle_auth_type();
-    }
     invalidate_window(hwnd);
     Some(LRESULT(0))
 }
