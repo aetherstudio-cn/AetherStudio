@@ -401,8 +401,6 @@ pub struct SettingsPanel {
     pub baseline_ai: Option<AiSettings>,
     /// 外观页：最大化时显示任务栏开关命中区
     pub taskbar_toggle_region: Option<(f32, f32, f32, f32)>,
-    /// 通用页：默认启动模式行命中区（点击切换 开发者/智能体，持久化后重启生效）
-    pub default_mode_toggle_region: Option<(f32, f32, f32, f32)>,
 }
 
 impl SettingsPanel {
@@ -485,7 +483,6 @@ impl SettingsPanel {
             hover_multimodal_toggle: false,
             baseline_ai: None,
             taskbar_toggle_region: None,
-            default_mode_toggle_region: None,
         }
     }
 
@@ -595,7 +592,6 @@ impl SettingsPanel {
             hover_multimodal_toggle: false,
             baseline_ai: None,
             taskbar_toggle_region: None,
-            default_mode_toggle_region: None,
         }
     }
 

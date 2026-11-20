@@ -217,28 +217,6 @@ pub struct UiSettings {
     /// 各工作区退出时仍打开的 AI 对话标签页（工作区哈希 → 标签页快照）
     #[serde(default)]
     pub ai_open_tabs: std::collections::HashMap<String, AiOpenTabsSnapshot>,
-    /// 编辑器模式：开发者模式（默认）或智能体模式
-    /// 智能体模式下 AI 对话面板在左侧为主体，文件编辑区移至右侧，设置以弹窗打开
-    #[serde(default)]
-    pub editor_mode: EditorMode,
-}
-
-/// 编辑器模式（持久化到 settings.json）
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum EditorMode {
-    /// 开发者模式：传统 IDE 布局，AI 面板在右侧
-    #[default]
-    Developer,
-    /// 智能体模式：AI 对话为主体在左侧，编辑器在右侧
-    Agent,
-}
-
-impl EditorMode {
-    /// 是否为智能体模式
-    pub fn is_agent(&self) -> bool {
-        matches!(self, Self::Agent)
-    }
 }
 
 /// AI 面板打开标签页的快照（持久化到 settings.json）
@@ -266,7 +244,6 @@ impl Default for UiSettings {
             last_workspace: None,
             show_taskbar_when_maximized: true,
             ai_open_tabs: std::collections::HashMap::new(),
-            editor_mode: EditorMode::default(),
         }
     }
 }

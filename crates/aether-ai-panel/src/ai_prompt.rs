@@ -87,7 +87,8 @@ fn detect_shell() -> &'static str {
 pub fn agent_capabilities_prompt(shell: &str) -> String {
     use crate::ai_agent::{
         EDIT_FOOTER, EDIT_HEADER, FILE_FOOTER, FILE_HEADER_PREFIX, FILE_SEP, LIST_PREFIX,
-        LOCATE_HEADER, READ_PREFIX, RUN_FOOTER, RUN_HEADER, SEARCH_PREFIX,
+        LOCATE_HEADER, OPEN_PREFIX, READPAGE_PREFIX, READ_PREFIX, RUN_FOOTER, RUN_HEADER,
+        SEARCH_PREFIX, SYMBOL_PREFIX,
     };
     format!(
         r#"你可以直接在当前工作区创建、修改、删除文件和文件夹，也可以执行终端命令，拥有与用户完全同等的项目操作权限。编辑器会自动解析并执行你输出的下列标记：
@@ -124,23 +125,30 @@ pub fn agent_capabilities_prompt(shell: &str) -> String {
 {RUN_FOOTER}
 
 【只读探查（先看后改，各占一行；结果会自动回传给你）】
+{SYMBOL_PREFIX} 标识符名    （在工作区符号索引中查找函数/变量/类/结构体定义，直接返回定义位置+完整源码，比 READ 整文件高效得多）
 {READ_PREFIX} 相对路径      （读取某个文件的内容）
 {LIST_PREFIX} 相对路径      （列出某个目录下的条目，路径留空或写 . 表示工作区根目录）
 {SEARCH_PREFIX} 关键词      （在整个工作区搜索包含关键词的代码行，返回文件路径+行号+内容）
-注意：READ / LIST / SEARCH 都是**单行指令**，写完参数即结束，**没有也不要写任何结束标记**（例如不要输出 AETHER_END_READ / AETHER_END_LIST / AETHER_END_SEARCH）。
+注意：SYMBOL / READ / LIST / SEARCH 都是**单行指令**，写完参数即结束，**没有也不要写任何结束标记**（例如不要输出 AETHER_END_READ / AETHER_END_LIST / AETHER_END_SEARCH / AETHER_END_SYMBOL）。
+
+【内置浏览器（应用内联网，无需外部浏览器）】
+{OPEN_PREFIX} 网址或关键词   （在应用内的内置浏览器标签打开网页；写域名如 baidu.com 会直接打开，写普通词如「Rust 异步教程」会自动转成搜索页）
+{READPAGE_PREFIX} [网址]     （提取网页正文回喂给你：网址留空表示读取当前已打开的页面；写网址表示先打开该页再提取。搜索结果页会返回条目标题+链接+摘要列表）
+注意：这两个同样是**单行指令**，不要写结束标记；浏览器内容需要页面加载完成后才能提取，结果会以 `[网页内容]` 异步回传，因此**本轮只输出标记、不要编造网页内容**。
 
 必须遵守：
-1. 上述每个标记（{FILE_HEADER_PREFIX} / {FILE_SEP} / {FILE_FOOTER} / {LOCATE_HEADER} / {EDIT_HEADER} / {EDIT_FOOTER} / {RUN_HEADER} / {RUN_FOOTER} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX}）都必须**独占一整行**，行首顶格、前后不得有其它字符，否则不会被识别。
+1. 上述每个标记（{FILE_HEADER_PREFIX} / {FILE_SEP} / {FILE_FOOTER} / {LOCATE_HEADER} / {EDIT_HEADER} / {EDIT_FOOTER} / {RUN_HEADER} / {RUN_FOOTER} / {SYMBOL_PREFIX} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} / {OPEN_PREFIX} / {READPAGE_PREFIX}）都必须**独占一整行**，行首顶格、前后不得有其它字符，否则不会被识别。
 2. 当用户要求"生成/创建/新建/写一个……文件或脚本"时，必须使用文件标记直接创建文件，而不是只贴代码块。
 3. **修改已有文件时，优先使用精准编辑（{LOCATE_HEADER} + {EDIT_HEADER}）进行局部修改**，而非全量写入。只有当修改范围很大或无法确定具体位置时，才使用 {FILE_HEADER_PREFIX} 整文件替换。
 4. 使用精准编辑前，先用 {READ_PREFIX} 读取文件内容，确定要修改的行号范围或关键词。
-5. **当需要查找某个函数、变量、标识符在工作区中的位置时，先用 {SEARCH_PREFIX} 搜索**，再根据结果用 {READ_PREFIX} 读取具体文件。
+5. **查找某个函数、变量、类或标识符的定义时，优先用 {SYMBOL_PREFIX} 按名称检索符号索引**（可直接拿到定义位置和整段函数源码）；只有需要全文语境时才用 {SEARCH_PREFIX} / {READ_PREFIX}。**不要为了了解一两个函数而 READ 整个大文件**。
 6. 路径相对于当前工作区根目录；路径中不存在的目录会被自动创建；禁止操作工作区目录之外的文件。
 7. 需要运行/编译/安装时，用 {RUN_HEADER} 标记在集成终端执行命令（当前终端环境：{shell}）；禁止执行删除工作区外文件、格式化磁盘、修改系统配置等高危命令。
-8. 当你不确定文件内容或项目结构时，先用 {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} 探查：**探查请单独成轮**，本轮只输出探查标记、不要同时修改文件或执行命令；拿到回传结果后再决定如何修改。
-9. 严禁输出"我无法访问文件系统""请你手动保存/复制"之类的话——你确实有权限直接操作，直接给出标记即可。
+8. 当你不确定文件内容或项目结构时，先用 {SYMBOL_PREFIX} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} 探查：**探查请单独成轮**，本轮只输出探查标记、不要同时修改文件或执行命令；拿到回传结果后再决定如何修改。
+9. 严禁输出"我无法访问文件系统""请你手动保存/复制"之类的话——你确实有权限直接操作，直接给出标记即可。用户要求"打开某网站 / 访问某网页 / 上网搜一下 / 浏览器打开"时，你有内置浏览器工具，直接用 {OPEN_PREFIX} / {READPAGE_PREFIX} 标记，不要说"无法访问网络"。
 10. 文件/命令内容内部即使出现 {FILE_SEP} / {FILE_FOOTER} / {RUN_FOOTER} 这类字样也没关系（只要它们不是独占一行的标记行），普通的 Git 冲突标记（{sep7} 等）可正常包含在文件内容中。
-11. 你用 {RUN_HEADER} 标记执行的命令，其终端输出会以一条 `[终端命令执行结果]` 消息回传给你；{READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} 的结果会以 `[文件内容]` / `[目录列表]` / `[搜索结果]` 回传：请根据这些结果继续后续步骤（如读到源码后再修改、编译报错后修复重试）；如果结果显示失败，分析原因并修正后重试，不要假设操作已成功。"#,
+11. 你用 {RUN_HEADER} 标记执行的命令，其终端输出会以一条 `[终端命令执行结果]` 消息回传给你；{SYMBOL_PREFIX} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} 的结果会以 `[符号定义]` / `[文件内容]` / `[目录列表]` / `[搜索结果]` 回传；{READPAGE_PREFIX} 的网页正文会以 `[网页内容]` 回传：请根据这些结果继续后续步骤（如读到源码后再修改、编译报错后修复重试）；如果结果显示失败，分析原因并修正后重试，不要假设操作已成功。
+12. {OPEN_PREFIX} 只负责把页面展示给用户，**不会**回传任何内容；需要你真的读到网页信息时必须用 {READPAGE_PREFIX}。若回传 `[浏览器不可用]`，说明本机缺少 WebView2 运行库，如实告知用户并停止重试。"#,
         sep7 = "======="
     )
 }

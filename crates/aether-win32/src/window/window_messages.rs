@@ -223,6 +223,14 @@ unsafe fn on_timer_term_refresh(hwnd: HWND) -> LRESULT {
         }
         // 懒加载预扫描
         st.preload_expanded_dirs();
+        // 平滑滚动动画更新（编辑器内容区）
+        if crate::editor::cursor::update_smooth_scroll(&mut st, 0.016) {
+            dirty = true;
+        }
+        // 标签页平滑滚动动画更新
+        if st.tick_tab_scroll() {
+            dirty = true;
+        }
         dirty || st.win.dirty_tracker.has_dirty()
     } else {
         false
@@ -292,22 +300,18 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             need_invalidate = true;
             any_active = true;
         }
-        // AI 助手输入框光标闪烁（智能体模式中间列 / 经典模式右面板）
+        // AI 助手输入框光标闪烁（中间列）
         if st.ai.ai_panel.input_focused {
             st.ai.ai_panel.caret_visible = !st.ai.ai_panel.caret_visible;
             st.mark_ai_panel_dirty();
             need_invalidate = true;
             any_active = true;
         }
-        // 新标签页快捷搜索框光标闪烁（智能体模式右面板 / 经典模式编辑器内容区）
+        // 新标签页快捷搜索框光标闪烁（右面板）
         if st.browser.empty_search_focused {
             st.browser.empty_search_caret_visible = !st.browser.empty_search_caret_visible;
             let ntp_region = st.new_tab_page_region(&st.ui.layout).clone();
-            let region_type = if st.editor_mode.is_agent() {
-                crate::dirty_rect::DirtyRegionType::RightPanel
-            } else {
-                crate::dirty_rect::DirtyRegionType::EditorContent
-            };
+            let region_type = crate::dirty_rect::DirtyRegionType::RightPanel;
             st.win.dirty_tracker.mark_region(
                 ntp_region.x,
                 ntp_region.y,
@@ -332,15 +336,11 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             need_invalidate = true;
             any_active = true;
         }
-        // 设置页输入框光标闪烁（智能体模式右面板 / 经典模式编辑器内容区）
+        // 设置页输入框光标闪烁（右面板）
         if st.active_tab_is_settings() && st.ui.settings_panel.active_field.is_some() {
             st.ui.settings_panel.caret_visible = !st.ui.settings_panel.caret_visible;
             let region = st.full_page_region(&st.ui.layout).clone();
-            let region_type = if st.editor_mode.is_agent() {
-                crate::dirty_rect::DirtyRegionType::RightPanel
-            } else {
-                crate::dirty_rect::DirtyRegionType::EditorContent
-            };
+            let region_type = crate::dirty_rect::DirtyRegionType::RightPanel;
             st.win.dirty_tracker.mark_region(
                 region.x,
                 region.y,
@@ -361,13 +361,23 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             .unwrap_or(false)
         {
             st.editor.content.caret_visible = !st.editor.content.caret_visible;
-            let er = st.ui.layout.editor_region().clone();
+            // 文件编辑区在右侧面板
+            let rp = st.ui.layout.right_panel_region();
+            let tab_h = if st.editor.tab_bar.tabs.is_empty() {
+                0.0
+            } else {
+                crate::layout::TAB_BAR_HEIGHT
+            };
+            let (region, region_type) = (
+                crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h),
+                crate::dirty_rect::DirtyRegionType::RightPanel,
+            );
             st.win.dirty_tracker.mark_region(
-                er.x,
-                er.y,
-                er.width,
-                er.height,
-                crate::dirty_rect::DirtyRegionType::EditorContent,
+                region.x,
+                region.y,
+                region.width,
+                region.height,
+                region_type,
             );
             need_invalidate = true;
             any_active = true;

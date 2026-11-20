@@ -4,13 +4,9 @@
 //! 调度器提取公共状态 (vk, ctrl, shift)，然后按优先级调用辅助函数。
 //! Ctrl+ 快捷键拆分到 `key_down_ctrl`，非 Ctrl 编辑器按键拆分到 `key_down_edit`。
 
-use std::path::PathBuf;
-
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-
-use crate::dialogs::Dialogs;
 
 use super::super::{get_and_set_state, invalidate_window, EDITOR_STATE};
 
@@ -60,9 +56,6 @@ pub(crate) unsafe fn on_key_down(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
         return r;
     }
     if let Some(r) = okd_search_panel(hwnd, vk, ctrl) {
-        return r;
-    }
-    if let Some(r) = okd_welcome_nav(hwnd, vk, ctrl) {
         return r;
     }
     if let Some(r) = okd_completion_nav(hwnd, vk, ctrl) {
@@ -521,120 +514,6 @@ unsafe fn okd_search_panel(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LR
             Some(LRESULT(0))
         }
         _ => None,
-    }
-}
-
-/// 欢迎页键盘导航：Tab/↓ next, Shift+Tab/↑ prev, Enter 触发
-unsafe fn okd_welcome_nav(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRESULT> {
-    let active = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| state.borrow().show_welcome())
-            .unwrap_or(false)
-    });
-    if !active || ctrl {
-        return None;
-    }
-    match vk {
-        VK_TAB | VK_DOWN => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().welcome_focus_next();
-                    invalidate_window(hwnd);
-                }
-            });
-            Some(LRESULT(0))
-        }
-        VK_UP => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().welcome_focus_prev();
-                    invalidate_window(hwnd);
-                }
-            });
-            Some(LRESULT(0))
-        }
-        VK_RETURN => {
-            okd_welcome_enter(hwnd);
-            Some(LRESULT(0))
-        }
-        _ => None,
-    }
-}
-
-/// 欢迎页 Enter 键处理：执行焦点对应的动作
-unsafe fn okd_welcome_enter(hwnd: HWND) {
-    let action = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .and_then(|state| state.borrow().ui.welcome_focus_action.clone())
-    });
-    if let Some(action) = action {
-        match action {
-            crate::welcome::WelcomeAction::OpenFolder => {
-                if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                    // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
-                    if crate::editor::files::check_workspace_trust(hwnd, &path) {
-                        EDITOR_STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                state.borrow_mut().open_folder(path);
-                                invalidate_window(hwnd);
-                            }
-                        });
-                    } else {
-                        EDITOR_STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                state.borrow_mut().ui.status_message =
-                                    "已取消打开不受信任的工作区".to_string();
-                                invalidate_window(hwnd);
-                            }
-                        });
-                    }
-                }
-            }
-            crate::welcome::WelcomeAction::OpenRecentProject(path_str) => {
-                let path = PathBuf::from(path_str);
-                // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
-                if crate::editor::files::check_workspace_trust(hwnd, &path) {
-                    EDITOR_STATE.with(|s| {
-                        if let Some(state) = s.borrow().as_ref() {
-                            state.borrow_mut().open_folder(path);
-                            invalidate_window(hwnd);
-                        }
-                    });
-                } else {
-                    EDITOR_STATE.with(|s| {
-                        if let Some(state) = s.borrow().as_ref() {
-                            state.borrow_mut().ui.status_message =
-                                "已取消打开不受信任的工作区".to_string();
-                            invalidate_window(hwnd);
-                        }
-                    });
-                }
-            }
-            crate::welcome::WelcomeAction::MoreRecentProjects => {
-                if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                    // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
-                    if crate::editor::files::check_workspace_trust(hwnd, &path) {
-                        EDITOR_STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                state.borrow_mut().open_folder(path);
-                                invalidate_window(hwnd);
-                            }
-                        });
-                    } else {
-                        EDITOR_STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                state.borrow_mut().ui.status_message =
-                                    "已取消打开不受信任的工作区".to_string();
-                                invalidate_window(hwnd);
-                            }
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
     }
 }
 
@@ -1332,9 +1211,9 @@ unsafe fn okd_empty_search(
             if st.browser.env_failed {
                 // 系统缺少 WebView2 Runtime：回退系统默认浏览器
                 external_url = Some(url);
-            } else {
-                // 双模式均在内置 WebView2 浏览器标签打开（应用内浏览，不跳转外部浏览器）
-                st.open_browser_tab(&url);
+            } else if st.open_browser_tab(&url).is_err() {
+                // 打开失败（同上，环境已判定不可用）：同样回退系统默认浏览器
+                external_url = Some(url);
             }
         }
         VK_ESCAPE => {

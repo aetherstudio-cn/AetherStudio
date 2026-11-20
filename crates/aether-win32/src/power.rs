@@ -124,7 +124,6 @@ impl EditorState {
         // 5. 释放 D2D 渲染资源（唤醒后由渲染路径经设备丢失恢复逻辑自动重建）
         self.win.render_ctx.release_for_suspend();
         self.ui.icons.clear();
-        self.win.logo_bitmap = None;
         self.win.image_bitmap = None;
 
         // 6. 压缩 AetherDB：强制 compaction 回收墓碑垃圾段

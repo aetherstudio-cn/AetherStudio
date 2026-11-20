@@ -12,16 +12,9 @@ use std::rc::Rc;
 
 use crate::editor::EditorState;
 
-/// 当前活动 AI 面板区域（逻辑像素）：智能体模式在中间列，经典模式在右面板。
-/// 右面板隐藏时返回 None（此时 AI 面板不可见，拖放不拦截）。
+/// 当前活动 AI 面板区域（逻辑像素）：位于中间列。
 pub(crate) fn ai_panel_region(st: &EditorState) -> Option<crate::layout::Region> {
-    if st.editor_mode.is_agent() {
-        Some(st.ui.layout.editor_content_region(false))
-    } else if st.ui.layout.right_panel_visible {
-        Some(st.ui.layout.right_panel_region())
-    } else {
-        None
-    }
+    Some(st.ui.layout.editor_content_region(false))
 }
 
 /// 按扩展名粗筛图片文件（内容仍由 ChatImage::from_bytes 魔数校验兜底）。

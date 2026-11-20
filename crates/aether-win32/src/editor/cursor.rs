@@ -1,16 +1,110 @@
 use super::*;
 
-/// 滚动
+/// 平滑滚动状态
+pub struct SmoothScrollState {
+    /// 目标滚动位置
+    pub target_y: f32,
+    /// 当前滚动位置
+    pub current_y: f32,
+    /// 滚动速度（像素/秒）
+    pub velocity: f32,
+    /// 是否正在平滑滚动
+    pub is_scrolling: bool,
+}
+
+impl Default for SmoothScrollState {
+    fn default() -> Self {
+        Self {
+            target_y: 0.0,
+            current_y: 0.0,
+            velocity: 0.0,
+            is_scrolling: false,
+        }
+    }
+}
+
+/// 底部滚动留白（行数）：滚到底时最后一行下方保留的空白，
+/// 保证末尾行不被底部面板遮挡、可完整显示。
+pub const SCROLL_PAD_BOTTOM_LINES: f32 = 3.0;
+/// 右侧滚动留白（像素）：滚到最右时最长行右侧额外可滚动的空间。
+pub const SCROLL_PAD_RIGHT_PX: f32 = 32.0;
+
+/// 编辑区可视高度：优先取当前模式实际编辑区（经典中间区 / 智能体右侧面板，
+/// 已扣除标签栏与底部面板），无活动代码编辑器时回退编辑器内容区域。
+fn editor_view_height(state: &EditorState) -> f32 {
+    state
+        .active_code_editor_region()
+        .unwrap_or_else(|| state.ui.layout.editor_content_region(state.show_tab_bar()))
+        .height
+        .max(1.0)
+}
+
+/// 滚动（带平滑效果）
 pub fn scroll(state: &mut EditorState, delta_y: f32) {
+    // 用户主动滚动时，停止之前的平滑滚动动画
+    stop_smooth_scroll(state);
+
     let line_height = state.win.text_renderer.line_height();
     let total_height = state.editor.content.buffer.len_lines() as f32 * line_height;
-    // UI-M02: 使用实际编辑器区域高度替代硬编码 24.0
-    let editor_region = state.ui.layout.editor_region();
-    let editor_height = editor_region.height.max(1.0);
-    let max_scroll = (total_height - editor_height).max(0.0);
-    state.editor.content.scroll_y =
-        (state.editor.content.scroll_y + delta_y).clamp(0.0, max_scroll);
+    // 滚动范围 = 文档总高 + 底部留白 - 实际可视高度（含底部面板扣除）
+    let max_scroll =
+        (total_height + line_height * SCROLL_PAD_BOTTOM_LINES - editor_view_height(state)).max(0.0);
+
+    // 计算目标滚动位置
+    let target = (state.editor.content.scroll_y + delta_y).clamp(0.0, max_scroll);
+
+    // 如果启用了平滑滚动，设置目标位置而不是直接跳转
+    if state.editor.smooth_scroll.is_scrolling {
+        state.editor.smooth_scroll.target_y = target;
+    } else {
+        // 否则直接设置滚动位置
+        state.editor.content.scroll_y = target;
+    }
+
     state.emit_event(crate::events::EditorEvent::Scrolled);
+}
+
+/// 更新平滑滚动动画
+/// 返回 true 表示仍在滚动中，需要继续重绘
+pub fn update_smooth_scroll(state: &mut EditorState, dt: f32) -> bool {
+    if !state.editor.smooth_scroll.is_scrolling {
+        return false;
+    }
+
+    let smooth = &mut state.editor.smooth_scroll;
+    let diff = smooth.target_y - smooth.current_y;
+
+    // 如果已经接近目标位置，直接到达并停止
+    if diff.abs() < 0.5 {
+        smooth.current_y = smooth.target_y;
+        smooth.is_scrolling = false;
+        state.editor.content.scroll_y = smooth.current_y;
+        return false;
+    }
+
+    // 使用缓动函数计算新位置（ease-out）
+    let speed = 8.0; // 滚动速度系数
+    smooth.current_y += diff * speed * dt;
+    state.editor.content.scroll_y = smooth.current_y;
+
+    true
+}
+
+/// 开始平滑滚动到指定位置
+pub fn smooth_scroll_to(state: &mut EditorState, target_y: f32) {
+    let line_height = state.win.text_renderer.line_height();
+    let total_height = state.editor.content.buffer.len_lines() as f32 * line_height;
+    let max_scroll =
+        (total_height + line_height * SCROLL_PAD_BOTTOM_LINES - editor_view_height(state)).max(0.0);
+
+    state.editor.smooth_scroll.target_y = target_y.clamp(0.0, max_scroll);
+    state.editor.smooth_scroll.current_y = state.editor.content.scroll_y;
+    state.editor.smooth_scroll.is_scrolling = true;
+}
+
+/// 停止平滑滚动
+pub fn stop_smooth_scroll(state: &mut EditorState) {
+    state.editor.smooth_scroll.is_scrolling = false;
 }
 
 /// P2.3: 重建行 Y 偏移前缀和缓存
@@ -77,9 +171,9 @@ pub fn scroll_horizontal(state: &mut EditorState, delta_x: f32) {
         }
     }
 
-    // 行号宽度 + 5px 内边距，扣除后为文本可视宽度
+    // 行号宽度 + 5px 内边距，扣除后为文本可视宽度；末尾再加右侧留白
     let text_visible_width = (editor_width - 60.0 - 5.0).max(1.0);
-    let max_content_width = max_line_chars as f32 * char_width;
+    let max_content_width = max_line_chars as f32 * char_width + SCROLL_PAD_RIGHT_PX;
     let max_scroll_x = (max_content_width - text_visible_width).max(0.0);
 
     state.editor.content.scroll_x =
@@ -147,8 +241,7 @@ pub fn ensure_cursor_visible_horizontal(state: &mut EditorState) {
 /// 在光标上下移动后调用。
 pub fn ensure_cursor_visible_vertical(state: &mut EditorState) {
     let line_height = state.win.text_renderer.line_height();
-    let editor_region = state.ui.layout.editor_region();
-    let editor_height = editor_region.height.max(1.0);
+    let editor_height = editor_view_height(state);
     let cursor_y = state.editor.content.cursor_line as f32 * line_height;
 
     if cursor_y < state.editor.content.scroll_y {
@@ -197,10 +290,9 @@ pub fn goto_position(state: &mut EditorState, line: usize, column: usize) {
         content.selection_end = None;
     }
 
-    // 垂直滚动：让目标行可见
+    // 垂直滚动：让目标行可见（按实际编辑区高度换算，避免末尾行藏在底部面板下）
     let line_height = state.win.text_renderer.line_height();
-    let editor_region = state.ui.layout.editor_region();
-    let editor_height = editor_region.height.max(1.0);
+    let editor_height = editor_view_height(state);
     let cursor_y = target_line as f32 * line_height;
 
     if cursor_y < state.editor.content.scroll_y {

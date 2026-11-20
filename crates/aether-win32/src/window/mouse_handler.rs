@@ -164,12 +164,11 @@ pub(crate) unsafe fn on_l_button_dblclk(
     let raw_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
     if let Some(state) = get_and_set_state(hwnd) {
         let mut st = state.borrow_mut();
-        // 仅在非对话框、非命令面板、非欢迎页时处理编辑器区域双击
+        // 仅在非对话框、非命令面板时处理编辑器区域双击
         // （settings_panel 在侧边栏，editor_region.contains 已排除）
         if st.remote.ssh_dialog.visible
             || st.remote.clone_dialog.visible
             || st.ui.command_palette.visible
-            || st.show_welcome()
         {
             return LRESULT(0);
         }
@@ -307,28 +306,7 @@ pub(crate) unsafe fn on_mouse_wheel(
                     }
                 }
             }
-            // 检查光标是否在右侧 AI 面板区域内（仅经典模式；
-            // 智能体模式下右面板是文件编辑器，由下方 active_code_editor_region 分支处理）
-            if !state.editor_mode.is_agent() && state.ui.layout.right_panel_visible {
-                let right_panel = state.ui.layout.right_panel_region();
-                if right_panel.contains(cursor_x, cursor_y) {
-                    let chat_top = 52.0f32;
-                    // 使用动态计算的输入框高度
-                    let input_area_h = state.ai.ai_panel.input_area_height();
-                    let chat_bottom = right_panel.height - input_area_h;
-                    // 只有当光标在聊天消息区域（非输入框）时才滚动
-                    if cursor_y >= chat_top && cursor_y < chat_bottom {
-                        let scroll_amount = delta * 2.0; // 每滚轮单位滚动 2 像素
-                        state.ai.ai_panel.scroll_y = (state.ai.ai_panel.scroll_y - scroll_amount)
-                            .clamp(0.0, state.ai.ai_panel.content_height.max(0.0));
-                        state.ai.ai_panel.stick_to_bottom = false; // 用户手动滚动时取消吸附底部
-                        invalidate_window(hwnd);
-                        return;
-                    }
-                }
-            }
-
-            // 设置页：光标在设置页区域内（经典=编辑器内容区，智能体=右面板内容区）→ 滚动设置内容
+            // 设置页：光标在设置页区域内（右面板内容区）→ 滚动设置内容
             if state.active_tab_is_settings() {
                 let page = state.full_page_region(&state.ui.layout);
                 if page.contains(cursor_x, cursor_y) {
@@ -339,7 +317,7 @@ pub(crate) unsafe fn on_mouse_wheel(
                 }
             }
 
-            // 沙盒评测页：光标在页面区域内（经典=编辑器内容区，智能体=右面板内容区）→ 滚动页面内容
+            // 沙盒评测页：光标在页面区域内（右面板内容区）→ 滚动页面内容
             if state.active_tab_is_sandbox_eval() {
                 let page = state.full_page_region(&state.ui.layout);
                 if page.contains(cursor_x, cursor_y) {
@@ -353,8 +331,8 @@ pub(crate) unsafe fn on_mouse_wheel(
                 }
             }
 
-            // 智能体模式：中间区域是 AI 对话面板 → 滚动对话（与经典右面板 AI 滚动同口径）
-            if state.editor_mode.is_agent() {
+            // 中间区域是 AI 对话面板 → 滚动对话
+            {
                 let center = state.ui.layout.editor_content_region(false);
                 if center.contains(cursor_x, cursor_y) {
                     let scroll_amount = delta * 2.0;

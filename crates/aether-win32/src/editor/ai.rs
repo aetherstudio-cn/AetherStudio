@@ -102,7 +102,8 @@ impl EditorState {
         }
 
         // 文件/终端操作必须在已打开的工作区内进行；未打开文件夹时提示用户。
-        let has_actions = crate::ai_panel::has_agent_markers(&text);
+        // 浏览器工具（OPEN / READPAGE）不依赖工作区，不受此限。
+        let has_actions = crate::ai_panel::has_workspace_scoped_markers(&text);
         if has_actions && self.fs.current_folder.is_none() {
             self.ai.ai_panel
                 .add_assistant_message_to(conv_idx, "提示：尚未打开工作区文件夹，无法直接创建/修改文件。请先通过“文件 → 打开文件夹”打开一个项目再试。".to_string());
@@ -217,14 +218,18 @@ impl EditorState {
             }
         }
 
-        // 3. 只读探查工具（读取文件 / 列出目录）：同步执行，结果回喂给模型
+        // 3. 只读探查工具（读取文件 / 列出目录 / 浏览器）：探查同步执行，
+        //    浏览器正文采集异步进行（结果由主循环轮询回喂）
         let tool_reqs = crate::ai_panel::parse_tool_requests(&text);
         let mut tool_display: Vec<String> = Vec::new();
         let mut tool_feedback = String::new();
+        let mut tool_async = false;
         if !tool_reqs.is_empty() {
-            let (display, feedback) = self.execute_tool_requests(&tool_reqs);
+            let (display, feedback, async_pending) =
+                self.execute_tool_requests(&tool_reqs, conv_idx);
             tool_display = display;
             tool_feedback = feedback;
+            tool_async = async_pending;
         }
 
         // 4. 结构化任务总结反馈到对应会话（执行的功能/修复的 Bug/代码修改/审计信息/失败项）
@@ -299,7 +304,12 @@ impl EditorState {
 
         // 5. 只读探查结果驱动续跑：仅活动会话，且本轮没有 RUN 命令
         //    （RUN 有自身的异步续跑路径，避免重复触发并发请求；受最大轮次限制）。
-        if conv_idx == self.ai.ai_panel.active && commands.is_empty() && !tool_feedback.is_empty() {
+        //    浏览器正文采集在途时同样跳过：结果到达后由 handle_agent_page_read_results 续跑。
+        if conv_idx == self.ai.ai_panel.active
+            && commands.is_empty()
+            && !tool_feedback.is_empty()
+            && !tool_async
+        {
             // 续跑必须用激活模型档案（含解密后的 API Key）；旧单一 ai 字段无 key
             let settings = self.ui.app_settings.active_ai_settings();
             let mode = self.ai.ai_panel.mode;
@@ -431,10 +441,8 @@ impl EditorState {
             self.open_in_new_tab(tab);
         }
 
-        // 智能体模式下打开标签需保证右侧编辑区可见
-        if self.editor_mode.is_agent() {
-            self.ui.layout.right_panel_visible = true;
-        }
+        // 打开标签需保证右侧编辑区可见
+        self.ui.layout.right_panel_visible = true;
         self.ui.status_message = format!("已打开: {}", path.display());
         self.win.dirty_tracker.mark_full_window();
     }
@@ -1573,14 +1581,76 @@ impl EditorState {
         Ok(lines.join("\n"))
     }
 
-    /// 执行一批只读探查请求，返回 `(面板展示行, 回喂给模型的反馈文本)`。
+    /// 按标识符查询工作区符号索引（aether-symbol）：返回定义清单 + 最佳命中的完整源码。
+    /// 索引为进程级缓存（根目录变化或超过 TTL 时重建），不依赖任何语言服务器进程。
+    fn lookup_workspace_symbols(&self, query: &str) -> std::result::Result<String, String> {
+        let root = self
+            .fs
+            .current_folder
+            .as_ref()
+            .ok_or_else(|| "未打开工作区文件夹".to_string())?;
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            return Err("符号名不能为空".to_string());
+        }
+        Ok(with_cached_symbol_index(root, |index| {
+            let hits = index.find(&query, 20);
+            if hits.is_empty() {
+                return format!(
+                    "未找到符号 \"{}\" 的定义（索引共 {} 个符号，可能名称不完整，可改用 SEARCH 子串搜索）",
+                    query,
+                    index.len()
+                );
+            }
+            let mut listing: Vec<String> = Vec::new();
+            for s in hits.iter() {
+                listing.push(format!(
+                    "[{}] {} @ {}:{}  |  {}",
+                    s.kind.label(),
+                    s.name,
+                    s.path,
+                    s.line,
+                    s.signature
+                ));
+            }
+            let mut out = format!(
+                "找到 {} 处定义（精确→前缀→子串排序）：\n{}",
+                hits.len(),
+                listing.join("\n")
+            );
+            // 最佳命中回读完整源码（最多 3 处、共享字符预算），让模型一次看懂实现
+            const SRC_BUDGET: usize = 6000;
+            let mut used = 0usize;
+            for s in hits.iter().take(3) {
+                if used >= SRC_BUDGET {
+                    break;
+                }
+                if let Some(src) = index.source_of(s) {
+                    let src = truncate_chars(&src, SRC_BUDGET - used);
+                    used += src.chars().count();
+                    out.push_str(&format!(
+                        "\n--- {} 完整定义（{}:{}）---\n```\n{}\n```",
+                        s.name, s.path, s.line, src
+                    ));
+                }
+            }
+            out
+        }))
+    }
+
+    /// 执行一批工具请求，返回 `(面板展示行, 回喂给模型的反馈文本, 是否有异步任务在途)`。
+    ///
+    /// 文件类探查同步执行并立即回喂；浏览器正文采集为异步（WebView2 需等页面加载），
+    /// 此时同步探查结果挂到在途任务上，随首个网页结果一起回喂，避免同一轮发两次请求。
     fn execute_tool_requests(
-        &self,
+        &mut self,
         reqs: &[crate::ai_panel::ToolRequest],
-    ) -> (Vec<String>, String) {
+        conv_idx: usize,
+    ) -> (Vec<String>, String, bool) {
         use crate::ai_panel::ToolRequest;
         let mut display: Vec<String> = Vec::new();
         let mut feedback: Vec<String> = Vec::new();
+        let mut async_pending = false;
         for req in reqs {
             match req {
                 ToolRequest::Read(path) => match self.read_workspace_file(path) {
@@ -1618,9 +1688,135 @@ impl EditorState {
                         feedback.push(format!("[搜索失败] {}：{}", keyword, e));
                     }
                 },
+                ToolRequest::Symbol(name) => match self.lookup_workspace_symbols(name) {
+                    Ok(results) => {
+                        display.push(format!("✦ 已查找符号 `{}`", name));
+                        feedback.push(format!("[符号定义] {}\n{}", name, results));
+                    }
+                    Err(e) => {
+                        display.push(format!("✕ 查找符号 `{}` 失败：{}", name, e));
+                        feedback.push(format!("[符号查找失败] {}：{}", name, e));
+                    }
+                },
+                // 浏览器打开：只把页面呈现给用户，成功时不产生回喂
+                ToolRequest::Open(query) => match self.agent_browser_open(query) {
+                    Ok(url) => {
+                        display.push(format!("◍ 已在内置浏览器打开 `{}`", url));
+                        self.win.dirty_tracker.mark_full_window();
+                    }
+                    Err(e) => {
+                        display.push(format!("✕ 打开浏览器失败：{}", e));
+                        feedback.push(format!("[浏览器不可用] {}", e));
+                    }
+                },
+                // 网页正文提取：异步采集，结果由主循环轮询后回喂
+                ToolRequest::ReadPage(url) => match self.agent_browser_read(url) {
+                    Ok(id) => {
+                        let shown = if url.trim().is_empty() {
+                            self.browser
+                                .get(id)
+                                .map(|i| i.url.clone())
+                                .unwrap_or_default()
+                        } else {
+                            crate::browser::normalize_url(url)
+                        };
+                        display.push(format!("◍ 正在读取网页 `{}`", shown));
+                        self.browser
+                            .pending_reads
+                            .push(crate::browser::PendingPageRead {
+                                id,
+                                conv_idx,
+                                started: std::time::Instant::now(),
+                                url: shown,
+                                extra_feedback: String::new(),
+                            });
+                        async_pending = true;
+                        self.win.dirty_tracker.mark_full_window();
+                    }
+                    Err(e) => {
+                        display.push(format!("✕ 读取网页失败：{}", e));
+                        feedback.push(format!("[网页读取失败] {}：{}", url, e));
+                    }
+                },
             }
         }
-        (display, feedback.join("\n\n"))
+        // 有异步采集在途时，把本轮同步探查结果挂到首个任务，随网页内容一起回喂
+        if async_pending {
+            let joined = feedback.join("\n\n");
+            if !joined.is_empty() {
+                if let Some(task) = self
+                    .browser
+                    .pending_reads
+                    .iter_mut()
+                    .find(|t| t.conv_idx == conv_idx && t.extra_feedback.is_empty())
+                {
+                    task.extra_feedback = joined;
+                }
+                feedback.clear();
+            }
+        }
+        (display, feedback.join("\n\n"), async_pending)
+    }
+
+    /// 内置浏览器网页正文采集完成（主循环每帧轮询驱动）：
+    /// 把 `[网页内容]` 作为工具结果回喂对应会话，驱动「搜索 → 阅读 → 回答」循环。
+    pub fn handle_agent_page_read_results(
+        &mut self,
+        results: Vec<(
+            crate::browser::PendingPageRead,
+            std::result::Result<String, String>,
+        )>,
+    ) {
+        for (task, result) in results {
+            let body = match result {
+                Ok(json) => {
+                    let text = crate::browser::format_page_content(
+                        &json,
+                        crate::browser::PAGE_CONTENT_MAX_CHARS,
+                    );
+                    format!("[网页内容] {}\n{}", task.url, text)
+                }
+                Err(e) => format!("[网页读取失败] {}：{}", task.url, e),
+            };
+            let mut feedback = body;
+            if !task.extra_feedback.is_empty() {
+                feedback = format!("{}\n\n{}", task.extra_feedback, feedback);
+            }
+            // 展示一条助手提示，让用户知道内容已回传（不刷屏，仅一行）
+            let display = if task.url.is_empty() {
+                "◍ 网页内容已回传给 AI".to_string()
+            } else {
+                format!("◍ 已读取网页 `{}` 并回传给 AI", task.url)
+            };
+            self.ai
+                .ai_panel
+                .add_assistant_message_to(task.conv_idx, display);
+            self.win.dirty_tracker.mark_full_window();
+
+            if task.conv_idx != self.ai.ai_panel.active {
+                // 后台会话：不回喂续跑（避免与活动会话并发抢占模型请求）
+                self.ai.ai_panel.add_assistant_message_to(
+                    task.conv_idx,
+                    format!(
+                        "（该会话未激活，网页内容未自动续跑：{}）",
+                        truncate_chars(&feedback, 200)
+                    ),
+                );
+                continue;
+            }
+            let settings = self.ui.app_settings.active_ai_settings();
+            let mode = self.ai.ai_panel.mode;
+            if let Err(e) = self
+                .ai
+                .ai_panel
+                .continue_agent_with_tool_result(&settings, feedback, mode)
+            {
+                self.ai.ai_panel.add_assistant_message_to(
+                    task.conv_idx,
+                    format!("（{}，如需继续请手动发消息）", e),
+                );
+            }
+        }
     }
 
     // ==================== CoT 多任务编排流水线 ====================
@@ -2073,4 +2269,35 @@ fn truncate_chars(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(max).collect();
     out.push_str("\n…（输出过长已截断）");
     out
+}
+
+/// 进程级符号索引缓存：`(工作区根目录, 构建时刻, 索引)`。
+/// 根目录变化或超过 TTL 时下次访问重建；AI 落盘编辑后最迟 TTL 秒内可见。
+static SYMBOL_INDEX_CACHE: std::sync::Mutex<
+    Option<(PathBuf, std::time::Instant, aether_symbol::SymbolIndex)>,
+> = std::sync::Mutex::new(None);
+
+/// 索引有效期（秒）：权衡"AI 连续多轮探查不重复建索引"与"看到最新代码"
+const SYMBOL_INDEX_TTL_SECS: u64 = 60;
+
+/// 以缓存索引执行查询闭包（首次/过期时在调用线程同步构建——纯 std 单遍遍历，
+/// 常规仓库毫秒级，无需语言服务器进程）。
+fn with_cached_symbol_index<T>(root: &Path, f: impl FnOnce(&aether_symbol::SymbolIndex) -> T) -> T {
+    let mut cache = SYMBOL_INDEX_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let stale = match cache.as_ref() {
+        Some((r, built, _)) => {
+            r.as_path() != root || built.elapsed().as_secs() > SYMBOL_INDEX_TTL_SECS
+        }
+        None => true,
+    };
+    if stale {
+        tracing::info!("构建工作区符号索引: {}", root.display());
+        let index = aether_symbol::SymbolIndex::build(root);
+        tracing::info!("符号索引构建完成: {} 个符号", index.len());
+        *cache = Some((root.to_path_buf(), std::time::Instant::now(), index));
+    }
+    let (_, _, index) = cache.as_ref().expect("索引刚构建，必定存在");
+    f(index)
 }

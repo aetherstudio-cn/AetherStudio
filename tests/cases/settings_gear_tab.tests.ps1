@@ -1,6 +1,6 @@
 # 用例：标题栏齿轮打开设置标签页（回归：D2D 裁剪栈不配对毒化渲染目标致整窗冻结）
 # =============================================================================
-#   Target    : 开发者模式 → 标题栏设置按钮（齿轮）
+#   Target    : 智能体模式 → 标题栏设置按钮（齿轮）
 #   Feature   : 缺陷修复回归。render_settings_sidebar 内容区 PushAxisAlignedClip
 #               后误用 PopLayer 弹栈，毒化 D2D 渲染目标，EndDraw 永久返回
 #               0x88990014（D2DERR_DISPLAY_STATE_INVALID）；恢复循环每帧重建
@@ -8,7 +8,7 @@
 #               用户感知为"点击齿轮没反应"。
 #               修复点：crates/aether-win32/src/render/settings_general.rs
 #               （target.PopLayer() → target.PopAxisAlignedClip()）
-#   Scenario  : 开发者模式打开工作区 → 点击标题栏齿轮 → 打开"设置"标签页并持续渲染
+#   Scenario  : 打开工作区 → 点击标题栏齿轮 → 打开"设置"标签页并持续渲染
 #   Expect    : 1. 点击后画面发生变化（设置页渲染出来，而非冻结在旧画面）
 #               2. 设置页打开后窗口仍响应交互（再点侧栏开关按钮画面继续变化）
 #               3. 本次会话日志无 "EndDraw 失败"（每帧丢帧是冻结的直接证据）
@@ -23,25 +23,6 @@ Import-Module "$PSScriptRoot\..\framework\AetherTest.psm1" -Force
 Import-Module "$PSScriptRoot\..\framework\AetherAi.psm1" -Force
 
 Start-TestCase "settings_gear_tab"
-
-# ---- 模式防御：齿轮行为依赖开发者模式布局。
-# ---- 模式持久化在 %APPDATA%\Aether\settings.json 的 ui.editor_mode，
-# ---- 若用户上次停在智能体模式会污染本用例：临时改为 developer，结束后还原。
-$settingsFile = Join-Path $env:APPDATA "Aether\settings.json"
-$settingsBackup = $null
-if (Test-Path $settingsFile) {
-    try {
-        $cfg = Get-Content $settingsFile -Raw | ConvertFrom-Json
-        if ($cfg.ui -and $cfg.ui.editor_mode -eq "agent") {
-            $settingsBackup = Get-Content $settingsFile -Raw
-            $cfg.ui.editor_mode = "developer"
-            $cfg | ConvertTo-Json -Depth 20 | Set-Content $settingsFile -Encoding UTF8
-            Write-Host "[setup] 临时切换 editor_mode=developer（用例结束自动还原）"
-        }
-    } catch {
-        Write-Host "[setup] settings.json 读取失败，按默认模式继续: $_"
-    }
-}
 
 $ws = $null
 $proc = $null
@@ -99,11 +80,6 @@ try {
     }
 } finally {
     if ($proc) { Stop-AetherApp -Process $proc }
-    # 应用退出后再还原用户设置（应用退出时会落盘 settings.json，先停进程再写回）
-    if ($settingsBackup) {
-        Set-Content -Path $settingsFile -Value $settingsBackup -Encoding UTF8 -NoNewline
-        Write-Host "[teardown] 已还原用户 settings.json"
-    }
     if ($ws) { Remove-AetherTestWorkspace -Path $ws }
 }
 

@@ -266,9 +266,9 @@ Write-Host "标签数: $($state.TabCount), 状态栏: $($state.StatusBarItems -j
     停在旧帧。断言三件套：操作前后截图 `Assert-AetherUiChanged`（画面必须变化）+
     再触发一次可见交互验证持续响应 + `Get-AetherLogSince` 断言无 "EndDraw 失败"。
     参考用例：`cases/settings_gear_tab.tests.ps1`。
-15. **编辑器模式持久化污染用例**：模式存于 `%APPDATA%\Aether\settings.json` 的
-    `ui.editor_mode`，依赖特定模式的用例（如齿轮开设置 tab 仅开发者模式）启动前
-    检测该字段，必要时临时改写并在 finally 中先停进程再还原（应用退出时会落盘）。
+15. **应用仅智能体模式**：无编辑器模式切换；若历史 settings.json 残留旧版
+    `ui.editor_mode` 字段会被反序列化忽略（未知字段默认跳过），无需用例内
+    模式防御。
 16. **PowerShell 返回值数组语义**：函数用 `, $x` 逗号包裹返回时，调用方再套 `@()`
     会二次包裹——空结果 `.Count` 也成 1（假阳性），索引取到整个数组（坐标运算抛
     op_Division）。另注意逗号优先级低于下标：`return , $arr[$i]` 解析为 `(,$arr)[$i]`。

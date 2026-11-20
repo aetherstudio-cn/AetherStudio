@@ -119,7 +119,7 @@ impl EditorState {
     }
 
     /// 新标签页（NTP）起始页：快捷搜索框 + 快捷操作按钮（打开本地文件/新建文件/打开终端）。
-    /// 经典模式与智能体模式共用，几何取自 new_tab_page_region（与点击/光标/IME 一致）。
+    /// 几何取自 new_tab_page_region（与点击/光标/IME 一致）。
     pub(crate) fn render_new_tab_page(
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,

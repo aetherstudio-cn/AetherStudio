@@ -926,8 +926,7 @@ impl EditorState {
         }
     }
 
-    /// 渲染"通用"标签页内容（主题 / 字体大小 / 自动保存等概览；
-    /// 「默认启动模式」行可点击切换 开发者/智能体，持久化后重启生效）
+    /// 渲染"通用"标签页内容（主题 / 字体大小 / 自动保存等概览）
     pub(super) fn render_general_settings(
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
@@ -954,42 +953,6 @@ impl EditorState {
                 ("编辑器字体大小", format!("{} px", font_size), None),
             ];
             cy = self.draw_settings_group(target, "外观与字体", x, width, cy, &appearance_rows);
-            cy += 20.0;
-
-            // 分组「编辑器模式」
-            let mode_label = if self.editor_mode.is_agent() {
-                "智能体模式"
-            } else {
-                "开发者模式"
-            };
-            let default_is_agent = self.ui.app_settings.ui.editor_mode.is_agent();
-            let mode_rows = [
-                ("当前模式", mode_label.to_string(), None),
-                (
-                    "默认启动模式",
-                    format!(
-                        "{}（点击切换）",
-                        if default_is_agent {
-                            "智能体模式"
-                        } else {
-                            "开发者模式"
-                        }
-                    ),
-                    None,
-                ),
-            ];
-            // 「默认启动模式」是第 2 行：卡片顶 = 分组 y + 24，行高 SETTINGS_ROW_H。
-            // 注册命中区供点击切换（与外观页任务栏开关同一交互模式）
-            self.ui.settings_panel.default_mode_toggle_region =
-                Some((x, cy + 24.0 + SETTINGS_ROW_H, width, SETTINGS_ROW_H));
-            crate::hit_test::register_hit_region(
-                "settings:default_mode",
-                x,
-                cy + 24.0 + SETTINGS_ROW_H,
-                width,
-                SETTINGS_ROW_H,
-            );
-            cy = self.draw_settings_group(target, "编辑器模式", x, width, cy, &mode_rows);
             cy += 20.0;
 
             // 分组「自动保存」
