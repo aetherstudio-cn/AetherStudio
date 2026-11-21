@@ -1090,6 +1090,18 @@ pub struct AiPanel {
     pub agent_tab_close_regions: Vec<(usize, f32, f32, f32, f32)>,
     /// 智能体模式左侧边栏：文件树区域 y 偏移量（相对于侧边栏顶部）
     pub agent_file_tree_offset_y: f32,
+    /// 欢迎卡快捷 chips 悬停下标（微动效进度由 ui_anim 驱动）
+    pub hover_welcome_chip: Option<usize>,
+    /// 侧栏「新会话」按钮悬停
+    pub hover_new_chat: bool,
+    /// 输入区模型选择按钮悬停
+    pub hover_model_btn: bool,
+    /// 输入区发送/中断按钮悬停
+    pub hover_send_btn: bool,
+    /// 输入区模型选择按钮命中区 (x, y, w, h)，渲染每帧更新
+    pub model_btn_region: Option<(f32, f32, f32, f32)>,
+    /// 输入区发送/中断按钮命中区 (x, y, w, h)，渲染每帧更新
+    pub send_btn_region: Option<(f32, f32, f32, f32)>,
     /// 在途请求是否启用深度思考（思考模式首包延迟显著更高，超时看门狗阈值相应放宽）
     pub in_flight_thinking: bool,
     /// 询问卡片选项命中区 (msg_idx, ask_seq, opt_idx, x, y, w, h)，渲染每帧更新
@@ -1281,6 +1293,12 @@ impl AiPanel {
             agent_tab_regions: Vec::new(),
             agent_tab_close_regions: Vec::new(),
             agent_file_tree_offset_y: 0.0,
+            hover_welcome_chip: None,
+            hover_new_chat: false,
+            hover_model_btn: false,
+            hover_send_btn: false,
+            model_btn_region: None,
+            send_btn_region: None,
             in_flight_thinking: false,
             ask_option_regions: Vec::new(),
             ask_custom_regions: Vec::new(),

@@ -185,7 +185,18 @@ impl StatusBar {
             // 图标占用 14px + 4px 间距，预留 20px
             let icon_width = if section.icon.is_some() { 20.0 } else { 0.0 };
             // padding 8px * 2 = 16px
-            let total = text_width + icon_width + 16.0;
+            let mut total = text_width + icon_width + 16.0;
+            if total > 200.0 {
+                // 超长文本（如长分支名）按可用宽度截断加省略号：
+                // 宽度被 clamp 后若不截断 label，DrawText 会在分区内换行撑破状态栏
+                let avail = 200.0 - icon_width - 16.0;
+                section.label =
+                    cache.truncate_with_ellipsis(&section.label, font_size, font_weight, avail);
+                text_width = cache
+                    .measure_text_width(&section.label, font_size, font_weight)
+                    .unwrap_or(avail);
+                total = text_width + icon_width + 16.0;
+            }
             section.width = total.clamp(40.0, 200.0);
         }
     }
@@ -315,6 +326,25 @@ mod tests {
             windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
         );
         assert_eq!(bar.sections[StatusBarIndex::GitBranch as usize].width, 0.0);
+    }
+
+    #[test]
+    fn test_update_widths_truncates_long_branch() {
+        let Ok(cache) = aether_render::d2d::brush_cache::TextFormatCache::new() else {
+            return;
+        };
+        let mut bar = StatusBar::new();
+        bar.update_git_branch(Some("songdiyang/very-long-feature-branch-name-overflow"));
+        bar.update_widths(
+            &cache,
+            12.0,
+            windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
+        );
+        let sec = &bar.sections[StatusBarIndex::GitBranch as usize];
+        // 宽度不超上限，且 label 截断加省略号（避免分区内换行撑破状态栏）
+        assert!(sec.width <= 200.0, "{}", sec.width);
+        assert!(sec.label.ends_with('…'), "{}", sec.label);
+        assert!(sec.label.chars().count() < 48, "{}", sec.label);
     }
 
     #[test]

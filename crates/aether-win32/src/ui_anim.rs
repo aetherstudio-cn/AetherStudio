@@ -23,6 +23,16 @@ pub struct HoverAnim {
     pub activity: Vec<f32>,
     /// 标签栏各项悬停进度
     pub tabs: Vec<f32>,
+    /// AI 欢迎卡快捷 chips 各项悬停进度
+    pub ai_chips: Vec<f32>,
+    /// AI 侧栏对话项各项悬停进度
+    pub ai_tabs: Vec<f32>,
+    /// AI 面板按钮悬停进度：0=新会话 1=模型选择 2=发送
+    pub ai_btns: Vec<f32>,
+    /// AI 输入框聚焦环进度（独立通道：聚焦与按钮悬停可同时存在）
+    pub ai_focus: f32,
+    /// 渲染侧上一帧见过的聚焦状态：变化时由渲染启动 UI_ANIM 定时器驱动聚焦环淡入淡出
+    pub ai_focus_seen: bool,
 }
 
 impl HoverAnim {
@@ -70,6 +80,47 @@ impl HoverAnim {
     /// 标签栏第 i 项的当前进度（越界返回 0）
     pub fn tab_progress(&self, i: usize) -> f32 {
         self.tabs.get(i).copied().unwrap_or(0.0)
+    }
+
+    /// 推进 AI 面板各通道一帧（欢迎 chips / 侧栏对话项 / 按钮 / 输入聚焦环）。
+    /// 返回 true 表示仍有动画在途（调用方应保留定时器并继续重绘）。
+    pub fn tick_ai(
+        &mut self,
+        chip_hover: Option<usize>,
+        chip_len: usize,
+        tab_hover: Option<usize>,
+        tab_len: usize,
+        btn_hover: Option<usize>,
+        input_focused: bool,
+    ) -> bool {
+        let mut animating = Self::advance(&mut self.ai_chips, chip_hover, chip_len)
+            | Self::advance(&mut self.ai_tabs, tab_hover, tab_len)
+            | Self::advance(&mut self.ai_btns, btn_hover, 3);
+        let target = if input_focused { 1.0 } else { 0.0 };
+        if (self.ai_focus - target).abs() > f32::EPSILON {
+            self.ai_focus = if self.ai_focus < target {
+                (self.ai_focus + STEP).min(target)
+            } else {
+                (self.ai_focus - STEP).max(target)
+            };
+            animating |= (self.ai_focus - target).abs() > f32::EPSILON;
+        }
+        animating
+    }
+
+    /// 欢迎卡第 i 个 chip 的当前进度（越界返回 0）
+    pub fn ai_chip_progress(&self, i: usize) -> f32 {
+        self.ai_chips.get(i).copied().unwrap_or(0.0)
+    }
+
+    /// 侧栏第 i 个对话项的当前进度（越界返回 0）
+    pub fn ai_tab_progress(&self, i: usize) -> f32 {
+        self.ai_tabs.get(i).copied().unwrap_or(0.0)
+    }
+
+    /// AI 面板第 i 个按钮的当前进度（越界返回 0）
+    pub fn ai_btn_progress(&self, i: usize) -> f32 {
+        self.ai_btns.get(i).copied().unwrap_or(0.0)
     }
 }
 
@@ -140,5 +191,50 @@ mod tests {
         let anim = HoverAnim::new();
         assert_eq!(anim.activity_progress(99), 0.0);
         assert_eq!(anim.tab_progress(99), 0.0);
+    }
+
+    #[test]
+    fn test_tick_ai_channels_independent() {
+        let mut anim = HoverAnim::new();
+        // chip 1 悬停 + 对话项 0 悬停 + 发送按钮(2) 悬停 + 聚焦：四通道并行
+        assert!(anim.tick_ai(Some(1), 4, Some(0), 2, Some(2), true));
+        for _ in 0..20 {
+            if !anim.tick_ai(Some(1), 4, Some(0), 2, Some(2), true) {
+                break;
+            }
+        }
+        assert_eq!(anim.ai_chip_progress(1), 1.0);
+        assert_eq!(anim.ai_chip_progress(0), 0.0);
+        assert_eq!(anim.ai_tab_progress(0), 1.0);
+        assert_eq!(anim.ai_btn_progress(2), 1.0);
+        assert_eq!(anim.ai_focus, 1.0);
+        // 全部移走/失焦后淡出归零
+        for _ in 0..20 {
+            if !anim.tick_ai(None, 4, None, 2, None, false) {
+                break;
+            }
+        }
+        assert_eq!(anim.ai_chip_progress(1), 0.0);
+        assert_eq!(anim.ai_tab_progress(0), 0.0);
+        assert_eq!(anim.ai_btn_progress(2), 0.0);
+        assert_eq!(anim.ai_focus, 0.0);
+        assert!(!anim.tick_ai(None, 4, None, 2, None, false));
+    }
+
+    #[test]
+    fn test_tick_ai_focus_independent_of_btn_hover() {
+        let mut anim = HoverAnim::new();
+        // 聚焦环与按钮悬停互不干扰：失焦但悬停发送时聚焦环仍淡出
+        for _ in 0..20 {
+            anim.tick_ai(None, 0, None, 0, Some(2), true);
+        }
+        assert_eq!(anim.ai_focus, 1.0);
+        for _ in 0..20 {
+            if !anim.tick_ai(None, 0, None, 0, Some(2), false) {
+                break;
+            }
+        }
+        assert_eq!(anim.ai_focus, 0.0);
+        assert_eq!(anim.ai_btn_progress(2), 1.0);
     }
 }

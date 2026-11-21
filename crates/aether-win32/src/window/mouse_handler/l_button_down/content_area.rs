@@ -610,12 +610,20 @@ unsafe fn lbd_right_panel_apply_input(
     }
 
     // ===== 当前模型下拉（底部工具栏，在对话框内切换当前使用的模型）=====
-    // 几何与 render_ai_assistant_sidebar 中的模型按钮/弹层保持一致（相对右侧面板坐标）。
+    // 几何取渲染注册的命中区（模型名自适应宽度），换算为面板相对坐标。
     {
-        let toolbar_y = right_panel_region.height - 30.0;
-        let toolbar_h = 26.0f32;
-        let model_btn_x = margin + input_margin;
-        let model_btn_w = 140.0f32;
+        let (model_btn_x, toolbar_y, model_btn_w, toolbar_h) = state
+            .borrow()
+            .ai
+            .ai_panel
+            .model_btn_region
+            .map(|(bx, by, bw, bh)| (bx - right_panel_region.x, by - right_panel_region.y, bw, bh))
+            .unwrap_or((
+                margin + input_margin,
+                right_panel_region.height - 30.0,
+                140.0,
+                26.0,
+            ));
 
         let menu_open = state.borrow().ai.ai_panel.model_menu_open;
         if menu_open {
@@ -734,11 +742,19 @@ unsafe fn lbd_right_panel_apply_input(
     let toolbar_y = toolbar_sep_y + 4.0;
     let _toolbar_h = 26.0f32;
 
-    // 发送/中断按钮（根据生成状态切换）
-    let send_btn_size = 24.0f32;
-    let right_btn_area_x = right_panel_region.width - margin - input_margin;
-    let send_btn_x = right_btn_area_x - send_btn_size;
-    let send_btn_y = toolbar_y + 1.0;
+    // 发送/中断按钮：命中区取渲染注册（换算为面板相对坐标）
+    let (send_btn_x, send_btn_y, send_btn_size, _send_btn_h) = state
+        .borrow()
+        .ai
+        .ai_panel
+        .send_btn_region
+        .map(|(bx, by, bw, bh)| (bx - right_panel_region.x, by - right_panel_region.y, bw, bh))
+        .unwrap_or((
+            right_panel_region.width - margin - input_margin - 24.0,
+            toolbar_y + 1.0,
+            24.0,
+            24.0,
+        ));
     if rp_rel_x >= send_btn_x
         && rp_rel_x < send_btn_x + send_btn_size
         && rp_rel_y >= send_btn_y
@@ -775,28 +791,7 @@ unsafe fn lbd_right_panel_apply_input(
         return Some(LRESULT(0));
     }
 
-    // 星星按钮（问题扩写）——发送按钮左侧
-    let star_btn_size = 24.0f32;
-    let star_btn_x = send_btn_x - star_btn_size - 4.0;
-    if rp_rel_x >= star_btn_x
-        && rp_rel_x < star_btn_x + star_btn_size
-        && rp_rel_y >= send_btn_y
-        && rp_rel_y < send_btn_y + star_btn_size
-    {
-        let mut st = state.borrow_mut();
-        let settings = st.ui.app_settings.active_ai_settings();
-        match st.ai.ai_panel.expand_input(&settings) {
-            Ok(msg) => {
-                st.ui.status_message = msg;
-                let _ = SetTimer(hwnd, AI_TIMER_ID, AI_REFRESH_MS, None);
-            }
-            Err(e) => {
-                st.ui.status_message = e;
-            }
-        }
-        invalidate_window(hwnd);
-        return Some(LRESULT(0));
-    }
+    // 星星按钮（问题扩写）已随工具栏简化移除渲染，命中检测一并删除避免幽灵点击
 
     // 图片 chip 点击：移除对应待发送图片（命中区由渲染帧注册）
     {
