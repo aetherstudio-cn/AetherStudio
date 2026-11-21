@@ -389,7 +389,15 @@ impl EditorState {
                 self.ui.status_message = "正在检查更新...".to_string();
                 crate::updater::start_check(hwnd, true);
             }
-            // 桌面截图：捕获虚拟屏幕落盘后打开图片预览标签，状态栏提示保存路径
+            // 安全检查（离线密钥扫描）：报告经对话消息呈现，状态栏提示摘要
+            crate::menu_bar::CommandId::ToolsSecurityScan => {
+                let root = self.fs.current_folder.clone();
+                let report =
+                    crate::security_scan::run_security_scan(root.as_deref(), None, "secrets");
+                self.ai.ai_panel.add_assistant_message(report);
+                self.ui.status_message = "安全检查完成（工作区密钥扫描）".to_string();
+                self.win.dirty_tracker.mark_full_window();
+            }
             crate::menu_bar::CommandId::ToolsDesktopShot => {
                 match crate::screen_capture::capture_screen_to_file() {
                     Ok(path) => {

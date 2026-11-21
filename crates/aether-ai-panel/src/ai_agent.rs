@@ -60,6 +60,9 @@ pub const SHOT_PREFIX: &str = "<<<<<<< AETHER_SHOT";
 pub const INPUT_HEADER: &str = "<<<<<<< AETHER_INPUT";
 /// 模拟输入脚本块结束：`>>>>>>> AETHER_END_INPUT`
 pub const INPUT_FOOTER: &str = ">>>>>>> AETHER_END_INPUT";
+/// 网络安全检查标记（单行指令，范围参数）：`<<<<<<< AETHER_SECCHECK [all|secrets|deps|tls|plugins]`
+/// 生成离线优先的安全体检报告（密钥扫描/依赖漏洞/端点 TLS/插件权限）。
+pub const SECCHECK_PREFIX: &str = "<<<<<<< AETHER_SECCHECK";
 
 /// 快速判断回复是否包含需要工作区的 Agent 工具标记（用于"未打开工作区"前置校验）。
 ///
@@ -101,6 +104,9 @@ pub enum ToolRequest {
     /// 桌面/窗口截图（参数为作用域 "screen" 或 "window"），
     /// 捕获落盘后回喂路径；多模态模型同时收到附图
     Shot(String),
+    /// 网络安全检查（参数为范围：all/secrets/deps/tls/plugins），
+    /// 生成报告文本回喂模型
+    SecCheck(String),
 }
 
 /// 解析单行指令标记，返回其后的参数（前缀后须紧跟空白或行尾）。
@@ -953,6 +959,16 @@ pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
                 "screen"
             };
             reqs.push(ToolRequest::Shot(scope.to_string()));
+            i += 1;
+            continue;
+        }
+        // 网络安全检查：范围缺省/非法值均按 all 处理
+        if let Some(p) = parse_directive(t, SECCHECK_PREFIX) {
+            let scope = match p.to_ascii_lowercase().as_str() {
+                "secrets" | "deps" | "tls" | "plugins" => p.to_ascii_lowercase(),
+                _ => "all".to_string(),
+            };
+            reqs.push(ToolRequest::SecCheck(scope));
             i += 1;
             continue;
         }
@@ -2320,5 +2336,25 @@ RUN python -m http.server 8000\n\
         let resp = "<<<<<<< AETHER_INPUT\n<<<<<<< AETHER_READ fake.rs\nkey enter\n>>>>>>> AETHER_END_INPUT\n<<<<<<< AETHER_SHOT window";
         let reqs = parse_tool_requests(resp);
         assert_eq!(reqs, vec![ToolRequest::Shot("window".into())]);
+    }
+
+    #[test]
+    fn test_parse_seccheck_scope() {
+        // 缺省/非法范围 → all
+        assert_eq!(
+            parse_tool_requests("<<<<<<< AETHER_SECCHECK"),
+            vec![ToolRequest::SecCheck("all".into())]
+        );
+        assert_eq!(
+            parse_tool_requests("<<<<<<< AETHER_SECCHECK FOO"),
+            vec![ToolRequest::SecCheck("all".into())]
+        );
+        // 合法范围规范化小写
+        assert_eq!(
+            parse_tool_requests("<<<<<<< AETHER_SECCHECK DEPS"),
+            vec![ToolRequest::SecCheck("deps".into())]
+        );
+        // 前缀粘连不识别
+        assert!(parse_tool_requests("<<<<<<< AETHER_SECCHECKX").is_empty());
     }
 }

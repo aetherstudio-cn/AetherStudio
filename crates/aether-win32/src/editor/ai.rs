@@ -1912,6 +1912,21 @@ impl EditorState {
                         }
                     }
                 }
+                // 网络安全检查：生成离线优先报告（deps/tls 范围在用户触发时联网）
+                ToolRequest::SecCheck(scope) => {
+                    let root = self.fs.current_folder.clone();
+                    let base_url = self.ui.app_settings.active_ai_settings().base_url;
+                    let start = std::time::Instant::now();
+                    let report = crate::security_scan::run_security_scan(
+                        root.as_deref(),
+                        base_url.as_deref(),
+                        scope,
+                    );
+                    let ms = start.elapsed().as_millis();
+                    display.push(format!("◈ 安全检查完成（{}，{}ms）", scope, ms));
+                    feedback.push(format!("[安全检查]\n{}", report));
+                    self.ui.status_message = format!("安全检查完成（{}）", scope);
+                }
             }
         }
         // 有异步采集在途时，把本轮同步探查结果挂到首个任务，随网页内容一起回喂

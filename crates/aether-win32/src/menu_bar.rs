@@ -77,6 +77,8 @@ pub enum CommandId {
     AiFixDiagnostics,
     /// 桌面截图（捕获虚拟屏幕并打开图片预览）
     ToolsDesktopShot,
+    /// 安全检查（工作区密钥扫描，离线）
+    ToolsSecurityScan,
     // 帮助
     HelpCheckUpdate,
     HelpAbout,
@@ -118,6 +120,7 @@ impl CommandId {
             CommandId::SearchGlobal => "全局搜索",
             CommandId::AiFixDiagnostics => "AI 修复当前诊断",
             CommandId::ToolsDesktopShot => "桌面截图",
+            CommandId::ToolsSecurityScan => "安全检查",
             CommandId::HelpCheckUpdate => "检查更新",
             CommandId::HelpAbout => "关于",
             CommandId::MarkdownTogglePreview => "Markdown 预览",
