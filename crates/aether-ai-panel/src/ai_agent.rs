@@ -947,7 +947,11 @@ pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
         }
         // 桌面截图：作用域缺省/非法值均按 screen 处理
         if let Some(p) = parse_directive(t, SHOT_PREFIX) {
-            let scope = if p.eq_ignore_ascii_case("window") { "window" } else { "screen" };
+            let scope = if p.eq_ignore_ascii_case("window") {
+                "window"
+            } else {
+                "screen"
+            };
             reqs.push(ToolRequest::Shot(scope.to_string()));
             i += 1;
             continue;
@@ -2296,7 +2300,8 @@ RUN python -m http.server 8000\n\
 
     #[test]
     fn test_parse_input_scripts() {
-        let resp = "说明文字\n<<<<<<< AETHER_INPUT\ntype hello\nkey enter\n>>>>>>> AETHER_END_INPUT\n收尾";
+        let resp =
+            "说明文字\n<<<<<<< AETHER_INPUT\ntype hello\nkey enter\n>>>>>>> AETHER_END_INPUT\n收尾";
         let scripts = parse_input_scripts(resp);
         assert_eq!(scripts, vec!["type hello\nkey enter\n".to_string()]);
         // 多块提取

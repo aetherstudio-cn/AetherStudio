@@ -229,6 +229,13 @@ impl CommandPalette {
                 icon: Some(IconKind::FileMarkdown),
             },
             CommandPaletteItem {
+                label: "工具: 桌面截图".to_string(),
+                description: Some("捕获整个桌面并打开图片预览".to_string()),
+                shortcut: None,
+                command_id: CommandId::ToolsDesktopShot,
+                icon: Some(IconKind::Image),
+            },
+            CommandPaletteItem {
                 label: "文件: 退出".to_string(),
                 description: Some("退出编辑器".to_string()),
                 shortcut: Some("Alt+F4".to_string()),

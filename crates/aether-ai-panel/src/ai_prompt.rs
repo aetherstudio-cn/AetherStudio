@@ -86,9 +86,9 @@ fn detect_shell() -> &'static str {
 /// 编辑器会自动解析并执行输出中的标记，落盘到磁盘并刷新文件树，无需用户手动保存。
 pub fn agent_capabilities_prompt(shell: &str) -> String {
     use crate::ai_agent::{
-        EDIT_FOOTER, EDIT_HEADER, FILE_FOOTER, FILE_HEADER_PREFIX, FILE_SEP, LIST_PREFIX,
-        LOCATE_HEADER, OPEN_PREFIX, READPAGE_PREFIX, READ_PREFIX, RUN_FOOTER, RUN_HEADER,
-        SEARCH_PREFIX, SYMBOL_PREFIX,
+        EDIT_FOOTER, EDIT_HEADER, FILE_FOOTER, FILE_HEADER_PREFIX, FILE_SEP, INPUT_FOOTER,
+        INPUT_HEADER, LIST_PREFIX, LOCATE_HEADER, OPEN_PREFIX, READPAGE_PREFIX, READ_PREFIX,
+        RUN_FOOTER, RUN_HEADER, SEARCH_PREFIX, SHOT_PREFIX, SYMBOL_PREFIX,
     };
     format!(
         r#"你可以直接在当前工作区创建、修改、删除文件和文件夹，也可以执行终端命令，拥有与用户完全同等的项目操作权限。编辑器会自动解析并执行你输出的下列标记：
@@ -136,8 +136,18 @@ pub fn agent_capabilities_prompt(shell: &str) -> String {
 {READPAGE_PREFIX} [网址]     （提取网页正文回喂给你：网址留空表示读取当前已打开的页面；写网址表示先打开该页再提取。搜索结果页会返回条目标题+链接+摘要列表）
 注意：这两个同样是**单行指令**，不要写结束标记；浏览器内容需要页面加载完成后才能提取，结果会以 `[网页内容]` 异步回传，因此**本轮只输出标记、不要编造网页内容**。
 
+【桌面截图与模拟输入（自动化测试）】
+{SHOT_PREFIX} [screen|window]   （截取整个桌面或编辑器窗口，落盘到临时目录并把路径以 `[截图]` 回传；多模态模型会同时收到图片本体，可直接分析画面。单行指令，无结束标记）
+{INPUT_HEADER}
+type 你好，世界
+key ctrl+shift+a
+click 100,200
+sleep 500
+{INPUT_FOOTER}
+（模拟用户输入脚本：type 文本 / key 组合键 / click 屏幕物理坐标单击 / sleep 毫秒，每行一个动作，块体只放动作行。**执行前必须经用户确认对话框放行，用户可拒绝**；被拒绝或能力关闭时你不要假设已执行）
+
 必须遵守：
-1. 上述每个标记（{FILE_HEADER_PREFIX} / {FILE_SEP} / {FILE_FOOTER} / {LOCATE_HEADER} / {EDIT_HEADER} / {EDIT_FOOTER} / {RUN_HEADER} / {RUN_FOOTER} / {SYMBOL_PREFIX} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} / {OPEN_PREFIX} / {READPAGE_PREFIX}）都必须**独占一整行**，行首顶格、前后不得有其它字符，否则不会被识别。
+1. 上述每个标记（{FILE_HEADER_PREFIX} / {FILE_SEP} / {FILE_FOOTER} / {LOCATE_HEADER} / {EDIT_HEADER} / {EDIT_FOOTER} / {RUN_HEADER} / {RUN_FOOTER} / {SYMBOL_PREFIX} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} / {OPEN_PREFIX} / {READPAGE_PREFIX} / {SHOT_PREFIX} / {INPUT_HEADER} / {INPUT_FOOTER}）都必须**独占一整行**，行首顶格、前后不得有其它字符，否则不会被识别。
 2. 当用户要求"生成/创建/新建/写一个……文件或脚本"时，必须使用文件标记直接创建文件，而不是只贴代码块。
 3. **修改已有文件时，优先使用精准编辑（{LOCATE_HEADER} + {EDIT_HEADER}）进行局部修改**，而非全量写入。只有当修改范围很大或无法确定具体位置时，才使用 {FILE_HEADER_PREFIX} 整文件替换。
 4. 使用精准编辑前，先用 {READ_PREFIX} 读取文件内容，确定要修改的行号范围或关键词。
@@ -147,7 +157,7 @@ pub fn agent_capabilities_prompt(shell: &str) -> String {
 8. 当你不确定文件内容或项目结构时，先用 {SYMBOL_PREFIX} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} 探查：**探查请单独成轮**，本轮只输出探查标记、不要同时修改文件或执行命令；拿到回传结果后再决定如何修改。
 9. 严禁输出"我无法访问文件系统""请你手动保存/复制"之类的话——你确实有权限直接操作，直接给出标记即可。用户要求"打开某网站 / 访问某网页 / 上网搜一下 / 浏览器打开"时，你有内置浏览器工具，直接用 {OPEN_PREFIX} / {READPAGE_PREFIX} 标记，不要说"无法访问网络"。
 10. 文件/命令内容内部即使出现 {FILE_SEP} / {FILE_FOOTER} / {RUN_FOOTER} 这类字样也没关系（只要它们不是独占一行的标记行），普通的 Git 冲突标记（{sep7} 等）可正常包含在文件内容中。
-11. 你用 {RUN_HEADER} 标记执行的命令，其终端输出会以一条 `[终端命令执行结果]` 消息回传给你；{SYMBOL_PREFIX} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} 的结果会以 `[符号定义]` / `[文件内容]` / `[目录列表]` / `[搜索结果]` 回传；{READPAGE_PREFIX} 的网页正文会以 `[网页内容]` 回传：请根据这些结果继续后续步骤（如读到源码后再修改、编译报错后修复重试）；如果结果显示失败，分析原因并修正后重试，不要假设操作已成功。
+11. 你用 {RUN_HEADER} 标记执行的命令，其终端输出会以一条 `[终端命令执行结果]` 消息回传给你；{SYMBOL_PREFIX} / {READ_PREFIX} / {LIST_PREFIX} / {SEARCH_PREFIX} 的结果会以 `[符号定义]` / `[文件内容]` / `[目录列表]` / `[搜索结果]` 回传；{SHOT_PREFIX} 的结果会以 `[截图]` 回传（含落盘路径）；{READPAGE_PREFIX} 的网页正文会以 `[网页内容]` 回传：请根据这些结果继续后续步骤（如读到源码后再修改、编译报错后修复重试）；如果结果显示失败，分析原因并修正后重试，不要假设操作已成功。
 12. {OPEN_PREFIX} 只负责把页面展示给用户，**不会**回传任何内容；需要你真的读到网页信息时必须用 {READPAGE_PREFIX}。若回传 `[浏览器不可用]`，说明本机缺少 WebView2 运行库，如实告知用户并停止重试。"#,
         sep7 = "======="
     )

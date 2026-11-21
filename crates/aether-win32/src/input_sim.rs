@@ -15,8 +15,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
     MOUSEEVENTF_MOVE, MOUSEINPUT, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
     VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8,
-    VK_F9, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN,
-    VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+    VK_F9, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT,
+    VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
@@ -172,7 +172,12 @@ pub fn action_summary(actions: &[InputAction]) -> String {
             InputAction::Type(t) => {
                 let shown: String = t.chars().take(40).collect();
                 let ellipsis = if t.chars().count() > 40 { "…" } else { "" };
-                format!("输入文本 \"{}{}\"（{} 字符）", shown, ellipsis, t.chars().count())
+                format!(
+                    "输入文本 \"{}{}\"（{} 字符）",
+                    shown,
+                    ellipsis,
+                    t.chars().count()
+                )
             }
             InputAction::Key { modifiers, key } => {
                 let mut combo = modifiers.join("+");
@@ -265,7 +270,11 @@ pub fn execute_action(action: &InputAction) -> Result<(), String> {
     }
 }
 
-fn key_input(vk: u16, scan: u16, flags: windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS) -> INPUT {
+fn key_input(
+    vk: u16,
+    scan: u16,
+    flags: windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS,
+) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -287,6 +296,51 @@ fn send(inputs: &[INPUT]) -> Result<(), String> {
     Ok(())
 }
 
+/// UI 线程定时器驱动的执行器状态：每次tick弹出就绪动作，Sleep 转为等待截止时刻，
+/// 不阻塞消息泵；纯状态逻辑可单测（实际注入由调用方执行 execute_action）。
+#[derive(Default)]
+pub struct InputSimRunner {
+    /// 待执行动作队列
+    pub queue: std::collections::VecDeque<InputAction>,
+    /// Sleep 动作的等待截止时刻
+    pub wait_until: Option<std::time::Instant>,
+}
+
+impl InputSimRunner {
+    /// 追加一批动作（确认放行后调用）
+    pub fn enqueue(&mut self, actions: Vec<InputAction>) {
+        self.queue.extend(actions);
+    }
+
+    /// 是否仍有在途动作/等待（定时器据此决定停表）
+    pub fn is_active(&self) -> bool {
+        !self.queue.is_empty() || self.wait_until.is_some()
+    }
+
+    /// 返回 now 时刻应立即执行的动作；队首为 Sleep 时设置等待截止并返回 None。
+    pub fn next_ready(&mut self, now: std::time::Instant) -> Option<InputAction> {
+        if let Some(until) = self.wait_until {
+            if now < until {
+                return None;
+            }
+            self.wait_until = None;
+        }
+        match self.queue.pop_front() {
+            Some(InputAction::Sleep(ms)) => {
+                self.wait_until = Some(now + std::time::Duration::from_millis(ms));
+                None
+            }
+            other => other,
+        }
+    }
+
+    /// 清空队列与等待（出错/中断时调用）
+    pub fn clear(&mut self) {
+        self.queue.clear();
+        self.wait_until = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,7 +353,10 @@ mod tests {
             actions,
             vec![
                 InputAction::Type("你好 world".to_string()),
-                InputAction::Key { modifiers: vec!["ctrl".into(), "shift".into()], key: "a".into() },
+                InputAction::Key {
+                    modifiers: vec!["ctrl".into(), "shift".into()],
+                    key: "a".into()
+                },
                 InputAction::Click { x: 100, y: 200 },
                 InputAction::Sleep(500),
             ]
@@ -311,7 +368,10 @@ mod tests {
         let actions = parse_input_script("key enter").unwrap();
         assert_eq!(
             actions,
-            vec![InputAction::Key { modifiers: vec![], key: "enter".into() }]
+            vec![InputAction::Key {
+                modifiers: vec![],
+                key: "enter".into()
+            }]
         );
     }
 
@@ -364,5 +424,50 @@ mod tests {
         let s = action_summary(&actions);
         assert!(s.contains("…"), "{}", s);
         assert!(s.contains("100 字符"), "{}", s);
+    }
+
+    #[test]
+    fn test_runner_order_and_sleep_wait() {
+        let mut r = InputSimRunner::default();
+        assert!(!r.is_active());
+        r.enqueue(parse_input_script("key a\nsleep 500\nkey b").unwrap());
+        assert!(r.is_active());
+        let t0 = std::time::Instant::now();
+        assert_eq!(
+            r.next_ready(t0),
+            Some(InputAction::Key {
+                modifiers: vec![],
+                key: "a".into()
+            })
+        );
+        // 队首 Sleep：设置等待截止，未到期返回 None
+        assert_eq!(r.next_ready(t0), None);
+        assert!(r.wait_until.is_some());
+        assert_eq!(
+            r.next_ready(t0 + std::time::Duration::from_millis(499)),
+            None
+        );
+        // 到期后弹出后续动作
+        assert_eq!(
+            r.next_ready(t0 + std::time::Duration::from_millis(500)),
+            Some(InputAction::Key {
+                modifiers: vec![],
+                key: "b".into()
+            })
+        );
+        assert!(!r.is_active());
+        assert_eq!(r.next_ready(t0), None);
+    }
+
+    #[test]
+    fn test_runner_clear_stops_wait() {
+        let mut r = InputSimRunner::default();
+        r.enqueue(parse_input_script("sleep 1000\nkey a").unwrap());
+        let t0 = std::time::Instant::now();
+        assert_eq!(r.next_ready(t0), None);
+        assert!(r.is_active());
+        r.clear();
+        assert!(!r.is_active());
+        assert_eq!(r.next_ready(t0), None);
     }
 }

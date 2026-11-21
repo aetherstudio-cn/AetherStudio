@@ -1102,6 +1102,9 @@ pub struct AiPanel {
     pub model_btn_region: Option<(f32, f32, f32, f32)>,
     /// 输入区发送/中断按钮命中区 (x, y, w, h)，渲染每帧更新
     pub send_btn_region: Option<(f32, f32, f32, f32)>,
+    /// Agent 工具产物附图暂存（截图等）：续跑时随 Tool 消息发给多模态模型，
+    /// 与用户输入框 pending_images 隔离，避免污染用户待发附件
+    pub agent_tool_images: Vec<AiImageAttachment>,
     /// 在途请求是否启用深度思考（思考模式首包延迟显著更高，超时看门狗阈值相应放宽）
     pub in_flight_thinking: bool,
     /// 询问卡片选项命中区 (msg_idx, ask_seq, opt_idx, x, y, w, h)，渲染每帧更新
@@ -1299,6 +1302,7 @@ impl AiPanel {
             hover_send_btn: false,
             model_btn_region: None,
             send_btn_region: None,
+            agent_tool_images: Vec::new(),
             in_flight_thinking: false,
             ask_option_regions: Vec::new(),
             ask_custom_regions: Vec::new(),
@@ -2070,6 +2074,19 @@ impl AiPanel {
     pub fn add_pending_edit_confirmation(&mut self, summary: String) {
         let content = format!(
             "[批量编辑确认] AI 请求执行以下编辑，请在弹出的确认对话框中决定：\n\n{}",
+            summary
+        );
+        self.messages
+            .push(AiMessage::new(AiRole::PendingConfirmation, content));
+        self.stick_to_bottom = true;
+        self.sync_hot_data();
+    }
+
+    /// 添加模拟输入待确认消息：展示动作清单摘要，
+    /// 实际放行由确认对话框决定（拒绝则整体不执行）。
+    pub fn add_pending_input_confirmation(&mut self, summary: String) {
+        let content = format!(
+            "[模拟输入确认] AI 请求模拟以下用户输入，请在弹出的确认对话框中决定：\n\n{}",
             summary
         );
         self.messages

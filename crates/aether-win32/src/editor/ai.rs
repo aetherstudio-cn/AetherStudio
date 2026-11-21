@@ -232,6 +232,12 @@ impl EditorState {
             tool_async = async_pending;
         }
 
+        // 3.5 模拟输入脚本：设置门禁 + 确认卡片 + 确认对话框，放行后交 UI 线程定时器执行
+        let input_scripts = crate::ai_panel::parse_input_scripts(&text);
+        if !input_scripts.is_empty() {
+            self.handle_agent_input_scripts(&input_scripts, conv_idx);
+        }
+
         // 4. 结构化任务总结反馈到对应会话（执行的功能/修复的 Bug/代码修改/审计信息/失败项）
         let has_writes = !done_features.is_empty() || !bug_fixes.is_empty();
         if has_writes {
@@ -305,6 +311,8 @@ impl EditorState {
         // 5. 只读探查结果驱动续跑：仅活动会话，且本轮没有 RUN 命令
         //    （RUN 有自身的异步续跑路径，避免重复触发并发请求；受最大轮次限制）。
         //    浏览器正文采集在途时同样跳过：结果到达后由 handle_agent_page_read_results 续跑。
+        //    工具产物附图（截图）随 Tool 消息一并发送；不续跑的普通轮次丢弃，避免串轮。
+        let tool_images = std::mem::take(&mut self.ai.ai_panel.agent_tool_images);
         if conv_idx == self.ai.ai_panel.active
             && commands.is_empty()
             && !tool_feedback.is_empty()
@@ -313,15 +321,23 @@ impl EditorState {
             // 续跑必须用激活模型档案（含解密后的 API Key）；旧单一 ai 字段无 key
             let settings = self.ui.app_settings.active_ai_settings();
             let mode = self.ai.ai_panel.mode;
-            if let Err(e) =
-                self.ai
-                    .ai_panel
-                    .continue_agent_with_tool_result(&settings, tool_feedback, mode)
+            if let Err(e) = self
+                .ai
+                .ai_panel
+                .continue_agent_with_tool_result_with_images(
+                    &settings,
+                    tool_feedback,
+                    mode,
+                    tool_images,
+                )
             {
                 self.ai
                     .ai_panel
                     .add_assistant_message_to(conv_idx, format!("（{}，如需继续请手动发消息）", e));
             }
+        } else if tool_async && !tool_images.is_empty() {
+            // 异步采集在途：附图保留，待网页结果回喂时一并发送
+            self.ai.ai_panel.agent_tool_images = tool_images;
         }
     }
 
@@ -559,10 +575,12 @@ impl EditorState {
                 // 续跑必须用激活模型档案（含解密后的 API Key）；旧单一 ai 字段无 key
                 let settings = self.ui.app_settings.active_ai_settings();
                 let mode = self.ai.ai_panel.mode;
+                // 本轮截图附图随网页结果一并发送（仅首个任务携带，取走后为空）
+                let images = std::mem::take(&mut self.ai.ai_panel.agent_tool_images);
                 if let Err(e) = self
                     .ai
                     .ai_panel
-                    .continue_agent_with_tool_result(&settings, feedback, mode)
+                    .continue_agent_with_tool_result_with_images(&settings, feedback, mode, images)
                 {
                     self.ai
                         .ai_panel
@@ -1855,7 +1873,7 @@ impl EditorState {
                         feedback.push(format!("[网页读取失败] {}：{}", url, e));
                     }
                 },
-                // 桌面截图：捕获落盘并回喂路径（附图回喂接线待后续批次）
+                // 桌面截图：捕获落盘 → 回喂路径；多模态模型同时回喂附图
                 ToolRequest::Shot(scope) => {
                     let result = if scope == "window" {
                         crate::screen_capture::capture_window_to_file(self.win.hwnd)
@@ -1865,7 +1883,28 @@ impl EditorState {
                     match result {
                         Ok(path) => {
                             display.push(format!("▣ 截图已保存 `{}`", path.display()));
-                            feedback.push(format!("[截图] 已落盘 {}", path.display()));
+                            let mut note = String::new();
+                            // 多模态门禁：开启时把截图经附件链路随续跑发给模型
+                            if self.ui.app_settings.active_ai_settings().multimodal {
+                                if let Ok(bytes) = std::fs::read(&path) {
+                                    if let Some(img) = aether_ai::ChatImage::from_bytes(&bytes) {
+                                        self.ai.ai_panel.agent_tool_images.push(
+                                            crate::ai_panel::AiImageAttachment {
+                                                filename: path
+                                                    .file_name()
+                                                    .map(|f| f.to_string_lossy().to_string())
+                                                    .unwrap_or_else(|| "shot.png".to_string()),
+                                                mime: img.mime,
+                                                data_b64: img.data_b64,
+                                            },
+                                        );
+                                        note =
+                                            "\n[截图附图] 已随本条结果附上图片，可直接分析画面内容"
+                                                .to_string();
+                                    }
+                                }
+                            }
+                            feedback.push(format!("[截图] 已落盘 {}{}", path.display(), note));
                         }
                         Err(e) => {
                             display.push(format!("✕ 截图失败：{}", e));
@@ -1891,6 +1930,73 @@ impl EditorState {
             }
         }
         (display, feedback.join("\n\n"), async_pending)
+    }
+
+    /// 处理 AI 回复中的模拟输入脚本块：设置门禁 → 解析校验 → 确认卡片 + 确认对话框
+    /// → 放行后交 UI 线程定时器逐条注入（不阻塞消息泵）。
+    fn handle_agent_input_scripts(&mut self, scripts: &[String], conv_idx: usize) {
+        if !self.ui.app_settings.agent.input_enabled {
+            self.ai.ai_panel.add_assistant_message_to(
+                conv_idx,
+                "（模拟输入能力已在设置中关闭，本脚本未执行）".to_string(),
+            );
+            return;
+        }
+        for script in scripts {
+            let actions = match crate::input_sim::parse_input_script(script) {
+                Ok(a) => a,
+                Err(e) => {
+                    self.ai.ai_panel.add_assistant_message_to(
+                        conv_idx,
+                        format!("（模拟输入脚本解析失败：{}）", e),
+                    );
+                    continue;
+                }
+            };
+            let summary = crate::input_sim::action_summary(&actions);
+            self.ai
+                .ai_panel
+                .add_pending_input_confirmation(summary.clone());
+            self.win.dirty_tracker.mark_full_window();
+            let msg = format!(
+                "AI 请求模拟执行以下用户输入（共 {} 个动作），确认后将在系统层面注入：\n\n{}",
+                actions.len(),
+                summary
+            );
+            if !crate::dialogs::Dialogs::confirm_yes_no(self.win.hwnd, "模拟输入确认", &msg) {
+                self.ai
+                    .ai_panel
+                    .add_assistant_message_to(conv_idx, "（用户取消了本次模拟输入）".to_string());
+                continue;
+            }
+            self.start_input_simulation(actions);
+        }
+    }
+
+    /// 将已确认的模拟输入动作入队并启动 UI 线程定时器（INPUT_TIMER 驱动执行）。
+    pub fn start_input_simulation(&mut self, actions: Vec<crate::input_sim::InputAction>) {
+        if actions.is_empty() {
+            return;
+        }
+        let n = actions.len();
+        self.ui.input_sim.enqueue(actions);
+        self.ui.status_message = format!("模拟输入执行中…（{} 个动作）", n);
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                self.win.hwnd,
+                crate::window::INPUT_TIMER_ID,
+                crate::window::INPUT_TIMER_MS,
+                None,
+            );
+        }
+        let sb = self.ui.layout.status_bar_region();
+        self.win.dirty_tracker.mark_region(
+            sb.x,
+            sb.y,
+            sb.width,
+            sb.height,
+            crate::dirty_rect::DirtyRegionType::StatusBar,
+        );
     }
 
     /// 内置浏览器网页正文采集完成（主循环每帧轮询驱动）：
@@ -1941,10 +2047,11 @@ impl EditorState {
             }
             let settings = self.ui.app_settings.active_ai_settings();
             let mode = self.ai.ai_panel.mode;
+            let images = std::mem::take(&mut self.ai.ai_panel.agent_tool_images);
             if let Err(e) = self
                 .ai
                 .ai_panel
-                .continue_agent_with_tool_result(&settings, feedback, mode)
+                .continue_agent_with_tool_result_with_images(&settings, feedback, mode, images)
             {
                 self.ai.ai_panel.add_assistant_message_to(
                     task.conv_idx,

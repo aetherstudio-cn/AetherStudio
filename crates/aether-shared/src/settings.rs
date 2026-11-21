@@ -20,6 +20,9 @@ pub struct AppSettings {
     /// 自动更新设置
     #[serde(default)]
     pub update: UpdateSettings,
+    /// Agent 能力开关（模拟输入等高风险能力默认需人工确认，可整体关闭）
+    #[serde(default)]
+    pub agent: AgentSettings,
 }
 
 impl std::fmt::Debug for AppSettings {
@@ -32,7 +35,24 @@ impl std::fmt::Debug for AppSettings {
             .field("ai_models", &self.ai_models)
             .field("active_model_id", &self.active_model_id)
             .field("update", &self.update)
+            .field("agent", &self.agent)
             .finish()
+    }
+}
+
+/// Agent 能力配置
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct AgentSettings {
+    /// 允许 Agent 发起模拟用户输入（执行前仍必须经确认卡人工放行）
+    pub input_enabled: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            input_enabled: true,
+        }
     }
 }
 
@@ -651,6 +671,7 @@ impl Default for AppSettings {
             ai_models: Vec::new(),
             active_model_id: None,
             update: UpdateSettings::default(),
+            agent: AgentSettings::default(),
         }
     }
 }

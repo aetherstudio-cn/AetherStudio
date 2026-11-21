@@ -594,6 +594,8 @@ pub struct UiPanelState {
     pub ime: crate::ime::ImeIntegration,
     /// 悬停微动效进度（活动栏/标签栏背景淡入淡出，UI_ANIM 定时器驱动）
     pub hover_anim: crate::ui_anim::HoverAnim,
+    /// 模拟输入执行器（确认放行后的动作队列，INPUT_TIMER 驱动逐条注入）
+    pub input_sim: crate::input_sim::InputSimRunner,
 }
 
 /// 输入与交互状态
@@ -892,6 +894,7 @@ impl EditorState {
                 tooltip_state: crate::tooltip::TooltipState::default(),
                 ime: crate::ime::ImeIntegration::new(hwnd),
                 hover_anim: crate::ui_anim::HoverAnim::new(),
+                input_sim: crate::input_sim::InputSimRunner::default(),
             },
             input: InputState {
                 mouse_press: MousePressState::default(),
