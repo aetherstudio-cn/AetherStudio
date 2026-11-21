@@ -242,6 +242,15 @@ pub(crate) unsafe fn on_mouse_move(
     // 悬停状态更新（每个辅助函数返回是否有变化）
     let titlebar_changed = omm_titlebar_menu_hover(&state, mouse_x, mouse_y, &layout);
     let (tab_changed, _editor_content) = omm_activity_tab_hover(&state, mouse_x, mouse_y, &layout);
+    // 活动栏/标签栏悬停变化时启动微动效定时器（淡入淡出，动画结束自动停表）
+    if tab_changed {
+        let _ = SetTimer(
+            hwnd,
+            crate::window::UI_ANIM_TIMER_ID,
+            crate::window::UI_ANIM_INTERVAL_MS,
+            None,
+        );
+    }
     let tree_changed = omm_file_tree_hover(&state, mouse_x, mouse_y, &layout);
     let settings_changed = omm_settings_hover(&state, mouse_x, mouse_y, is_dragging, &layout);
     let ai_changed = omm_ai_hover(&state, mouse_x, mouse_y, &layout);

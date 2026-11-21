@@ -1070,6 +1070,8 @@ pub struct AiPanel {
     pub tab_focus_index: Option<usize>,
     /// "浏览并选择文件夹"按钮命中区 (x, y, w, h)
     pub browse_folder_region: Option<(f32, f32, f32, f32)>,
+    /// 欢迎卡快捷提示 chips 命中区 (提示文本, x, y, w, h)，渲染每帧更新
+    pub welcome_chip_regions: Vec<(String, f32, f32, f32, f32)>,
     /// 是否正在进行问题扩写（扩写结果写回输入框而非聊天区）
     pub is_expanding: bool,
     /// 扩写动画阶段
@@ -1269,6 +1271,7 @@ impl AiPanel {
             tab_focus_regions: Vec::new(),
             tab_focus_index: None,
             browse_folder_region: None,
+            welcome_chip_regions: Vec::new(),
             is_expanding: false,
             expand_anim_phase: ExpandAnimPhase::None,
             expand_anim_progress: 0.0,

@@ -98,12 +98,25 @@ unsafe fn on_timer_power(hwnd: HWND) -> LRESULT {
     LRESULT(0)
 }
 
-/// UI 动画：驱动历史记录下拉面板展开/收起动画，动画结束后自动停止定时器
+/// UI 动画：驱动历史记录下拉面板展开/收起 + 活动栏/标签栏悬停微动效，
+/// 全部动画结束后自动停止定时器
 unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
     let animating = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow_mut().ai.ai_panel.tick_history_anim())
+            .map(|state| {
+                let mut st = state.borrow_mut();
+                let hist = st.ai.ai_panel.tick_history_anim();
+                let activity_hover = st.ui.activity_bar.hover_index;
+                let activity_len = st.ui.activity_bar.items.len();
+                let tab_hover = st.editor.tab_bar.hover_tab;
+                let tab_len = st.editor.tab_bar.tabs.len();
+                let hover = st
+                    .ui
+                    .hover_anim
+                    .tick(activity_hover, activity_len, tab_hover, tab_len);
+                hist || hover
+            })
             .unwrap_or(false)
     });
     if !animating {

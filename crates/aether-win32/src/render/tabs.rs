@@ -73,12 +73,6 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &self.win.theme.tab_active_bg)
                 .unwrap();
-            let inactive_bg_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &self.win.theme.tab_inactive_bg)
-                .unwrap();
             let hover_color = if self.win.theme.glass_enabled {
                 color_f(0.25, 0.25, 0.27, 0.85)
             } else {
@@ -125,6 +119,14 @@ impl EditorState {
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &glow_color)
+                .unwrap();
+            // 活动标签顶部强调色高亮线（现代 accent，替代纯白）
+            let accent_color = color_f(0.30, 0.76, 1.0, 1.0); // #4CC2FF
+            let accent_brush = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &accent_color)
                 .unwrap();
 
             // SubTask 7.3: 关闭按钮矢量图标颜色 — 默认灰，hover 白
@@ -183,6 +185,18 @@ impl EditorState {
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
                 )
                 .unwrap();
+            // 活动标签文本：半粗体，与常规标签形成字重层次
+            let tab_format_active = self
+                .win
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    12.0,
+                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_SEMI_BOLD.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                )
+                .unwrap();
 
             let mut tab_x = x + 4.0 - self.editor.tab_bar.tab_scroll_x;
             let close_btn_width = 20.0;
@@ -210,25 +224,53 @@ impl EditorState {
                     },
                 };
 
-                // 标签背景 — 玻璃模式下活动标签使用更亮的 elevated surface
-                let bg = if is_active {
-                    &glow_brush
-                } else if is_hover {
-                    &hover_bg_brush
-                } else {
-                    &inactive_bg_brush
+                // 标签背景：圆角顶部（底角延伸到裁剪区外被裁掉），
+                // 活动标签用 elevated surface；悬停按动画进度淡入淡出；
+                // 非活动无悬停时透明，露出标签栏底色（现代浏览器式分页）
+                let tab_rounded_rect = D2D_RECT_F {
+                    left: tab_x + 1.0,
+                    top: tab_rect.top,
+                    right: tab_x + tw - 1.0,
+                    bottom: tab_rect.bottom + 8.0,
                 };
-                target.FillRectangle(&tab_rect, bg);
-
-                // 活动标签顶部高亮线
+                let tab_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                    rect: tab_rounded_rect,
+                    radiusX: 8.0,
+                    radiusY: 8.0,
+                };
                 if is_active {
+                    target.FillRoundedRectangle(&tab_rounded, &glow_brush);
+
+                    // 活动标签顶部强调色高亮线（圆角细线）
                     let top_line = D2D_RECT_F {
-                        left: tab_x,
+                        left: tab_x + 1.0,
                         top: y + 2.0,
-                        right: tab_x + tw,
+                        right: tab_x + tw - 1.0,
                         bottom: y + 4.0,
                     };
-                    target.FillRectangle(&top_line, &active_text_brush);
+                    let top_line_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: top_line,
+                        radiusX: 1.0,
+                        radiusY: 1.0,
+                    };
+                    target.FillRoundedRectangle(&top_line_rounded, &accent_brush);
+                } else {
+                    let p = crate::ui_anim::quantize(self.ui.hover_anim.tab_progress(i));
+                    if p > 0.0 {
+                        let hover_alpha = if self.win.theme.glass_enabled {
+                            0.85 * p
+                        } else {
+                            p
+                        };
+                        let anim_hover_color = color_f(0.25, 0.25, 0.27, hover_alpha);
+                        let anim_hover_brush = self
+                            .win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &anim_hover_color)
+                            .unwrap();
+                        target.FillRoundedRectangle(&tab_rounded, &anim_hover_brush);
+                    }
                 }
 
                 // 文件名
@@ -262,15 +304,27 @@ impl EditorState {
                         y + height - 2.0
                     },
                 };
+                // 视觉层次：活动标签纯白半粗体；非活动标签随悬停进度提亮（0.72 → 1.0）
+                let (tab_text_brush, tab_text_format) = if is_active {
+                    (active_text_brush.clone(), &tab_format_active)
+                } else {
+                    let p = crate::ui_anim::quantize(self.ui.hover_anim.tab_progress(i));
+                    let v = 0.72 + 0.28 * p;
+                    let c = color_f(v, v, v, 1.0);
+                    (
+                        self.win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &c)
+                            .unwrap(),
+                        &tab_format,
+                    )
+                };
                 target.DrawText(
                     &name_wide,
-                    &tab_format,
+                    tab_text_format,
                     &text_rect,
-                    if is_active {
-                        &active_text_brush
-                    } else {
-                        &text_brush
-                    },
+                    &tab_text_brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );

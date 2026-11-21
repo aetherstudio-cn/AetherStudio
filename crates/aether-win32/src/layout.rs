@@ -624,6 +624,15 @@ impl LayoutManager {
         }
     }
 
+    /// 确保右侧面板可见：收起或零宽时以默认宽度展开。
+    /// 打开文件/标签等内容落入右面板的操作统一调用，避免"可见但零宽"的隐藏态。
+    pub fn ensure_right_panel_visible(&mut self) {
+        self.right_panel_visible = true;
+        if self.right_panel_width < 1.0 {
+            self.right_panel_width = 320.0;
+        }
+    }
+
     /// 切换终端面板可见性。
     /// 终端渲染在底部面板区域，不覆盖主编辑器内容区域。
     /// REQ-P2-09: 合并到 toggle_bottom_panel，保留别名以兼容调用方

@@ -18,8 +18,8 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &self.win.theme.statusbar_bg)
                 .unwrap();
-            // 状态栏浅亮绿底：深绿黑文字保证对比度
-            let text_color = color_f(0.08, 0.16, 0.07, 1.0);
+            // 状态栏深色表面：浅灰文字保证对比度，信息层次靠字色区分
+            let text_color = color_f(0.78, 0.78, 0.80, 1.0);
             let text_brush = self
                 .win
                 .render_ctx
@@ -152,8 +152,8 @@ impl EditorState {
                 status.update_widths(cache_ref, 12.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32);
             }
 
-            // SubTask 10.1: hover 背景画刷（浅绿底上黑 @10% 柔和反馈）
-            let hover_color = color_f(0.0, 0.0, 0.0, 0.10);
+            // SubTask 10.1: hover 背景画刷（深底上白 @8% 柔和反馈，圆角胶囊）
+            let hover_color = color_f(1.0, 1.0, 1.0, 0.08);
             let hover_brush = self
                 .win
                 .render_ctx
@@ -171,15 +171,20 @@ impl EditorState {
                     let section = &status.sections[*orig_idx];
 
                     // SubTask 10.1: hover 背景在文本之前绘制
-                    // 仅对 clickable 分区且当前 hover_index 命中时绘制
+                    // 仅对 clickable 分区且当前 hover_index 命中时绘制（内缩圆角胶囊）
                     if section.clickable && status.hover_index == Some(*orig_idx) {
                         let hover_rect = D2D_RECT_F {
-                            left: x + rx,
-                            top: y,
-                            right: x + rx + rw,
-                            bottom: y + height,
+                            left: x + rx + 2.0,
+                            top: y + 3.0,
+                            right: x + rx + rw - 2.0,
+                            bottom: y + height - 3.0,
                         };
-                        target.FillRectangle(&hover_rect, &hover_brush);
+                        let hover_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                            rect: hover_rect,
+                            radiusX: 4.0,
+                            radiusY: 4.0,
+                        };
+                        target.FillRoundedRectangle(&hover_rounded, &hover_brush);
                     }
 
                     // 若有前置矢量图标，先绘制并给文本留出空间
@@ -1208,25 +1213,8 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &active_color)
                 .unwrap();
-            // 非激活图标提亮至 0.70：深底上保证小尺寸图标辨识度，仍与激活态拉开层次
-            let inactive_color = color_f(0.70, 0.70, 0.70, 1.0);
-            let inactive_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &inactive_color)
-                .unwrap();
-            let hover_color = if self.win.theme.glass_enabled {
-                color_f(0.25, 0.25, 0.27, 0.80)
-            } else {
-                color_f(0.25, 0.25, 0.25, 1.0)
-            };
-            let hover_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &hover_color)
-                .unwrap();
+            // 非激活图标基准亮度 0.70：深底上保证小尺寸图标辨识度，
+            // 悬停时按动画进度提亮至 0.95，与激活态（纯白）拉开层次
             // 选中态背景：比 hover 更亮，与活动栏背景形成明显对比
             let selected_color = if self.win.theme.glass_enabled {
                 color_f(0.35, 0.35, 0.37, 0.90)
@@ -1239,7 +1227,7 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &selected_color)
                 .unwrap();
-            let active_indicator_color = color_f(1.0, 1.0, 1.0, 1.0);
+            let active_indicator_color = color_f(0.30, 0.76, 1.0, 1.0); // #4CC2FF 现代强调色
             let active_indicator_brush = self
                 .win
                 .render_ctx
@@ -1276,34 +1264,64 @@ impl EditorState {
             for (i, item) in self.ui.activity_bar.items.iter().enumerate() {
                 let icon_y = y + i as f32 * icon_size;
                 let is_active = i == self.ui.activity_bar.active_index;
-                let is_hover = self.ui.activity_bar.hover_index == Some(i);
 
                 if is_active {
-                    // 选中态背景：与 hover 区分，更明显
+                    // 选中态：内缩圆角胶囊背景（现代扁平风格，替代整块矩形填充）
                     let active_rect = D2D_RECT_F {
-                        left: x,
-                        top: icon_y,
-                        right: x + width,
-                        bottom: icon_y + icon_size,
+                        left: x + 4.0,
+                        top: icon_y + 4.0,
+                        right: x + width - 4.0,
+                        bottom: icon_y + icon_size - 4.0,
                     };
-                    target.FillRectangle(&active_rect, &selected_brush);
+                    let active_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: active_rect,
+                        radiusX: 8.0,
+                        radiusY: 8.0,
+                    };
+                    target.FillRoundedRectangle(&active_rounded, &selected_brush);
 
-                    // 左侧高亮条（加宽至 3px，上下留边距更醒目）
+                    // 左侧强调色指示条（圆角胶囊，上下留边距更醒目）
                     let indicator_rect = D2D_RECT_F {
                         left: x,
-                        top: icon_y + 6.0,
-                        right: x + 2.0,
-                        bottom: icon_y + icon_size - 6.0,
+                        top: icon_y + 10.0,
+                        right: x + 3.0,
+                        bottom: icon_y + icon_size - 10.0,
                     };
-                    target.FillRectangle(&indicator_rect, &active_indicator_brush);
-                } else if is_hover {
-                    let hover_rect = D2D_RECT_F {
-                        left: x,
-                        top: icon_y,
-                        right: x + width,
-                        bottom: icon_y + icon_size,
+                    let indicator_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: indicator_rect,
+                        radiusX: 1.5,
+                        radiusY: 1.5,
                     };
-                    target.FillRectangle(&hover_rect, &hover_brush);
+                    target.FillRoundedRectangle(&indicator_rounded, &active_indicator_brush);
+                } else {
+                    // 悬停微动效：圆角胶囊背景按动画进度淡入淡出
+                    let p = crate::ui_anim::quantize(self.ui.hover_anim.activity_progress(i));
+                    if p > 0.0 {
+                        let hover_alpha = if self.win.theme.glass_enabled {
+                            0.80 * p
+                        } else {
+                            p
+                        };
+                        let anim_hover_color = color_f(0.25, 0.25, 0.27, hover_alpha);
+                        let anim_hover_brush = self
+                            .win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &anim_hover_color)
+                            .unwrap();
+                        let hover_rect = D2D_RECT_F {
+                            left: x + 4.0,
+                            top: icon_y + 4.0,
+                            right: x + width - 4.0,
+                            bottom: icon_y + icon_size - 4.0,
+                        };
+                        let hover_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                            rect: hover_rect,
+                            radiusX: 8.0,
+                            radiusY: 8.0,
+                        };
+                        target.FillRoundedRectangle(&hover_rounded, &anim_hover_brush);
+                    }
                 }
 
                 // 自定义模式：拖拽中项的半透明高亮覆盖
@@ -1331,10 +1349,18 @@ impl EditorState {
                 let icon_draw_size = 20.0f32;
                 let icon_draw_x = x + (width - icon_draw_size) / 2.0;
                 let icon_draw_y = icon_y + (icon_size - icon_draw_size) / 2.0;
-                let brush = if is_active {
-                    &active_brush
+                // 图标亮度随悬停进度渐变（0.70 → 0.95），激活态纯白
+                let icon_brush = if is_active {
+                    active_brush.clone()
                 } else {
-                    &inactive_brush
+                    let p = crate::ui_anim::quantize(self.ui.hover_anim.activity_progress(i));
+                    let v = 0.70 + 0.25 * p;
+                    let c = color_f(v, v, v, 1.0);
+                    self.win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &c)
+                        .unwrap()
                 };
                 self.ui.icons.draw(
                     target,
@@ -1343,7 +1369,7 @@ impl EditorState {
                     icon_draw_y,
                     icon_draw_size,
                     icon_draw_size,
-                    brush,
+                    &icon_brush,
                 );
 
                 // TEST: 注册活动栏按钮命中区域

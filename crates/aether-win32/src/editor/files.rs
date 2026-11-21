@@ -37,6 +37,8 @@ pub(super) fn open_in_new_tab(state: &mut EditorState, tab: Tab) {
     state.swap_tab_content(state.editor.tab_bar.active_tab);
     state.editor.is_selecting = false;
     state.dismiss_default_new_tab();
+    // 打开标签需保证右侧编辑区可见（智能体模式面板默认收起，否则新标签无视觉反馈）
+    state.ui.layout.ensure_right_panel_visible();
     state.emit_event(crate::events::EditorEvent::TabChanged);
     // 标记标签栏和编辑器区域脏区，避免新标签打开时触发全窗口重绘
     let editor_region = state.ui.layout.editor_region();
@@ -81,6 +83,8 @@ pub fn load_file(state: &mut EditorState, path: PathBuf) {
                 state.editor.content.markdown_preview = false;
                 state.editor.markdown_preview = false;
                 reset_editor_state(state);
+                // 复用空标签同样需保证右侧编辑区可见
+                state.ui.layout.ensure_right_panel_visible();
                 // REQ-P1-09: state.editor.content 即活动标签页状态，无需再手动同步到 Tab
                 state.ui.status_message = format!("已打开: {}", path.display());
             } else {
@@ -146,6 +150,7 @@ pub(super) fn load_image_file(state: &mut EditorState, path: PathBuf) {
         state.editor.content.buffer = PieceTable::from_string(content);
         state.editor.content.image_data = image_data;
         reset_editor_state(state);
+        state.ui.layout.ensure_right_panel_visible();
         state.ui.status_message = format!("已打开图片: {}", path.display());
     } else {
         let mut tab_content = TabContent::with_loaded_buffer(
@@ -174,6 +179,7 @@ pub(super) fn show_unsupported_file(state: &mut EditorState, path: &Path) {
         state.editor.content.language = Language::PlainText;
         state.editor.content.buffer = PieceTable::from_string(message);
         reset_editor_state(state);
+        state.ui.layout.ensure_right_panel_visible();
         state.ui.status_message = format!("不支持的文件格式: .{}", ext);
     } else {
         let tab = Tab::File(TabContent::with_loaded_buffer(

@@ -156,7 +156,7 @@ impl Theme {
             selection_bg: color_f(0.0, 0.47, 0.83, 0.50), // #0078D4 @50%
             cursor_color: color_f(0.85, 0.85, 0.85, 1.0),
             sidebar_bg: color_f(0.106, 0.106, 0.110, 1.0), // #1B1B1C
-            statusbar_bg: color_f(0.55, 0.85, 0.51, 1.0),  // 浅亮绿 #8CD982
+            statusbar_bg: color_f(0.106, 0.106, 0.110, 1.0), // #1B1B1C 与侧边栏同层（现代扁平，去高饱和色块）
             tab_active_bg: color_f(0.122, 0.122, 0.122, 1.0),
             tab_inactive_bg: color_f(0.106, 0.106, 0.110, 1.0),
             text_default: color_f(0.83, 0.83, 0.83, 1.0),
@@ -190,8 +190,8 @@ impl Theme {
             cursor_color: color_f(0.85, 0.85, 0.85, 1.0), // 光标不透明
             // 侧边栏：中间层（导航区）
             sidebar_bg: color_f(0.106, 0.106, 0.110, 0.80), // #1B1B1C @80%
-            // 状态栏：浅亮绿色（配合深色文字，作为底部轻量点缀色）
-            statusbar_bg: color_f(0.55, 0.85, 0.51, 0.92), // #8CD982 @92%
+            // 状态栏：与侧边栏同层的深色表面（现代扁平风格，信息靠文字层次区分）
+            statusbar_bg: color_f(0.106, 0.106, 0.110, 0.85), // #1B1B1C @85%
             // 标签栏
             tab_active_bg: color_f(0.122, 0.122, 0.122, 0.90), // 活跃标签与编辑区同层
             tab_inactive_bg: color_f(0.106, 0.106, 0.110, 0.70), // 非活跃标签与侧边栏同层

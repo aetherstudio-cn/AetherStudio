@@ -592,6 +592,8 @@ pub struct UiPanelState {
     pub tooltip_state: crate::tooltip::TooltipState,
     /// UI-L02: IME 集成，控制 CJK 输入法候选窗口位置
     pub ime: crate::ime::ImeIntegration,
+    /// 悬停微动效进度（活动栏/标签栏背景淡入淡出，UI_ANIM 定时器驱动）
+    pub hover_anim: crate::ui_anim::HoverAnim,
 }
 
 /// 输入与交互状态
@@ -889,6 +891,7 @@ impl EditorState {
                 },
                 tooltip_state: crate::tooltip::TooltipState::default(),
                 ime: crate::ime::ImeIntegration::new(hwnd),
+                hover_anim: crate::ui_anim::HoverAnim::new(),
             },
             input: InputState {
                 mouse_press: MousePressState::default(),
@@ -915,7 +918,7 @@ impl EditorState {
         if !menu_order.is_empty() {
             state.ui.menu_bar.apply_order(&menu_order);
         }
-        // 无项目的新窗口显示欢迎页（空标签栏），不创建新标签页；
+        // 无项目的新窗口不创建标签页，AI 面板聊天区显示欢迎卡（render/ai.rs）；
         // 默认新标签页仅在打开项目时创建（open_folder -> ensure_default_new_tab）
         state.editor.tab_bar.active_tab = 0;
 
