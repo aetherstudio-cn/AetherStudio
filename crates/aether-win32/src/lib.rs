@@ -44,6 +44,7 @@ pub mod render;
 pub mod sandbox_eval;
 pub mod screen_capture;
 pub mod search_panel;
+pub mod security_scan;
 pub mod settings;
 pub mod ssh;
 pub mod status_bar;
