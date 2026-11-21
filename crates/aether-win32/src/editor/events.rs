@@ -389,6 +389,16 @@ impl EditorState {
                 self.ui.status_message = "正在检查更新...".to_string();
                 crate::updater::start_check(hwnd, true);
             }
+            // 桌面截图：捕获虚拟屏幕落盘后打开图片预览标签，状态栏提示保存路径
+            crate::menu_bar::CommandId::ToolsDesktopShot => {
+                match crate::screen_capture::capture_screen_to_file() {
+                    Ok(path) => {
+                        self.load_file(path.clone());
+                        self.ui.status_message = format!("桌面截图已保存：{}", path.display());
+                    }
+                    Err(e) => self.ui.status_message = format!("桌面截图失败：{}", e),
+                }
+            }
             crate::menu_bar::CommandId::HelpAbout => {
                 self.ui.status_message = format!("牧羊人编辑器 v{}", crate::updater::APP_VERSION);
             }

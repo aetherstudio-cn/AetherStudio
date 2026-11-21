@@ -1102,6 +1102,9 @@ pub struct AiPanel {
     pub model_btn_region: Option<(f32, f32, f32, f32)>,
     /// 输入区发送/中断按钮命中区 (x, y, w, h)，渲染每帧更新
     pub send_btn_region: Option<(f32, f32, f32, f32)>,
+    /// Agent 工具产物附图暂存（截图等）：续跑时随 Tool 消息发给多模态模型，
+    /// 与用户输入框 pending_images 隔离，避免污染用户待发附件
+    pub agent_tool_images: Vec<AiImageAttachment>,
     /// 在途请求是否启用深度思考（思考模式首包延迟显著更高，超时看门狗阈值相应放宽）
     pub in_flight_thinking: bool,
     /// 询问卡片选项命中区 (msg_idx, ask_seq, opt_idx, x, y, w, h)，渲染每帧更新
@@ -1299,6 +1302,7 @@ impl AiPanel {
             hover_send_btn: false,
             model_btn_region: None,
             send_btn_region: None,
+            agent_tool_images: Vec::new(),
             in_flight_thinking: false,
             ask_option_regions: Vec::new(),
             ask_custom_regions: Vec::new(),
@@ -2078,6 +2082,19 @@ impl AiPanel {
         self.sync_hot_data();
     }
 
+    /// 添加模拟输入待确认消息：展示动作清单摘要，
+    /// 实际放行由确认对话框决定（拒绝则整体不执行）。
+    pub fn add_pending_input_confirmation(&mut self, summary: String) {
+        let content = format!(
+            "[模拟输入确认] AI 请求模拟以下用户输入，请在弹出的确认对话框中决定：\n\n{}",
+            summary
+        );
+        self.messages
+            .push(AiMessage::new(AiRole::PendingConfirmation, content));
+        self.stick_to_bottom = true;
+        self.sync_hot_data();
+    }
+
     /// 发送消息（AI-H01: 非阻塞 — HTTP 调用在后台线程执行，结果通过 stream_state 流式返回）
     ///
     /// 智能判断模式：根据用户输入内容自动判断是简单问答还是执行任务
@@ -2249,6 +2266,19 @@ impl AiPanel {
         feedback: String,
         mode: AiMode,
     ) -> Result<String, String> {
+        self.continue_agent_with_tool_result_with_images(settings, feedback, mode, Vec::new())
+    }
+
+    /// 带附图的工具结果续跑：截图等工具产物经 `images` 随本轮 Tool 消息
+    /// 一并发给多模态模型（Tool 消息在请求中映射为 user 角色，可携带 image_url 块）。
+    /// 非多模态模型忽略附图，仅收到文本回喂（含截图落盘路径）。
+    pub fn continue_agent_with_tool_result_with_images(
+        &mut self,
+        settings: &AiSettings,
+        feedback: String,
+        mode: AiMode,
+        images: Vec<AiImageAttachment>,
+    ) -> Result<String, String> {
         const MAX_AGENT_ITERATIONS: u32 = 5;
         if self.agent_iter_count >= MAX_AGENT_ITERATIONS {
             return Err(format!("已达最大自动执行轮次（{}）", MAX_AGENT_ITERATIONS));
@@ -2279,6 +2309,19 @@ impl AiPanel {
             .map(|v| v as usize)
             .unwrap_or(24000);
         messages.extend(Self::history_to_chat_messages(&self.messages, input_budget));
+        // 附图挂到最后一条 user 消息（即本轮 Tool 结果），与输入框附图同链路
+        if settings.multimodal && !images.is_empty() {
+            let imgs: Vec<ChatImage> = images
+                .iter()
+                .map(|p| ChatImage {
+                    mime: p.mime.clone(),
+                    data_b64: p.data_b64.clone(),
+                })
+                .collect();
+            if let Some(last_user) = messages.iter_mut().rev().find(|m| m.role == "user") {
+                last_user.images = imgs;
+            }
+        }
         let stream_state = Arc::clone(&self.stream_state);
         let should_stop = Arc::clone(&self.should_stop);
 

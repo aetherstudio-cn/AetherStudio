@@ -57,6 +57,10 @@ pub const SANDBOX_TIMER_ID: usize = 0xA00A;
 pub const SANDBOX_REFRESH_MS: u32 = 200;
 /// Tooltip 延迟显示定时器 ID（活动栏/标题栏按钮悬停提示）
 pub(crate) const TOOLTIP_TIMER_ID: usize = 0xA00B;
+/// 模拟输入执行定时器 ID（确认放行后逐条注入动作，队列清空自动停表）
+pub(crate) const INPUT_TIMER_ID: usize = 0xA00C;
+/// 模拟输入执行间隔（毫秒）
+pub(crate) const INPUT_TIMER_MS: u32 = 30;
 /// AI 归档检查间隔（毫秒）：每 5 秒检查一次是否满足「空闲 30 秒」归档条件
 pub(crate) const AI_ARCHIVE_MS: u32 = 5000;
 /// 长按阈值（毫秒）

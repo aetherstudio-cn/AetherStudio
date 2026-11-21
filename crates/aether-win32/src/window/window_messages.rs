@@ -12,7 +12,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::{
     compute_cursor_for_pos, create_editor_window, get_and_set_state, invalidate_window,
-    AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HOVER_TIMER_ID,
+    AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HOVER_TIMER_ID, INPUT_TIMER_ID,
     LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, SANDBOX_TIMER_ID, TERM_TIMER_ID,
     TOOLTIP_TIMER_ID, UI_ANIM_TIMER_ID,
 };
@@ -49,6 +49,9 @@ pub(crate) unsafe fn on_timer(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LP
     }
     if wparam.0 == UI_ANIM_TIMER_ID {
         return on_timer_ui_anim(hwnd);
+    }
+    if wparam.0 == INPUT_TIMER_ID {
+        return on_timer_input_sim(hwnd);
     }
     if wparam.0 == POWER_TIMER_ID {
         return on_timer_power(hwnd);
@@ -150,6 +153,37 @@ unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
         let _ = KillTimer(hwnd, UI_ANIM_TIMER_ID);
     }
     // 无论是否结束都重绘一次，确保最后一帧（完全展开/收起）被绘制
+    invalidate_window(hwnd);
+    LRESULT(0)
+}
+
+/// 模拟输入执行：逐条取出就绪动作经 SendInput 注入；Sleep 转为等待截止，
+/// 不阻塞消息泵；队列清空后自动停表并在状态栏提示完成。
+unsafe fn on_timer_input_sim(hwnd: HWND) -> LRESULT {
+    let mut done = false;
+    let mut was_active = false;
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            if let Ok(mut st) = state.try_borrow_mut() {
+                was_active = st.ui.input_sim.is_active();
+                let now = std::time::Instant::now();
+                while let Some(action) = st.ui.input_sim.next_ready(now) {
+                    if let Err(e) = crate::input_sim::execute_action(&action) {
+                        st.ui.status_message = format!("模拟输入失败：{}", e);
+                        st.ui.input_sim.clear();
+                        break;
+                    }
+                }
+                done = !st.ui.input_sim.is_active();
+                if done && was_active {
+                    st.ui.status_message = "模拟输入执行完成".to_string();
+                }
+            }
+        }
+    });
+    if done {
+        let _ = KillTimer(hwnd, INPUT_TIMER_ID);
+    }
     invalidate_window(hwnd);
     LRESULT(0)
 }

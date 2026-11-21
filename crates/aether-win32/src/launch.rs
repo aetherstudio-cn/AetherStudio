@@ -103,3 +103,43 @@ pub fn copydata_result(handled: bool) -> LRESULT {
         LRESULT(0)
     }
 }
+
+/// WM_COPYDATA dwData=1：repro 自动化脚本通道（发送模拟输入脚本文本）。
+/// 仅限本机同用户进程间 IPC（免二次确认，仍受 agent.input_enabled 之外的无 UI 通道约束）。
+pub const COPYDATA_DW_INPUT_SCRIPT: usize = 1;
+
+/// 将模拟输入脚本发给已运行的主窗口（替代外部 PowerShell SendInput 的测试衔接）。
+/// 返回是否发送成功。
+pub fn send_input_script(hwnd: HWND, script: &str) -> bool {
+    unsafe {
+        let wide: Vec<u16> = script.encode_utf16().chain(Some(0)).collect();
+        let data_len = (wide.len() * std::mem::size_of::<u16>()) as u32;
+        let cds = COPYDATASTRUCT {
+            dwData: COPYDATA_DW_INPUT_SCRIPT,
+            cbData: data_len,
+            lpData: wide.as_ptr() as *mut core::ffi::c_void,
+        };
+        let _ = SendMessageW(
+            hwnd,
+            WM_COPYDATA,
+            WPARAM(0),
+            LPARAM(&cds as *const _ as isize),
+        );
+        true
+    }
+}
+
+/// 从 WM_COPYDATA(dwData=1) 提取模拟输入脚本文本。
+///
+/// # Safety
+/// 与 [`parse_copydata_lparam`] 相同的指针有效性要求。
+pub unsafe fn parse_copydata_input_script(lparam: LPARAM) -> Option<String> {
+    let cds = &*(lparam.0 as *const COPYDATASTRUCT);
+    if cds.dwData != COPYDATA_DW_INPUT_SCRIPT || cds.cbData == 0 || cds.lpData.is_null() {
+        return None;
+    }
+    let len = (cds.cbData as usize) / std::mem::size_of::<u16>();
+    let slice = std::slice::from_raw_parts(cds.lpData as *const u16, len);
+    let end = slice.iter().position(|&c| c == 0).unwrap_or(len);
+    String::from_utf16(&slice[..end]).ok()
+}
