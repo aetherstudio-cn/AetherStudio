@@ -115,7 +115,34 @@ unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
                     .ui
                     .hover_anim
                     .tick(activity_hover, activity_len, tab_hover, tab_len);
-                hist || hover
+                // AI 面板微动效通道：欢迎 chips / 侧栏对话项 / 按钮 / 输入聚焦环
+                let chip_hover = st.ai.ai_panel.hover_welcome_chip;
+                let chip_len = st.ai.ai_panel.welcome_chip_regions.len();
+                let ai_tab_hover = if st.ai.ai_panel.history_open {
+                    None
+                } else {
+                    st.ai.ai_panel.hover_tab
+                };
+                let ai_tab_len = st.ai.ai_panel.conversations.len();
+                let btn_hover = if st.ai.ai_panel.hover_new_chat {
+                    Some(0)
+                } else if st.ai.ai_panel.hover_model_btn {
+                    Some(1)
+                } else if st.ai.ai_panel.hover_send_btn {
+                    Some(2)
+                } else {
+                    None
+                };
+                let input_focused = st.ai.ai_panel.input_focused;
+                let ai = st.ui.hover_anim.tick_ai(
+                    chip_hover,
+                    chip_len,
+                    ai_tab_hover,
+                    ai_tab_len,
+                    btn_hover,
+                    input_focused,
+                );
+                hist || hover || ai
             })
             .unwrap_or(false)
     });
