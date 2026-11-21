@@ -126,7 +126,7 @@ pub fn agent_capabilities_prompt(shell: &str) -> String {
 
 【只读探查（先看后改，各占一行；结果会自动回传给你）】
 {SYMBOL_PREFIX} 标识符名    （在工作区符号索引中查找函数/变量/类/结构体定义，直接返回定义位置+完整源码，比 READ 整文件高效得多）
-{READ_PREFIX} 相对路径      （读取某个文件的内容）
+{READ_PREFIX} 相对路径[:起始行[-结束行]]      （读取文件内容；可带 1-based 闭区间行范围做局部读取，如 src/main.rs:10-40 或 src/main.rs:200-；大文件必须按范围分段读；带范围的结果含行号前缀与总行数，整文件读取被截断时按提示的行范围续读）
 {LIST_PREFIX} 相对路径      （列出某个目录下的条目，路径留空或写 . 表示工作区根目录）
 {SEARCH_PREFIX} 关键词      （在整个工作区搜索包含关键词的代码行，返回文件路径+行号+内容）
 注意：SYMBOL / READ / LIST / SEARCH 都是**单行指令**，写完参数即结束，**没有也不要写任何结束标记**（例如不要输出 AETHER_END_READ / AETHER_END_LIST / AETHER_END_SEARCH / AETHER_END_SYMBOL）。

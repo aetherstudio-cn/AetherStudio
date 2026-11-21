@@ -901,6 +901,50 @@ impl EditorState {
         &mut self,
         edits: &[AiEdit],
     ) -> std::result::Result<Vec<PathBuf>, String> {
+        // 批量编辑确认门：≥2 个文件或含删除操作的编辑批属高风险变更，
+        // 先在聊天区以 PendingConfirmation 卡片展示编辑摘要，再经确认对话框
+        // （沿用现有确认 UI 模式）取得用户明确同意后才执行。
+        let mut distinct_paths: Vec<&Path> = Vec::new();
+        for e in edits {
+            if !distinct_paths.contains(&e.path.as_path()) {
+                distinct_paths.push(e.path.as_path());
+            }
+        }
+        let has_delete = edits.iter().any(|e| e.is_delete());
+        if distinct_paths.len() >= 2 || has_delete {
+            let mut summary = String::new();
+            for e in edits {
+                let (op, detail) = if e.is_delete() {
+                    ("删除", String::new())
+                } else if e.is_create_new() {
+                    ("新建", format!("（{} 行）", e.replace.lines().count()))
+                } else {
+                    (
+                        "修改",
+                        format!(
+                            "（替换 {} 行 → {} 行）",
+                            e.search.lines().count(),
+                            e.replace.lines().count()
+                        ),
+                    )
+                };
+                summary.push_str(&format!("• {} `{}`{}\n", op, e.path.display(), detail));
+            }
+            self.ai
+                .ai_panel
+                .add_pending_edit_confirmation(summary.clone());
+            self.win.dirty_tracker.mark_full_window();
+            let msg = format!(
+                "AI 即将执行以下批量编辑（{} 个文件{}）：\n\n{}\n确认执行？",
+                distinct_paths.len(),
+                if has_delete { "，含删除操作" } else { "" },
+                summary
+            );
+            if !crate::dialogs::Dialogs::confirm_yes_no(self.win.hwnd, "批量编辑确认", &msg) {
+                return Err("用户取消了本次批量编辑".to_string());
+            }
+        }
+
         let mut applied = Vec::new();
         let original_tab = self.editor.tab_bar.active_tab;
 
@@ -993,12 +1037,10 @@ impl EditorState {
                         replaced.replace_range(pos..pos + edit.search.len(), &edit.replace);
                         replaced
                     }
-                    None => {
-                        return Err(format!(
-                            "无法在 {} 中找到要替换的代码片段",
-                            full_path.display()
-                        ));
-                    }
+                    // 精确匹配失败 → 容错匹配（忽略行首尾空白，保留原文件缩进）；
+                    // 多命中/无命中时返回错误要求模型补充上下文
+                    None => crate::ai_panel::fuzzy_replace(&old_text, &edit.search, &edit.replace)
+                        .map_err(|e| format!("{}: {}", full_path.display(), e))?,
                 }
             };
 
@@ -1495,23 +1537,98 @@ impl EditorState {
     }
 
     /// 读取工作区内文件内容（沙箱校验 + 大小/长度限制），供 Agent 只读探查。
-    fn read_workspace_file(&self, rel: &str) -> std::result::Result<String, String> {
-        let path = self.workspace_sandbox_path(rel)?;
+    ///
+    /// 参数为读取规格 `path[:start[-end]]`（1-based 闭区间）：指定行范围时按行切片、
+    /// 输出带行号前缀与总行数提示，且不受 1MB 整文件上限约束（大文件可分段读）；
+    /// 整文件读取超 8000 字符截断时提示可用行范围续读。
+    fn read_workspace_file(&self, arg: &str) -> std::result::Result<String, String> {
+        let spec = crate::ai_panel::parse_read_spec(arg);
+        let path = self.workspace_sandbox_path(&spec.path)?;
         let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
         if meta.is_dir() {
             return Err("这是一个目录，请改用列目录工具".to_string());
         }
+        if spec.has_range() {
+            return Self::read_file_line_range(&path, &spec);
+        }
         const MAX_BYTES: u64 = 1024 * 1024; // 1MB 上限，避免超大文件撑爆上下文
         if meta.len() > MAX_BYTES {
             return Err(format!(
-                "文件过大（{} 字节，上限 1MB），请分段查看或改用命令",
-                meta.len()
+                "文件过大（{} 字节，整读上限 1MB），请用 `AETHER_READ {}:起始行-结束行` 按行范围读取",
+                meta.len(),
+                spec.path
             ));
         }
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         let content = String::from_utf8_lossy(&bytes);
-        // 限制回喂给模型的长度，避免占满上下文预算
-        Ok(truncate_chars(&content, 8000))
+        // 限制回喂给模型的长度，避免占满上下文预算；截断时提示按行范围续读
+        let total = content.lines().count();
+        let truncated = truncate_chars(&content, 8000);
+        if truncated.chars().count() < content.chars().count() {
+            return Ok(format!(
+                "{}\n（共 {} 行；可用 `AETHER_READ {}:起始行-结束行` 按行范围继续读取）",
+                truncated, total, spec.path
+            ));
+        }
+        Ok(content.into_owned())
+    }
+
+    /// 按行范围流式读取文件（1-based 闭区间），输出带行号前缀与总行数信息。
+    /// 不受整文件大小上限约束；输出超预算时截断并提示续读起始行。
+    fn read_file_line_range(
+        path: &Path,
+        spec: &crate::ai_panel::ReadSpec,
+    ) -> std::result::Result<String, String> {
+        use std::io::BufRead;
+        let start = spec.start.unwrap_or(1);
+        if let Some(end) = spec.end {
+            if end < start {
+                return Err(format!("结束行 {} 小于起始行 {}", end, start));
+            }
+        }
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let reader = std::io::BufReader::new(file);
+        const MAX_CHARS: usize = 8000;
+        let mut out = String::new();
+        let mut used = 0usize;
+        let mut total = 0usize;
+        let mut collected_end = 0usize; // 实际输出的最后一行行号
+        let mut truncated = false;
+        for (idx, line) in reader.lines().enumerate() {
+            let line = line.map_err(|e| format!("读取失败（可能不是 UTF-8 文本）: {}", e))?;
+            let no = idx + 1;
+            total = no;
+            if no < start || spec.end.is_some_and(|e| no > e) || truncated {
+                continue; // 范围外/已截断：仅继续累计总行数
+            }
+            let row = format!("{:>6} | {}\n", no, line);
+            let row_chars = row.chars().count();
+            if used + row_chars > MAX_CHARS {
+                truncated = true;
+                continue;
+            }
+            out.push_str(&row);
+            used += row_chars;
+            collected_end = no;
+        }
+        if total == 0 {
+            return Ok("（空文件）".to_string());
+        }
+        if start > total {
+            return Err(format!("起始行 {} 超出文件总行数 {}", start, total));
+        }
+        let end_shown = spec.end.unwrap_or(total).min(total);
+        let mut result = format!("（第 {}-{} 行 / 共 {} 行）\n", start, end_shown, total);
+        result.push_str(&out);
+        if truncated {
+            result.push_str(&format!(
+                "…（输出过长已截断；可用 `AETHER_READ {}:{}-{}` 继续读取）\n",
+                spec.path,
+                collected_end.max(start - 1) + 1,
+                end_shown
+            ));
+        }
+        Ok(result)
     }
 
     /// 列出工作区内目录条目（沙箱校验 + 数量限制），目录在前、名称排序。
@@ -2300,4 +2417,78 @@ fn with_cached_symbol_index<T>(root: &Path, f: impl FnOnce(&aether_symbol::Symbo
     }
     let (_, _, index) = cache.as_ref().expect("索引刚构建，必定存在");
     f(index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 写临时文件并返回路径（测试结束自动清理）
+    fn temp_file(name: &str, content: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("aether_test_{}_{}", std::process::id(), name));
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    fn spec(path: &str, start: Option<usize>, end: Option<usize>) -> crate::ai_panel::ReadSpec {
+        crate::ai_panel::ReadSpec {
+            path: path.to_string(),
+            start,
+            end,
+        }
+    }
+
+    #[test]
+    fn test_line_range_slice_with_line_numbers() {
+        let p = temp_file("range.txt", "l1\nl2\nl3\nl4\nl5\n");
+        let out =
+            EditorState::read_file_line_range(&p, &spec("range.txt", Some(2), Some(4))).unwrap();
+        let _ = std::fs::remove_file(&p);
+        assert!(out.contains("（第 2-4 行 / 共 5 行）"), "{}", out);
+        assert!(out.contains("2 | l2"), "{}", out);
+        assert!(out.contains("4 | l4"), "{}", out);
+        assert!(!out.contains("l1"), "{}", out);
+        assert!(!out.contains("l5"), "{}", out);
+    }
+
+    #[test]
+    fn test_line_range_open_ended() {
+        let p = temp_file("open.txt", "a\nb\nc\nd\n");
+        let out = EditorState::read_file_line_range(&p, &spec("open.txt", Some(3), None)).unwrap();
+        let _ = std::fs::remove_file(&p);
+        assert!(out.contains("（第 3-4 行 / 共 4 行）"), "{}", out);
+        assert!(out.contains("3 | c"), "{}", out);
+        assert!(out.contains("4 | d"), "{}", out);
+    }
+
+    #[test]
+    fn test_line_range_invalid() {
+        let p = temp_file("invalid.txt", "a\nb\n");
+        // 起始行超出总行数
+        assert!(
+            EditorState::read_file_line_range(&p, &spec("invalid.txt", Some(9), None)).is_err()
+        );
+        // 结束行小于起始行
+        assert!(
+            EditorState::read_file_line_range(&p, &spec("invalid.txt", Some(2), Some(1))).is_err()
+        );
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn test_line_range_truncation_hint() {
+        // 每行 100 字符 × 300 行，远超 8000 字符预算 → 截断并提示续读
+        let line = "x".repeat(100);
+        let content = std::iter::repeat(format!("{}\n", line))
+            .take(300)
+            .collect::<String>();
+        let p = temp_file("big.txt", &content);
+        let out =
+            EditorState::read_file_line_range(&p, &spec("big.txt", Some(1), Some(300))).unwrap();
+        let _ = std::fs::remove_file(&p);
+        assert!(out.contains("已截断"), "{}", &out[..200.min(out.len())]);
+        assert!(out.contains("AETHER_READ big.txt:"), "应含续读指令提示");
+        assert!(out.contains("共 300 行"), "{}", &out[..200.min(out.len())]);
+    }
 }

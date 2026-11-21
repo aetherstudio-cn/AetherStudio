@@ -22,7 +22,8 @@ pub const FILE_FOOTER: &str = ">>>>>>> AETHER_END_FILE";
 pub const RUN_HEADER: &str = "<<<<<<< AETHER_RUN";
 /// 终端命令块结束行：`>>>>>>> AETHER_END_RUN`
 pub const RUN_FOOTER: &str = ">>>>>>> AETHER_END_RUN";
-/// 只读工具·读取文件（单行指令，路径为参数）：`<<<<<<< AETHER_READ <path>`
+/// 只读工具·读取文件（单行指令，参数为 `path[:start[-end]]`）：`<<<<<<< AETHER_READ <path[:start[-end]]>`
+/// 行号为 1-based 闭区间；省略 start 表示从第 1 行，省略 end 表示到文件末尾。
 pub const READ_PREFIX: &str = "<<<<<<< AETHER_READ";
 /// 只读工具·列出目录（单行指令，路径为参数，可为空/"." 表示工作区根）：`<<<<<<< AETHER_LIST <path>`
 pub const LIST_PREFIX: &str = "<<<<<<< AETHER_LIST";
@@ -76,7 +77,8 @@ pub fn has_workspace_scoped_markers(text: &str) -> bool {
 /// 探查类由编辑器同步执行并将结果回喂给模型；浏览器类经内置 WebView2 异步采集后回喂。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolRequest {
-    /// 读取文件内容（参数为工作区相对路径）
+    /// 读取文件内容（参数为读取规格 `path[:start[-end]]`，行号 1-based 闭区间，
+    /// 由 [`parse_read_spec`] 解析；无行范围时读取整个文件）
     Read(String),
     /// 列出目录条目（参数为工作区相对路径，空串表示根目录）
     List(String),
@@ -138,6 +140,160 @@ impl AiEdit {
     pub fn is_delete(&self) -> bool {
         self.replace.trim().is_empty() && !self.search.trim().is_empty()
     }
+}
+
+/// 文件读取规格：`path[:start[-end]]`，行号为 1-based 闭区间。
+/// 省略 start 表示从第 1 行开始；省略 end 表示读到文件末尾。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadSpec {
+    /// 工作区相对路径
+    pub path: String,
+    /// 起始行（1-based，含）
+    pub start: Option<usize>,
+    /// 结束行（1-based，含）
+    pub end: Option<usize>,
+}
+
+impl ReadSpec {
+    /// 是否指定了行范围（范围读取不受整文件大小上限约束，可分段读大文件）
+    pub fn has_range(&self) -> bool {
+        self.start.is_some() || self.end.is_some()
+    }
+}
+
+/// 解析 AETHER_READ 指令参数：`path[:start[-end]]`。
+///
+/// 仅当末尾冒号后是纯数字行范围（`N` / `N-M` / `N-` / `-M`）时才拆分为路径+范围，
+/// 路径本身含冒号（如 `docs/a:b.md`）不会被误解析。行号 0 视为未指定。
+pub fn parse_read_spec(arg: &str) -> ReadSpec {
+    let arg = arg.trim();
+    if let Some((path, range)) = arg.rsplit_once(':') {
+        if !path.is_empty() && is_line_range(range) {
+            let (s, e) = match range.split_once('-') {
+                Some((s, e)) => (s, e),
+                None => (range, ""),
+            };
+            let num = |t: &str| t.parse::<usize>().ok().filter(|n| *n > 0);
+            return ReadSpec {
+                path: path.to_string(),
+                start: num(s),
+                end: num(e),
+            };
+        }
+    }
+    ReadSpec {
+        path: arg.to_string(),
+        start: None,
+        end: None,
+    }
+}
+
+/// 判断字符串是否为合法行范围字面量：`N` / `N-M` / `N-` / `-M`（N、M 为非负整数）。
+fn is_line_range(s: &str) -> bool {
+    let digits = |t: &str| !t.is_empty() && t.bytes().all(|c| c.is_ascii_digit());
+    match s.split_once('-') {
+        Some((a, b)) => {
+            (a.is_empty() || digits(a))
+                && (b.is_empty() || digits(b))
+                && !(a.is_empty() && b.is_empty())
+        }
+        None => digits(s),
+    }
+}
+
+/// 容错编辑匹配：精确匹配失败时，按「忽略行首尾空白的行序列」定位 search 块并替换。
+///
+/// - 替换块缩进按「命中区域基准缩进 − search 块基准缩进」差值平移，保留原文件缩进风格；
+/// - 恰好一处命中才执行替换；多处命中返回 Err（要求补充上下文收窄到唯一位置）；
+/// - 保留原文件的换行风格（CRLF/LF）。
+pub fn fuzzy_replace(text: &str, search: &str, replace: &str) -> Result<String, String> {
+    let search_lines: Vec<&str> = search.lines().map(|l| l.trim()).collect();
+    if search_lines.iter().all(|l| l.is_empty()) {
+        return Err("search 片段为空".to_string());
+    }
+    // 行表：(字节起始偏移, 去掉换行符的行内容)
+    let mut lines: Vec<(usize, &str)> = Vec::new();
+    let mut off = 0usize;
+    for raw in text.split_inclusive('\n') {
+        lines.push((off, raw.trim_end_matches(['\n', '\r'])));
+        off += raw.len();
+    }
+    let n = search_lines.len();
+    if n > lines.len() {
+        return Err("无法找到要替换的代码片段（search 比文件还长）".to_string());
+    }
+    let mut hits: Vec<(usize, usize)> = Vec::new();
+    for i in 0..=lines.len() - n {
+        if (0..n).all(|k| lines[i + k].1.trim() == search_lines[k]) {
+            hits.push((i, i + n));
+        }
+    }
+    match hits.len() {
+        0 => Err("无法找到要替换的代码片段（忽略空白差异后仍无匹配）".to_string()),
+        1 => {
+            let (s, e) = hits[0];
+            let start = lines[s].0;
+            let end = lines[e - 1].0 + lines[e - 1].1.len();
+            let matched = &text[start..end];
+            let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+            let adjusted = shift_replace_indent(matched, search, replace, eol);
+            let mut out = String::with_capacity(text.len());
+            out.push_str(&text[..start]);
+            out.push_str(&adjusted);
+            out.push_str(&text[end..]);
+            Ok(out)
+        }
+        _ => Err(format!(
+            "search 片段命中 {} 处，请补充上下文使其唯一",
+            hits.len()
+        )),
+    }
+}
+
+/// 将替换块缩进按命中区域与 search 块的基准缩进（非空行最小缩进）差值平移。
+fn shift_replace_indent(matched: &str, search: &str, replace: &str, eol: &str) -> String {
+    let base = |s: &str| {
+        s.lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0)
+    };
+    let delta = base(matched) as isize - base(search) as isize;
+    // 增补缩进时沿用命中区域的缩进字符（空格/Tab），保持原文件风格
+    let pad_char = matched
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .and_then(|l| l.chars().next())
+        .filter(|c| *c == ' ' || *c == '\t')
+        .unwrap_or(' ');
+    let mut out: Vec<String> = Vec::new();
+    for line in replace.lines() {
+        if line.trim().is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        let indent_str = &line[..indent];
+        let new_indent = if delta >= 0 {
+            format!(
+                "{}{}",
+                indent_str,
+                pad_char.to_string().repeat(delta as usize)
+            )
+        } else {
+            indent_str
+                .chars()
+                .skip((-delta) as usize)
+                .collect::<String>()
+        };
+        out.push(format!("{}{}", new_indent, line.trim_start()));
+    }
+    let mut joined = out.join(eol);
+    if replace.ends_with('\n') {
+        joined.push_str(eol);
+    }
+    joined
 }
 
 /// 精准定位方式
@@ -1191,6 +1347,144 @@ pub fn parse_display_blocks(response: &str) -> Vec<AgentDisplayBlock> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- parse_read_spec：行范围读取规格解析 ----
+
+    #[test]
+    fn test_read_spec_plain_path() {
+        assert_eq!(
+            parse_read_spec("src/main.rs"),
+            ReadSpec {
+                path: "src/main.rs".into(),
+                start: None,
+                end: None
+            }
+        );
+        assert!(!parse_read_spec("src/main.rs").has_range());
+    }
+
+    #[test]
+    fn test_read_spec_range_forms() {
+        assert_eq!(
+            parse_read_spec("src/main.rs:10-20"),
+            ReadSpec {
+                path: "src/main.rs".into(),
+                start: Some(10),
+                end: Some(20)
+            }
+        );
+        assert_eq!(
+            parse_read_spec("src/main.rs:10"),
+            ReadSpec {
+                path: "src/main.rs".into(),
+                start: Some(10),
+                end: None
+            }
+        );
+        assert_eq!(
+            parse_read_spec("src/main.rs:10-"),
+            ReadSpec {
+                path: "src/main.rs".into(),
+                start: Some(10),
+                end: None
+            }
+        );
+        assert_eq!(
+            parse_read_spec("src/main.rs:-20"),
+            ReadSpec {
+                path: "src/main.rs".into(),
+                start: None,
+                end: Some(20)
+            }
+        );
+        assert!(parse_read_spec("src/main.rs:10-20").has_range());
+    }
+
+    #[test]
+    fn test_read_spec_colon_in_path_not_range() {
+        // 冒号后不是纯数字范围 → 整体视为路径
+        assert_eq!(
+            parse_read_spec("docs/a:b.md"),
+            ReadSpec {
+                path: "docs/a:b.md".into(),
+                start: None,
+                end: None
+            }
+        );
+        assert_eq!(
+            parse_read_spec("a:1-2-3"),
+            ReadSpec {
+                path: "a:1-2-3".into(),
+                start: None,
+                end: None
+            }
+        );
+        assert_eq!(
+            parse_read_spec("a:-"),
+            ReadSpec {
+                path: "a:-".into(),
+                start: None,
+                end: None
+            }
+        );
+    }
+
+    #[test]
+    fn test_read_spec_zero_ignored() {
+        // 行号 0 非法，视为未指定（回退整文件读取）
+        let spec = parse_read_spec("a.rs:0");
+        assert_eq!(spec.path, "a.rs");
+        assert!(!spec.has_range());
+    }
+
+    // ---- fuzzy_replace：容错编辑匹配 ----
+
+    #[test]
+    fn test_fuzzy_replace_indent_shift() {
+        let text = "fn main() {\n    let a = 1;\n    let b = 2;\n}\n";
+        let out = fuzzy_replace(text, "let a = 1;\nlet b = 2;", "let a = 10;\nlet c = 3;").unwrap();
+        assert_eq!(out, "fn main() {\n    let a = 10;\n    let c = 3;\n}\n");
+    }
+
+    #[test]
+    fn test_fuzzy_replace_relative_indent_preserved() {
+        let text = "fn f() {\n    if x {\n        y;\n    }\n}\n";
+        let out = fuzzy_replace(text, "if x {\n    y;\n}", "if z {\n    w;\n}").unwrap();
+        assert_eq!(out, "fn f() {\n    if z {\n        w;\n    }\n}\n");
+    }
+
+    #[test]
+    fn test_fuzzy_replace_multiple_hits_error() {
+        let text = "a;\nx;\nb;\nx;\n";
+        let err = fuzzy_replace(text, "x;", "y;").unwrap_err();
+        assert!(err.contains("2 处"), "应提示多命中: {}", err);
+    }
+
+    #[test]
+    fn test_fuzzy_replace_no_hit_error() {
+        let err = fuzzy_replace("a;\nb;\n", "zzz", "y").unwrap_err();
+        assert!(err.contains("无法找到"));
+    }
+
+    #[test]
+    fn test_fuzzy_replace_empty_search_error() {
+        assert!(fuzzy_replace("a;\n", "  \n", "y").is_err());
+    }
+
+    #[test]
+    fn test_fuzzy_replace_crlf_preserved() {
+        let text = "a\r\n    x\r\nb\r\n";
+        let out = fuzzy_replace(text, "x", "y").unwrap();
+        assert_eq!(out, "a\r\n    y\r\nb\r\n");
+    }
+
+    #[test]
+    fn test_fuzzy_replace_negative_indent_shift() {
+        // search 带缩进但命中区域无缩进 → 替换块缩进相应减少
+        let text = "top;\n";
+        let out = fuzzy_replace(text, "    top;", "bottom;").unwrap();
+        assert_eq!(out, "bottom;\n");
+    }
 
     #[test]
     fn test_parse_single_edit() {

@@ -2047,6 +2047,19 @@ impl AiPanel {
         self.sync_hot_data();
     }
 
+    /// 添加批量编辑待确认消息：多文件/含删除的高风险编辑批执行前展示编辑摘要，
+    /// 复用 PendingConfirmation 卡片渲染，实际放行由确认对话框决定。
+    pub fn add_pending_edit_confirmation(&mut self, summary: String) {
+        let content = format!(
+            "[批量编辑确认] AI 请求执行以下编辑，请在弹出的确认对话框中决定：\n\n{}",
+            summary
+        );
+        self.messages
+            .push(AiMessage::new(AiRole::PendingConfirmation, content));
+        self.stick_to_bottom = true;
+        self.sync_hot_data();
+    }
+
     /// 发送消息（AI-H01: 非阻塞 — HTTP 调用在后台线程执行，结果通过 stream_state 流式返回）
     ///
     /// 智能判断模式：根据用户输入内容自动判断是简单问答还是执行任务
