@@ -1855,6 +1855,24 @@ impl EditorState {
                         feedback.push(format!("[网页读取失败] {}：{}", url, e));
                     }
                 },
+                // 桌面截图：捕获落盘并回喂路径（附图回喂接线待后续批次）
+                ToolRequest::Shot(scope) => {
+                    let result = if scope == "window" {
+                        crate::screen_capture::capture_window_to_file(self.win.hwnd)
+                    } else {
+                        crate::screen_capture::capture_screen_to_file()
+                    };
+                    match result {
+                        Ok(path) => {
+                            display.push(format!("▣ 截图已保存 `{}`", path.display()));
+                            feedback.push(format!("[截图] 已落盘 {}", path.display()));
+                        }
+                        Err(e) => {
+                            display.push(format!("✕ 截图失败：{}", e));
+                            feedback.push(format!("[截图失败] {}", e));
+                        }
+                    }
+                }
             }
         }
         // 有异步采集在途时，把本轮同步探查结果挂到首个任务，随网页内容一起回喂

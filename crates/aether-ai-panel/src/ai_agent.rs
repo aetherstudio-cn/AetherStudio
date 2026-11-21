@@ -53,6 +53,13 @@ pub const OPEN_PREFIX: &str = "<<<<<<< AETHER_OPEN";
 /// 网页内容读取标记（单行指令，网址可为空表示当前活动页）：`<<<<<<< AETHER_READPAGE [网址]`
 /// 打开页面并提取正文/搜索结果条目，异步回喂给模型继续推理。
 pub const READPAGE_PREFIX: &str = "<<<<<<< AETHER_READPAGE";
+/// 桌面截图标记（单行指令，作用域为参数）：`<<<<<<< AETHER_SHOT [screen|window]`
+/// screen 捕获整个虚拟屏幕，window 捕获编辑器主窗口；结果落盘并回喂路径/附图。
+pub const SHOT_PREFIX: &str = "<<<<<<< AETHER_SHOT";
+/// 模拟输入脚本块起始：`<<<<<<< AETHER_INPUT`（块体每行一个动作，见 input_sim 模块）
+pub const INPUT_HEADER: &str = "<<<<<<< AETHER_INPUT";
+/// 模拟输入脚本块结束：`>>>>>>> AETHER_END_INPUT`
+pub const INPUT_FOOTER: &str = ">>>>>>> AETHER_END_INPUT";
 
 /// 快速判断回复是否包含需要工作区的 Agent 工具标记（用于"未打开工作区"前置校验）。
 ///
@@ -91,6 +98,9 @@ pub enum ToolRequest {
     Open(String),
     /// 提取网页正文回喂模型（参数为网址，空串表示当前活动页面；异步采集）
     ReadPage(String),
+    /// 桌面/窗口截图（参数为作用域 "screen" 或 "window"），
+    /// 捕获落盘后回喂路径；多模态模型同时收到附图
+    Shot(String),
 }
 
 /// 解析单行指令标记，返回其后的参数（前缀后须紧跟空白或行尾）。
@@ -878,6 +888,17 @@ pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
                 continue;
             }
         }
+        // 跳过完整的 INPUT 块体（脚本行不是工具指令）
+        if t == INPUT_HEADER {
+            let mut j = i + 1;
+            while j < lines.len() && lines[j].trim_end() != INPUT_FOOTER {
+                j += 1;
+            }
+            if j < lines.len() {
+                i = j + 1;
+                continue;
+            }
+        }
         // 读取文件：路径非空才有效
         if let Some(p) = parse_directive(t, READ_PREFIX) {
             if !p.is_empty() {
@@ -924,9 +945,44 @@ pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
             i += 1;
             continue;
         }
+        // 桌面截图：作用域缺省/非法值均按 screen 处理
+        if let Some(p) = parse_directive(t, SHOT_PREFIX) {
+            let scope = if p.eq_ignore_ascii_case("window") { "window" } else { "screen" };
+            reqs.push(ToolRequest::Shot(scope.to_string()));
+            i += 1;
+            continue;
+        }
         i += 1
     }
     reqs
+}
+
+/// 从 AI 回复中提取所有 `AETHER_INPUT` 脚本块体（不含头尾标记行）。
+///
+/// 未闭合的块忽略；空块体忽略。脚本合法性由执行侧 `parse_input_script` 校验，
+/// 此处仅做块提取，保证解析与执行职责分离。
+pub fn parse_input_scripts(response: &str) -> Vec<String> {
+    let lines: Vec<&str> = response.lines().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim_end() == INPUT_HEADER {
+            let mut j = i + 1;
+            let mut body = String::new();
+            while j < lines.len() && lines[j].trim_end() != INPUT_FOOTER {
+                body.push_str(lines[j]);
+                body.push('\n');
+                j += 1;
+            }
+            if j < lines.len() && !body.trim().is_empty() {
+                out.push(body);
+            }
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
 }
 
 /// 规划器任务类型：文件生成（需独立 AI 调用）或命令执行（直接跑）。
@@ -2219,5 +2275,45 @@ RUN python -m http.server 8000\n\
         let src = "def a():\n    pass\n\ndef target(x):\n    if x:\n        return 1\n    return 2\n\ndef b():\n    pass";
         let span = find_function_span(src, "target");
         assert_eq!(span, Some((3, 6)));
+    }
+
+    #[test]
+    fn test_parse_shot_directive() {
+        // 缺省作用域 → screen
+        let reqs = parse_tool_requests("<<<<<<< AETHER_SHOT");
+        assert_eq!(reqs, vec![ToolRequest::Shot("screen".into())]);
+        // 显式 window（大小写不敏感）
+        let reqs = parse_tool_requests("<<<<<<< AETHER_SHOT WINDOW");
+        assert_eq!(reqs, vec![ToolRequest::Shot("window".into())]);
+        // 非法作用域按 screen 兜底
+        let reqs = parse_tool_requests("<<<<<<< AETHER_SHOT foo");
+        assert_eq!(reqs, vec![ToolRequest::Shot("screen".into())]);
+        // 前缀粘连不识别
+        assert!(parse_tool_requests("<<<<<<< AETHER_SHOTX").is_empty());
+        // SHOT 不依赖工作区
+        assert!(!has_workspace_scoped_markers("<<<<<<< AETHER_SHOT screen"));
+    }
+
+    #[test]
+    fn test_parse_input_scripts() {
+        let resp = "说明文字\n<<<<<<< AETHER_INPUT\ntype hello\nkey enter\n>>>>>>> AETHER_END_INPUT\n收尾";
+        let scripts = parse_input_scripts(resp);
+        assert_eq!(scripts, vec!["type hello\nkey enter\n".to_string()]);
+        // 多块提取
+        let resp2 = "<<<<<<< AETHER_INPUT\nkey a\n>>>>>>> AETHER_END_INPUT\n<<<<<<< AETHER_INPUT\nkey b\n>>>>>>> AETHER_END_INPUT";
+        assert_eq!(parse_input_scripts(resp2).len(), 2);
+        // 未闭合块 / 空块体忽略
+        assert!(parse_input_scripts("<<<<<<< AETHER_INPUT\nkey a").is_empty());
+        assert!(parse_input_scripts("<<<<<<< AETHER_INPUT\n\n>>>>>>> AETHER_END_INPUT").is_empty());
+        // INPUT 不依赖工作区
+        assert!(!has_workspace_scoped_markers(resp));
+    }
+
+    #[test]
+    fn test_tool_requests_skip_input_block_body() {
+        // 块体内的 type/key 行不应被误读为工具请求；块外 SHOT 正常识别
+        let resp = "<<<<<<< AETHER_INPUT\n<<<<<<< AETHER_READ fake.rs\nkey enter\n>>>>>>> AETHER_END_INPUT\n<<<<<<< AETHER_SHOT window";
+        let reqs = parse_tool_requests(resp);
+        assert_eq!(reqs, vec![ToolRequest::Shot("window".into())]);
     }
 }

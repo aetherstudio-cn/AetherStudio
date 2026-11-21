@@ -2249,6 +2249,19 @@ impl AiPanel {
         feedback: String,
         mode: AiMode,
     ) -> Result<String, String> {
+        self.continue_agent_with_tool_result_with_images(settings, feedback, mode, Vec::new())
+    }
+
+    /// 带附图的工具结果续跑：截图等工具产物经 `images` 随本轮 Tool 消息
+    /// 一并发给多模态模型（Tool 消息在请求中映射为 user 角色，可携带 image_url 块）。
+    /// 非多模态模型忽略附图，仅收到文本回喂（含截图落盘路径）。
+    pub fn continue_agent_with_tool_result_with_images(
+        &mut self,
+        settings: &AiSettings,
+        feedback: String,
+        mode: AiMode,
+        images: Vec<AiImageAttachment>,
+    ) -> Result<String, String> {
         const MAX_AGENT_ITERATIONS: u32 = 5;
         if self.agent_iter_count >= MAX_AGENT_ITERATIONS {
             return Err(format!("已达最大自动执行轮次（{}）", MAX_AGENT_ITERATIONS));
@@ -2279,6 +2292,19 @@ impl AiPanel {
             .map(|v| v as usize)
             .unwrap_or(24000);
         messages.extend(Self::history_to_chat_messages(&self.messages, input_budget));
+        // 附图挂到最后一条 user 消息（即本轮 Tool 结果），与输入框附图同链路
+        if settings.multimodal && !images.is_empty() {
+            let imgs: Vec<ChatImage> = images
+                .iter()
+                .map(|p| ChatImage {
+                    mime: p.mime.clone(),
+                    data_b64: p.data_b64.clone(),
+                })
+                .collect();
+            if let Some(last_user) = messages.iter_mut().rev().find(|m| m.role == "user") {
+                last_user.images = imgs;
+            }
+        }
         let stream_state = Arc::clone(&self.stream_state);
         let should_stop = Arc::clone(&self.should_stop);
 
