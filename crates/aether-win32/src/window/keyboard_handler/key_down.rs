@@ -4,13 +4,9 @@
 //! 调度器提取公共状态 (vk, ctrl, shift)，然后按优先级调用辅助函数。
 //! Ctrl+ 快捷键拆分到 `key_down_ctrl`，非 Ctrl 编辑器按键拆分到 `key_down_edit`。
 
-use std::path::PathBuf;
-
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-
-use crate::dialogs::Dialogs;
 
 use super::super::{get_and_set_state, invalidate_window, EDITOR_STATE};
 
@@ -62,9 +58,6 @@ pub(crate) unsafe fn on_key_down(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
     if let Some(r) = okd_search_panel(hwnd, vk, ctrl) {
         return r;
     }
-    if let Some(r) = okd_welcome_nav(hwnd, vk, ctrl) {
-        return r;
-    }
     if let Some(r) = okd_completion_nav(hwnd, vk, ctrl) {
         return r;
     }
@@ -74,16 +67,10 @@ pub(crate) unsafe fn on_key_down(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: L
     if let Some(r) = okd_sandbox_field(hwnd, vk) {
         return r;
     }
-    if let Some(r) = okd_ssh_dialog(hwnd, vk, ctrl) {
-        return r;
-    }
     if let Some(r) = okd_clone_dialog(hwnd, vk, ctrl) {
         return r;
     }
     if let Some(r) = okd_new_project_dialog(hwnd, vk, ctrl, msg, wparam) {
-        return r;
-    }
-    if let Some(r) = okd_ssh_manager(hwnd, vk) {
         return r;
     }
     if let Some(r) = okd_command_palette(hwnd, vk) {
@@ -524,120 +511,6 @@ unsafe fn okd_search_panel(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LR
     }
 }
 
-/// 欢迎页键盘导航：Tab/↓ next, Shift+Tab/↑ prev, Enter 触发
-unsafe fn okd_welcome_nav(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRESULT> {
-    let active = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| state.borrow().show_welcome())
-            .unwrap_or(false)
-    });
-    if !active || ctrl {
-        return None;
-    }
-    match vk {
-        VK_TAB | VK_DOWN => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().welcome_focus_next();
-                    invalidate_window(hwnd);
-                }
-            });
-            Some(LRESULT(0))
-        }
-        VK_UP => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().welcome_focus_prev();
-                    invalidate_window(hwnd);
-                }
-            });
-            Some(LRESULT(0))
-        }
-        VK_RETURN => {
-            okd_welcome_enter(hwnd);
-            Some(LRESULT(0))
-        }
-        _ => None,
-    }
-}
-
-/// 欢迎页 Enter 键处理：执行焦点对应的动作
-unsafe fn okd_welcome_enter(hwnd: HWND) {
-    let action = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .and_then(|state| state.borrow().ui.welcome_focus_action.clone())
-    });
-    if let Some(action) = action {
-        match action {
-            crate::welcome::WelcomeAction::OpenFolder => {
-                if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                    // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
-                    if crate::editor::files::check_workspace_trust(hwnd, &path) {
-                        EDITOR_STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                state.borrow_mut().open_folder(path);
-                                invalidate_window(hwnd);
-                            }
-                        });
-                    } else {
-                        EDITOR_STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                state.borrow_mut().ui.status_message =
-                                    "已取消打开不受信任的工作区".to_string();
-                                invalidate_window(hwnd);
-                            }
-                        });
-                    }
-                }
-            }
-            crate::welcome::WelcomeAction::OpenRecentProject(path_str) => {
-                let path = PathBuf::from(path_str);
-                // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
-                if crate::editor::files::check_workspace_trust(hwnd, &path) {
-                    EDITOR_STATE.with(|s| {
-                        if let Some(state) = s.borrow().as_ref() {
-                            state.borrow_mut().open_folder(path);
-                            invalidate_window(hwnd);
-                        }
-                    });
-                } else {
-                    EDITOR_STATE.with(|s| {
-                        if let Some(state) = s.borrow().as_ref() {
-                            state.borrow_mut().ui.status_message =
-                                "已取消打开不受信任的工作区".to_string();
-                            invalidate_window(hwnd);
-                        }
-                    });
-                }
-            }
-            crate::welcome::WelcomeAction::MoreRecentProjects => {
-                if let Some(path) = Dialogs::open_folder_dialog(hwnd, "打开文件夹") {
-                    // 信任检查在 borrow_mut 之前（模态框泵消息，避免 RefCell 重入 panic）
-                    if crate::editor::files::check_workspace_trust(hwnd, &path) {
-                        EDITOR_STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                state.borrow_mut().open_folder(path);
-                                invalidate_window(hwnd);
-                            }
-                        });
-                    } else {
-                        EDITOR_STATE.with(|s| {
-                            if let Some(state) = s.borrow().as_ref() {
-                                state.borrow_mut().ui.status_message =
-                                    "已取消打开不受信任的工作区".to_string();
-                                invalidate_window(hwnd);
-                            }
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 /// Phase H2: 补全弹窗可见时拦截导航键（↑↓/Enter/Esc）
 unsafe fn okd_completion_nav(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRESULT> {
     if ctrl {
@@ -831,73 +704,6 @@ unsafe fn okd_sandbox_field(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
     }
 }
 
-/// SSH 对话框激活时优先处理键盘
-unsafe fn okd_ssh_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRESULT> {
-    let active = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| state.borrow().remote.ssh_dialog.visible)
-            .unwrap_or(false)
-    });
-    if !active {
-        return None;
-    }
-    match vk {
-        VK_ESCAPE => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().remote.ssh_dialog.visible = false;
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_RETURN => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    let mut st = state.borrow_mut();
-                    // C-09: SSH 连接移至后台线程，避免阻塞 UI
-                    if st.remote.ssh_connecting {
-                        // 正在连接中，忽略
-                    } else if let Some(config) = st.remote.ssh_dialog.to_config() {
-                        st.start_ssh_connect(config);
-                    } else {
-                        st.remote.ssh_dialog.error_message = Some("请填写主机和用户名".to_string());
-                    }
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_TAB => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().remote.ssh_dialog.next_field();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_BACK => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().handle_ssh_dialog_backspace();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_V if ctrl => {
-            // P2-4: Ctrl+V 粘贴到当前 SSH 对话框字段
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().paste_into_ssh_dialog();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        _ => {}
-    }
-    // ssh_dialog_active 时所有未匹配键也被消费（原始代码 return LRESULT(0)）
-    Some(LRESULT(0))
-}
-
 /// 克隆对话框激活时优先处理键盘
 unsafe fn okd_clone_dialog(hwnd: HWND, vk: VIRTUAL_KEY, ctrl: bool) -> Option<LRESULT> {
     let active = EDITOR_STATE.with(|s| {
@@ -1036,80 +842,6 @@ unsafe fn okd_new_project_dialog(
             Some(DefWindowProcW(hwnd, msg, wparam, LPARAM(0)))
         }
     }
-}
-
-/// SSH 管理面板编辑模式键盘处理
-unsafe fn okd_ssh_manager(hwnd: HWND, vk: VIRTUAL_KEY) -> Option<LRESULT> {
-    let active = EDITOR_STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .map(|state| {
-                state.borrow().ui.sidebar_content
-                    == crate::layout::SidebarContent::RemoteManagerPanel
-                    && state.borrow().remote.ssh_manager_panel.editing
-            })
-            .unwrap_or(false)
-    });
-    if !active {
-        return None;
-    }
-    match vk {
-        VK_ESCAPE => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    state.borrow_mut().remote.ssh_manager_panel.cancel_edit();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_RETURN => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    let mut st = state.borrow_mut();
-                    match st.save_ssh_server_from_form() {
-                        Ok(()) => {
-                            st.ui.status_message = "服务器配置已保存".to_string();
-                        }
-                        Err(e) => {
-                            st.remote.ssh_manager_panel.error_message = Some(e);
-                        }
-                    }
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_TAB => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    let mut st = state.borrow_mut();
-                    st.remote.ssh_manager_panel.focus_field =
-                        (st.remote.ssh_manager_panel.focus_field + 1) % 5;
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        VK_BACK => {
-            EDITOR_STATE.with(|s| {
-                if let Some(state) = s.borrow().as_ref() {
-                    let mut st = state.borrow_mut();
-                    let field = st.remote.ssh_manager_panel.focus_field;
-                    let field_str = match field {
-                        0 => &mut st.remote.ssh_manager_panel.form_name,
-                        1 => &mut st.remote.ssh_manager_panel.form_host,
-                        2 => &mut st.remote.ssh_manager_panel.form_port,
-                        3 => &mut st.remote.ssh_manager_panel.form_username,
-                        4 => &mut st.remote.ssh_manager_panel.form_key_path,
-                        _ => &mut st.remote.ssh_manager_panel.form_name,
-                    };
-                    field_str.pop();
-                    invalidate_window(hwnd);
-                }
-            });
-        }
-        _ => {}
-    }
-    // ssh_mgr_editing 时所有未匹配键也被消费（原始代码 return LRESULT(0)）
-    Some(LRESULT(0))
 }
 
 /// 命令面板激活时优先处理键盘导航
@@ -1332,9 +1064,9 @@ unsafe fn okd_empty_search(
             if st.browser.env_failed {
                 // 系统缺少 WebView2 Runtime：回退系统默认浏览器
                 external_url = Some(url);
-            } else {
-                // 双模式均在内置 WebView2 浏览器标签打开（应用内浏览，不跳转外部浏览器）
-                st.open_browser_tab(&url);
+            } else if st.open_browser_tab(&url).is_err() {
+                // 打开失败（同上，环境已判定不可用）：同样回退系统默认浏览器
+                external_url = Some(url);
             }
         }
         VK_ESCAPE => {
@@ -1355,6 +1087,8 @@ unsafe fn okd_empty_search(
             }
         }
     }
+    // 搜索框状态变化（清空/退格）：标记 NTP 区域脏区，避免空脏区触发全窗口重绘
+    st.mark_new_tab_page_dirty();
     drop(st);
     if let Some(url) = external_url {
         crate::browser::open_external_url(&url);

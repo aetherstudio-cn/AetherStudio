@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::aether_db_store::AetherDbMemoryStore;
 use crate::ai_panel::{AiConversation, AiRole, ConversationMeta};
-use crate::memory_store::{ChatMessage, Conversation, MemoryStore};
+use crate::memory_store::{BulletFilter, ChatMessage, Conversation, MemoryStore};
 
 /// 向量维度（与当前 ONNX 嵌入模型一致；换 bge-small-zh 时改为 512）
 const EMBEDDING_DIM: usize = crate::embedding::EmbeddingModel::DIM;
@@ -28,6 +28,8 @@ pub enum ArchiveRequest {
         conv: AiConversation,
         /// 归档发起时的工作区哈希（由调用方捕获，保证归属正确）
         workspace_hash: String,
+        /// 归档发起时的工作区名称（项目记忆展示用）
+        workspace_name: String,
     },
     /// 归档所有脏会话
     /// reflect=false 用于退出场景：只落盘不做 LLM 反思，避免退出被网络请求阻塞
@@ -36,6 +38,8 @@ pub enum ArchiveRequest {
         reflect: bool,
         /// 归档发起时的工作区哈希
         workspace_hash: String,
+        /// 归档发起时的工作区名称
+        workspace_name: String,
     },
     /// 删除指定会话的临时日志
     RemoveHotLog { conv_id: String },
@@ -66,6 +70,10 @@ pub struct WarmDataStore {
     worker_handle: Option<std::thread::JoinHandle<()>>,
     /// 当前工作区哈希（VS Code workspaceStorage 同款绑定；归档时写入会话元数据）
     workspace_hash: Arc<RwLock<String>>,
+    /// 当前工作区名称（项目记忆展示）
+    workspace_name: Arc<RwLock<String>>,
+    /// 记忆行为开关（全局记忆 / 项目记忆）
+    memory_toggles: Arc<RwLock<aether_shared::settings::MemorySettings>>,
     /// ACE Reflector 的 LLM 客户端（None = 未启用反思）
     reflector_client: Arc<Mutex<Option<aether_ai::AiClient>>>,
     /// 已删除会话的墓碑集合：删除后若队列中仍有在途归档请求，
@@ -85,6 +93,10 @@ impl WarmDataStore {
         let (result_tx, result_rx) = channel::<ArchiveResult>();
 
         let workspace_hash = Arc::new(RwLock::new(String::new()));
+        let workspace_name = Arc::new(RwLock::new(String::new()));
+        let memory_toggles = Arc::new(RwLock::new(
+            aether_shared::settings::MemorySettings::default(),
+        ));
         let reflector_client: Arc<Mutex<Option<aether_ai::AiClient>>> = Arc::new(Mutex::new(None));
         let deleted_tombstones: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
@@ -92,12 +104,14 @@ impl WarmDataStore {
         let worker_base = base_dir.clone();
         let worker_reflector = Arc::clone(&reflector_client);
         let worker_tombstones = Arc::clone(&deleted_tombstones);
+        let worker_toggles = Arc::clone(&memory_toggles);
         let handle = std::thread::spawn(move || {
             Self::archive_worker(
                 worker_store,
                 worker_base,
                 worker_reflector,
                 worker_tombstones,
+                worker_toggles,
                 request_rx,
                 result_tx,
             );
@@ -110,17 +124,55 @@ impl WarmDataStore {
             result_rx: Some(result_rx),
             worker_handle: Some(handle),
             workspace_hash,
+            workspace_name,
+            memory_toggles,
             reflector_client,
             deleted_tombstones,
         })
     }
 
-    /// 设置当前工作区（归档时会话元数据将绑定其哈希）
+    /// 设置当前工作区（归档时会话元数据将绑定其哈希；名称用于项目记忆展示）
     pub fn set_workspace(&self, path: &Path) {
-        let hash = fnv1a_hex(&path.to_string_lossy());
+        let path_str = path.to_string_lossy();
+        // 关闭工作区时传入空路径：保持空哈希，避免写入无归属的“幽灵工作区”
+        let (hash, name) = if path_str.is_empty() {
+            (String::new(), String::new())
+        } else {
+            (
+                fnv1a_hex(&path_str),
+                path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path_str.to_string()),
+            )
+        };
         if let Ok(mut guard) = self.workspace_hash.write() {
             *guard = hash;
         }
+        if let Ok(mut guard) = self.workspace_name.write() {
+            *guard = name;
+        }
+    }
+
+    /// 更新记忆行为开关（全局记忆 / 项目记忆）；关闭后检索与沉淀立即生效
+    pub fn set_memory_toggles(&self, settings: &aether_shared::settings::MemorySettings) {
+        if let Ok(mut guard) = self.memory_toggles.write() {
+            *guard = settings.clone();
+        }
+    }
+
+    /// 当前记忆行为开关
+    pub fn memory_toggles(&self) -> aether_shared::settings::MemorySettings {
+        self.memory_toggles
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    /// 注入/沉淀视角的可见作用域（全局开关 + 当前项目开关）
+    fn visible_filter(&self) -> BulletFilter {
+        let toggles = self.memory_toggles();
+        let hash = self.current_workspace_hash();
+        BulletFilter::visible(toggles.global_enabled, Some(hash))
     }
 
     /// 冰冻态：回收底层存储可回收空间，释放内存
@@ -142,17 +194,18 @@ impl WarmDataStore {
 
     /// 检索 playbook 条目并格式化为系统提示注入文本
     pub fn playbook_context(&self, query: &str, k: usize) -> Result<String, String> {
-        crate::reflector::playbook_context(self.store.as_ref(), query, k)
+        crate::reflector::playbook_context(self.store.as_ref(), query, &self.visible_filter(), k)
     }
 
-    /// 按语义检索 playbook 条目（返回完整条目，供注入时记录使用明细以做反馈归因）
+    /// 按语义检索可见的 playbook 条目（全局 + 当前项目，尊重记忆开关）
     pub fn search_playbook(
         &self,
         query: &str,
         k: usize,
     ) -> Result<Vec<(crate::memory_store::PlaybookBullet, f32)>, String> {
         let embedding = crate::embedding::embed_text(query);
-        self.store.search_bullets(&embedding, k)
+        self.store
+            .search_bullets(&embedding, &self.visible_filter(), k)
     }
 
     /// 条目反馈（helpful=true 记有效，false 记无效）
@@ -163,6 +216,14 @@ impl WarmDataStore {
     /// 当前工作区哈希（未设置时为空串）
     pub fn current_workspace_hash(&self) -> String {
         self.workspace_hash
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    /// 当前工作区名称（未设置时为空串）
+    pub fn current_workspace_name(&self) -> String {
+        self.workspace_name
             .read()
             .map(|g| g.clone())
             .unwrap_or_default()
@@ -194,7 +255,7 @@ impl WarmDataStore {
         self.store.rename_conversation(conv_id, new_title)
     }
 
-    /// 列出 playbook 条目（管理面板数据源）
+    /// 列出 playbook 条目（管理面板数据源；不做作用域过滤）
     pub fn list_playbook(
         &self,
         section: Option<&str>,
@@ -202,7 +263,28 @@ impl WarmDataStore {
         self.store.list_bullets(section)
     }
 
-    /// 删除 playbook 条目（管理面板手动干预接口）
+    /// 列出指定作用域的记忆（记忆管理页数据源）
+    pub fn list_memories(
+        &self,
+        filter: &crate::memory_store::BulletFilter,
+    ) -> Result<Vec<crate::memory_store::PlaybookBullet>, String> {
+        self.store.list_bullets_filtered(None, filter)
+    }
+
+    /// 列出全部记忆（记忆管理页聚合：全局 + 各工作区）
+    pub fn list_all_memories(&self) -> Result<Vec<crate::memory_store::PlaybookBullet>, String> {
+        self.store.list_bullets(None)
+    }
+
+    /// 清空指定作用域的记忆；返回删除条数
+    pub fn clear_memories(
+        &self,
+        filter: &crate::memory_store::BulletFilter,
+    ) -> Result<usize, String> {
+        self.store.clear_bullets(filter)
+    }
+
+    /// 删除 playbook 条目（记忆管理页手动干预接口）
     pub fn delete_bullet(&self, bullet_id: &str) -> Result<(), String> {
         self.store.delete_bullet(bullet_id)
     }
@@ -229,6 +311,7 @@ impl WarmDataStore {
         base_dir: PathBuf,
         reflector_client: Arc<Mutex<Option<aether_ai::AiClient>>>,
         tombstones: Arc<Mutex<HashSet<String>>>,
+        memory_toggles: Arc<RwLock<aether_shared::settings::MemorySettings>>,
         request_rx: Receiver<ArchiveRequest>,
         result_tx: Sender<ArchiveResult>,
     ) {
@@ -256,6 +339,7 @@ impl WarmDataStore {
                     conv_id,
                     conv,
                     workspace_hash: hash,
+                    workspace_name,
                 } => {
                     let result = if tombstoned(&conv_id) {
                         Err("会话已删除，跳过归档".to_string())
@@ -263,7 +347,14 @@ impl WarmDataStore {
                         Self::archive_single(store.as_ref(), &conv_id, &conv, &hash)
                     };
                     if result.is_ok() {
-                        Self::maybe_reflect(&store, &reflector_client, &conv);
+                        Self::maybe_reflect(
+                            &store,
+                            &reflector_client,
+                            &memory_toggles,
+                            &conv,
+                            &hash,
+                            &workspace_name,
+                        );
                     }
                     let _ = result_tx.send(match result {
                         Ok(()) => ArchiveResult::Success { conv_id },
@@ -274,6 +365,7 @@ impl WarmDataStore {
                     sessions,
                     reflect,
                     workspace_hash: hash,
+                    workspace_name,
                 } => {
                     for conv in sessions {
                         let conv_id = conv.id.clone();
@@ -283,7 +375,14 @@ impl WarmDataStore {
                             Self::archive_single(store.as_ref(), &conv_id, &conv, &hash)
                         };
                         if result.is_ok() && reflect {
-                            Self::maybe_reflect(&store, &reflector_client, &conv);
+                            Self::maybe_reflect(
+                                &store,
+                                &reflector_client,
+                                &memory_toggles,
+                                &conv,
+                                &hash,
+                                &workspace_name,
+                            );
                         }
                         let _ = result_tx.send(match result {
                             Ok(()) => ArchiveResult::Success { conv_id },
@@ -309,11 +408,18 @@ impl WarmDataStore {
     fn maybe_reflect(
         store: &Arc<dyn MemoryStore>,
         reflector_client: &Arc<Mutex<Option<aether_ai::AiClient>>>,
+        memory_toggles: &Arc<RwLock<aether_shared::settings::MemorySettings>>,
         conv: &AiConversation,
+        workspace_hash: &str,
+        workspace_name: &str,
     ) {
         let has_user_msg = conv.messages.iter().any(|m| m.role == AiRole::User);
         if !has_user_msg || conv.messages.len() < 2 {
             return;
+        }
+        let toggles = memory_toggles.read().map(|g| g.clone()).unwrap_or_default();
+        if !toggles.global_enabled && !toggles.project_enabled {
+            return; // 全局/项目记忆全部关闭：不做反思沉淀
         }
         let guard = match reflector_client.lock() {
             Ok(g) => g,
@@ -323,9 +429,18 @@ impl WarmDataStore {
             Some(c) => c,
             None => return,
         };
-        match crate::reflector::reflect_and_curate(store.as_ref(), client, conv) {
+        let project = if toggles.project_enabled && !workspace_hash.is_empty() {
+            Some((workspace_hash, workspace_name))
+        } else {
+            None
+        };
+        let policy = crate::reflector::CuratePolicy {
+            allow_global: toggles.global_enabled,
+            project,
+        };
+        match crate::reflector::reflect_and_curate(store.as_ref(), client, conv, policy) {
             Ok(n) if n > 0 => {
-                eprintln!("[Reflector] 会话 {} 沉淀了 {} 条策略", conv.id, n);
+                eprintln!("[Reflector] 会话 {} 沉淀了 {} 条记忆", conv.id, n);
             }
             Ok(_) => {}
             Err(e) => eprintln!("[Reflector] 反思失败 {}: {}", conv.id, e),
@@ -371,27 +486,31 @@ impl WarmDataStore {
         Ok(())
     }
 
-    /// 发送归档请求（非阻塞）；自动捕获当前工作区哈希，保证归属正确
+    /// 发送归档请求（非阻塞）；自动捕获当前工作区哈希与名称，保证归属正确
     pub fn request_archive(&self, conv_id: String, conv: AiConversation) {
         if let Some(tx) = &self.request_tx {
             let hash = self.current_workspace_hash();
+            let name = self.current_workspace_name();
             let _ = tx.send(ArchiveRequest::ArchiveConversation {
                 conv_id,
                 conv,
                 workspace_hash: hash,
+                workspace_name: name,
             });
         }
     }
 
-    /// 批量归档所有脏会话；自动捕获当前工作区哈希
+    /// 批量归档所有脏会话；自动捕获当前工作区哈希与名称
     /// reflect=false 用于退出场景：只落盘不做 LLM 反思，避免退出被网络请求阻塞
     pub fn request_archive_all(&self, sessions: Vec<AiConversation>, reflect: bool) {
         if let Some(tx) = &self.request_tx {
             let hash = self.current_workspace_hash();
+            let name = self.current_workspace_name();
             let _ = tx.send(ArchiveRequest::ArchiveAllDirty {
                 sessions,
                 reflect,
                 workspace_hash: hash,
+                workspace_name: name,
             });
         }
     }

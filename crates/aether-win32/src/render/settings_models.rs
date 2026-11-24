@@ -1,3 +1,4 @@
+use super::app_theme;
 use super::*;
 
 impl EditorState {
@@ -18,20 +19,14 @@ impl EditorState {
     ) {
         let mut cy = start_y;
         unsafe {
-            // 卡片布局最小宽度：经典模式下设置区被压窄时，卡片保持该最小宽度向右溢出，
-            // 溢出部分被随后绘制的 AI 侧边栏覆盖，避免卡片被越挤越扁、文字互相重叠；
-            // 智能体模式下右面板外无遮挡，强制钳制为实际宽度，防止卡片画到窗口外。
-            let eff_width = if self.editor_mode.is_agent() {
-                width.max(0.0)
-            } else {
-                width.max(500.0)
-            };
+            // 右面板外无遮挡，强制钳制为实际宽度，防止卡片画到窗口外
+            let eff_width = width.max(0.0);
             let content_w = eff_width - margin * 2.0;
 
             // 说明
             let info_text =
                 "已添加的模型（点击卡片切换当前使用的模型，可编辑 / 删除）；点击下方「添加模型」新增配置。";
-            let info_color = color_f(0.55, 0.55, 0.55, 1.0);
+            let info_color = app_theme::text_muted();
             let info_brush = self
                 .win
                 .render_ctx
@@ -74,28 +69,28 @@ impl EditorState {
                     DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
                 )
                 .unwrap();
-            let name_color = color_f(0.90, 0.90, 0.90, 1.0);
+            let name_color = app_theme::text_primary();
             let name_brush = self
                 .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &name_color)
                 .unwrap();
-            let active_name_color = color_f(0.45, 0.74, 1.0, 1.0);
+            let active_name_color = app_theme::accent();
             let active_name_brush = self
                 .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &active_name_color)
                 .unwrap();
-            let desc_color = color_f(0.55, 0.55, 0.55, 1.0);
+            let desc_color = app_theme::text_muted();
             let desc_brush = self
                 .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &desc_color)
                 .unwrap();
-            let provider_color = color_f(0.65, 0.65, 0.65, 1.0);
+            let provider_color = app_theme::text_muted();
             let provider_brush = self
                 .win
                 .render_ctx
@@ -129,9 +124,9 @@ impl EditorState {
                 let is_hover = self.ui.settings_panel.hover_model_id.as_ref() == Some(&model.id);
                 let is_active = active_id.as_deref() == Some(model.id.as_str());
                 let card_bg = if is_hover {
-                    color_f(0.22, 0.22, 0.24, 1.0)
+                    app_theme::accent_soft()
                 } else {
-                    color_f(0.18, 0.18, 0.20, 1.0)
+                    app_theme::surface()
                 };
                 let card_bg_brush = self
                     .win
@@ -153,9 +148,9 @@ impl EditorState {
                 target.FillRoundedRectangle(&card_rounded, &card_bg_brush);
                 // 卡片边框（激活模型高亮）
                 let card_border = if is_active {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    app_theme::accent()
                 } else {
-                    color_f(0.28, 0.28, 0.30, 1.0)
+                    app_theme::separator()
                 };
                 let card_border_brush = self
                     .win
@@ -171,7 +166,7 @@ impl EditorState {
                         .win
                         .render_ctx
                         .brush_cache
-                        .get_brush(target, &color_f(0.0, 0.55, 0.95, 1.0))
+                        .get_brush(target, &app_theme::accent_hover())
                         .unwrap();
                     let accent_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
                         rect: D2D_RECT_F {
@@ -236,7 +231,7 @@ impl EditorState {
                         .win
                         .render_ctx
                         .brush_cache
-                        .get_brush(target, &color_f(0.40, 0.72, 1.0, 1.0))
+                        .get_brush(target, &app_theme::accent())
                         .unwrap();
                     let cur_wide: Vec<u16> = "● 当前使用".encode_utf16().chain(Some(0)).collect();
                     target.DrawText(
@@ -290,9 +285,9 @@ impl EditorState {
                     bottom: toggle_y + toggle_h,
                 };
                 let toggle_bg = if model.enabled {
-                    color_f(0.20, 0.72, 0.40, 1.0)
+                    app_theme::accent()
                 } else {
-                    color_f(0.34, 0.34, 0.37, 1.0)
+                    app_theme::switch_off()
                 };
                 let toggle_bg_brush = self
                     .win
@@ -344,9 +339,9 @@ impl EditorState {
                     "已停用"
                 };
                 let state_color = if model.enabled {
-                    color_f(0.42, 0.80, 0.54, 1.0)
+                    app_theme::accent_text()
                 } else {
-                    color_f(0.60, 0.60, 0.62, 1.0)
+                    app_theme::text_secondary()
                 };
                 let state_brush = self
                     .win
@@ -380,9 +375,9 @@ impl EditorState {
                     bottom: act_y + act_h,
                 };
                 let del_bg = if is_del_hover {
-                    color_f(0.34, 0.16, 0.16, 1.0)
+                    app_theme::danger_soft()
                 } else {
-                    color_f(0.16, 0.16, 0.18, 1.0)
+                    app_theme::surface()
                 };
                 let del_bg_brush = self
                     .win
@@ -397,9 +392,9 @@ impl EditorState {
                 };
                 target.FillRoundedRectangle(&del_rounded, &del_bg_brush);
                 let del_border = if is_del_hover {
-                    color_f(0.78, 0.36, 0.36, 1.0)
+                    app_theme::danger()
                 } else {
-                    color_f(0.40, 0.32, 0.32, 1.0)
+                    app_theme::danger_soft()
                 };
                 let del_border_brush = self
                     .win
@@ -409,9 +404,9 @@ impl EditorState {
                     .unwrap();
                 target.DrawRoundedRectangle(&del_rounded, &del_border_brush, 1.0, None);
                 let del_txt_color = if is_del_hover {
-                    color_f(1.0, 0.74, 0.74, 1.0)
+                    app_theme::danger()
                 } else {
-                    color_f(0.84, 0.62, 0.62, 1.0)
+                    app_theme::danger()
                 };
                 let del_txt_brush = self
                     .win
@@ -447,9 +442,9 @@ impl EditorState {
                     bottom: act_y + act_h,
                 };
                 let edit_bg = if is_edit_hover {
-                    color_f(0.18, 0.28, 0.40, 1.0)
+                    app_theme::accent_soft()
                 } else {
-                    color_f(0.16, 0.16, 0.18, 1.0)
+                    app_theme::surface()
                 };
                 let edit_bg_brush = self
                     .win
@@ -464,9 +459,9 @@ impl EditorState {
                 };
                 target.FillRoundedRectangle(&edit_rounded, &edit_bg_brush);
                 let edit_border = if is_edit_hover {
-                    color_f(0.28, 0.56, 0.86, 1.0)
+                    app_theme::accent()
                 } else {
-                    color_f(0.34, 0.34, 0.37, 1.0)
+                    app_theme::switch_off()
                 };
                 let edit_border_brush = self
                     .win
@@ -476,9 +471,9 @@ impl EditorState {
                     .unwrap();
                 target.DrawRoundedRectangle(&edit_rounded, &edit_border_brush, 1.0, None);
                 let edit_txt_color = if is_edit_hover {
-                    color_f(0.82, 0.90, 1.0, 1.0)
+                    app_theme::accent_text()
                 } else {
-                    color_f(0.84, 0.86, 0.90, 1.0)
+                    app_theme::text_secondary()
                 };
                 let edit_txt_brush = self
                     .win
@@ -514,9 +509,9 @@ impl EditorState {
                     bottom: act_y + act_h,
                 };
                 let eval_bg = if is_eval_hover {
-                    color_f(0.14, 0.30, 0.22, 1.0)
+                    app_theme::accent_soft()
                 } else {
-                    color_f(0.16, 0.16, 0.18, 1.0)
+                    app_theme::surface()
                 };
                 let eval_bg_brush = self
                     .win
@@ -531,9 +526,9 @@ impl EditorState {
                 };
                 target.FillRoundedRectangle(&eval_rounded, &eval_bg_brush);
                 let eval_border = if is_eval_hover {
-                    color_f(0.30, 0.72, 0.48, 1.0)
+                    app_theme::accent_text()
                 } else {
-                    color_f(0.34, 0.34, 0.37, 1.0)
+                    app_theme::switch_off()
                 };
                 let eval_border_brush = self
                     .win
@@ -543,9 +538,9 @@ impl EditorState {
                     .unwrap();
                 target.DrawRoundedRectangle(&eval_rounded, &eval_border_brush, 1.0, None);
                 let eval_txt_color = if is_eval_hover {
-                    color_f(0.60, 0.96, 0.72, 1.0)
+                    app_theme::accent_text()
                 } else {
-                    color_f(0.50, 0.80, 0.60, 1.0)
+                    app_theme::accent_text()
                 };
                 let eval_txt_brush = self
                     .win
@@ -594,9 +589,9 @@ impl EditorState {
             let is_add_hover = self.ui.settings_panel.hover_model_button
                 == Some(crate::settings::ModelButton::Add);
             let add_bg = if is_add_hover {
-                color_f(0.0, 0.55, 0.95, 1.0)
+                app_theme::accent_hover()
             } else {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                app_theme::accent()
             };
             let add_bg_brush = self
                 .win
@@ -639,6 +634,13 @@ impl EditorState {
                 add_btn_w,
                 add_btn_h,
             );
+            crate::hit_test::register_hit_region(
+                "settings:add_model",
+                add_btn_x,
+                add_btn_y,
+                add_btn_w,
+                add_btn_h,
+            );
         }
     }
 
@@ -653,7 +655,7 @@ impl EditorState {
         unsafe {
             let btn_w = 132.0f32;
             let btn_h = 28.0f32;
-            let bg = color_f(0.18, 0.18, 0.20, 1.0);
+            let bg = app_theme::surface_alt();
             let bg_brush = self
                 .win
                 .render_ctx
@@ -672,7 +674,7 @@ impl EditorState {
                 radiusY: 4.0,
             };
             target.FillRoundedRectangle(&back_rounded, &bg_brush);
-            let border = color_f(0.35, 0.35, 0.37, 1.0);
+            let border = app_theme::switch_off();
             let border_brush = self
                 .win
                 .render_ctx
@@ -680,7 +682,7 @@ impl EditorState {
                 .get_brush(target, &border)
                 .unwrap();
             target.DrawRoundedRectangle(&back_rounded, &border_brush, 1.0, None);
-            let tc = color_f(0.85, 0.85, 0.85, 1.0);
+            let tc = app_theme::text_primary();
             let tb = self
                 .win
                 .render_ctx

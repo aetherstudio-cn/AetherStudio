@@ -40,12 +40,10 @@ pub enum SettingsTab {
     Ai,
     /// 外观：侧边栏、密度等
     Appearance,
-    /// 远程：SSH 主机等
-    Remote,
     /// 模型管理
     Models,
     /// 策略库管理
-    Playbook,
+    Memory,
     /// 更新设置
     Update,
 }
@@ -56,21 +54,19 @@ impl SettingsTab {
             Self::General => "通用",
             Self::Ai => "AI",
             Self::Appearance => "外观",
-            Self::Remote => "远程",
             Self::Models => "模型",
-            Self::Playbook => "策略",
+            Self::Memory => "记忆",
             Self::Update => "更新",
         }
     }
 
     /// 导航中展示的标签页。AI 配置已并入「模型」页（新建/编辑模型时以内嵌表单形式出现），
     /// 因此不再单独列出 AI 项；账户功能当前不需要，也一并移除。
-    pub const ALL: [SettingsTab; 6] = [
+    pub const ALL: [SettingsTab; 5] = [
         SettingsTab::General,
         SettingsTab::Appearance,
-        SettingsTab::Remote,
         SettingsTab::Models,
-        SettingsTab::Playbook,
+        SettingsTab::Memory,
         SettingsTab::Update,
     ];
 }
@@ -81,6 +77,91 @@ pub enum ProviderTemplateButton {
     DeepSeek,
     Kimi,
     Custom,
+}
+
+/// 记忆页：详情视图目标（全局记忆或某个工作区的项目记忆）
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MemoryDetailTarget {
+    Global,
+    Project { hash: String, name: String },
+}
+
+impl MemoryDetailTarget {
+    pub fn is_global(&self) -> bool {
+        matches!(self, Self::Global)
+    }
+
+    pub fn title(&self) -> String {
+        match self {
+            Self::Global => "全局记忆".to_string(),
+            Self::Project { name, hash } => {
+                if name.is_empty() {
+                    format!("项目记忆 · {}", short_workspace_hash(hash))
+                } else {
+                    name.clone()
+                }
+            }
+        }
+    }
+
+    pub fn to_filter(&self) -> aether_ai_panel::memory_store::BulletFilter {
+        use aether_ai_panel::memory_store::{BulletFilter, MemoryScope};
+        match self {
+            Self::Global => BulletFilter::exact(MemoryScope::Global, ""),
+            Self::Project { hash, .. } => BulletFilter::exact(MemoryScope::Project, hash.clone()),
+        }
+    }
+}
+
+/// 工作区哈希短名（未知工作区的展示兜底）
+pub fn short_workspace_hash(hash: &str) -> String {
+    let short: String = hash.chars().take(8).collect();
+    if short.is_empty() {
+        "未命名工作区".to_string()
+    } else {
+        short
+    }
+}
+
+/// 记忆页可交互目标（每帧注册命中区）
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MemoryHit {
+    ToggleGlobal,
+    ToggleProject,
+    /// 打开某份记忆的详情
+    OpenCard(MemoryDetailTarget),
+    /// 清空某份记忆（需二次确认）
+    ClearCard(MemoryDetailTarget),
+    /// 详情页返回列表
+    Back,
+    /// 删除单条记忆（需二次确认）
+    DeleteEntry(String),
+    /// 详情页清空当前作用域（需二次确认）
+    ClearScope(MemoryDetailTarget),
+}
+
+impl MemoryHit {
+    /// 语义命中区名称（供自动化测试按名称点击）
+    pub fn action_key(&self) -> String {
+        match self {
+            Self::ToggleGlobal => "toggle_global".to_string(),
+            Self::ToggleProject => "toggle_project".to_string(),
+            Self::OpenCard(MemoryDetailTarget::Global) => "open_global".to_string(),
+            Self::OpenCard(MemoryDetailTarget::Project { hash, .. }) => {
+                format!("open_project:{}", hash)
+            }
+            Self::ClearCard(MemoryDetailTarget::Global) => "clear_global".to_string(),
+            Self::ClearCard(MemoryDetailTarget::Project { hash, .. }) => {
+                format!("clear_project:{}", hash)
+            }
+            Self::Back => "back".to_string(),
+            Self::DeleteEntry(id) => format!("delete:{}", id),
+            Self::ClearScope(MemoryDetailTarget::Global) => "clear_scope_global".to_string(),
+            Self::ClearScope(MemoryDetailTarget::Project { hash, .. }) => {
+                format!("clear_scope_project:{}", hash)
+            }
+        }
+    }
 }
 
 /// 设置下拉类型
@@ -401,8 +482,21 @@ pub struct SettingsPanel {
     pub baseline_ai: Option<AiSettings>,
     /// 外观页：最大化时显示任务栏开关命中区
     pub taskbar_toggle_region: Option<(f32, f32, f32, f32)>,
-    /// 通用页：默认启动模式行命中区（点击切换 开发者/智能体，持久化后重启生效）
-    pub default_mode_toggle_region: Option<(f32, f32, f32, f32)>,
+    // ---- 记忆页 ----
+    /// 记忆库缓存（进入页面/增删后从 WarmDataStore 重新加载）
+    pub memory_entries: Vec<aether_ai_panel::memory_store::PlaybookBullet>,
+    /// 记忆详情视图目标（None=记忆列表）
+    pub memory_detail: Option<MemoryDetailTarget>,
+    /// 待二次确认删除的单条记忆 ID
+    pub memory_confirm_delete: Option<String>,
+    /// 待二次确认清空的记忆作用域
+    pub memory_confirm_clear: Option<MemoryDetailTarget>,
+    /// 记忆页悬停目标
+    pub memory_hover: Option<MemoryHit>,
+    /// 记忆页命中区域缓存 (hit, x, y, w, h)
+    pub memory_hit_regions: Vec<(MemoryHit, f32, f32, f32, f32)>,
+    /// 记忆库缓存是否过期（切页/工作区切换/外部归档后置位）
+    pub memory_dirty: bool,
 }
 
 impl SettingsPanel {
@@ -485,7 +579,13 @@ impl SettingsPanel {
             hover_multimodal_toggle: false,
             baseline_ai: None,
             taskbar_toggle_region: None,
-            default_mode_toggle_region: None,
+            memory_entries: Vec::new(),
+            memory_detail: None,
+            memory_confirm_delete: None,
+            memory_confirm_clear: None,
+            memory_hover: None,
+            memory_hit_regions: Vec::new(),
+            memory_dirty: true,
         }
     }
 
@@ -595,7 +695,13 @@ impl SettingsPanel {
             hover_multimodal_toggle: false,
             baseline_ai: None,
             taskbar_toggle_region: None,
-            default_mode_toggle_region: None,
+            memory_entries: Vec::new(),
+            memory_detail: None,
+            memory_confirm_delete: None,
+            memory_confirm_clear: None,
+            memory_hover: None,
+            memory_hit_regions: Vec::new(),
+            memory_dirty: true,
         }
     }
 
@@ -944,6 +1050,7 @@ impl SettingsPanel {
         self.field_regions.clear();
         self.button_regions.clear();
         self.tab_regions.clear();
+        self.memory_hit_regions.clear();
         self.model_button_regions.clear();
         self.model_item_regions.clear();
         self.dropdown_trigger_regions.clear();
@@ -974,12 +1081,33 @@ impl SettingsPanel {
             SettingsTab::General => "general",
             SettingsTab::Ai => "ai",
             SettingsTab::Appearance => "appearance",
-            SettingsTab::Remote => "remote",
             SettingsTab::Models => "models",
-            SettingsTab::Playbook => "playbook",
+            SettingsTab::Memory => "memory",
             SettingsTab::Update => "update",
         };
         crate::hit_test::register_hit_region(format!("settings_tab:{}", name), x, y, w, h);
+    }
+
+    /// 注册记忆页命中区（同时输出语义命中区，供自动化按名称点击）
+    pub fn add_memory_region(&mut self, hit: MemoryHit, x: f32, y: f32, w: f32, h: f32) {
+        crate::hit_test::register_hit_region(
+            format!("settings_memory:{}", hit.action_key()),
+            x,
+            y,
+            w,
+            h,
+        );
+        self.memory_hit_regions.push((hit, x, y, w, h));
+    }
+
+    /// 命中检测：记忆页（后注册的按钮优先于整卡区域）
+    pub fn hit_test_memory(&self, x: f32, y: f32) -> Option<MemoryHit> {
+        for (hit, rx, ry, rw, rh) in self.memory_hit_regions.iter().rev() {
+            if x >= *rx && x < rx + rw && y >= *ry && y < ry + rh {
+                return Some(hit.clone());
+            }
+        }
+        None
     }
 
     /// 命中检测：标签页
@@ -1640,6 +1768,15 @@ impl SettingsPanel {
     }
 
     pub fn add_model_button_region(&mut self, button: ModelButton, x: f32, y: f32, w: f32, h: f32) {
+        // 语义命中区（供自动化点击；同名多实例时取最近注册）
+        let name = match button {
+            ModelButton::Add => "add",
+            ModelButton::Edit => "edit",
+            ModelButton::Delete => "delete",
+            ModelButton::Eval => "eval",
+            ModelButton::ToggleEnabled => "toggle",
+        };
+        crate::hit_test::register_hit_region(format!("settings_model:{}", name), x, y, w, h);
         self.model_button_regions.push((button, x, y, w, h));
     }
 

@@ -75,6 +75,12 @@ pub enum CommandId {
     SearchGlobal,
     // AI
     AiFixDiagnostics,
+    /// 桌面截图（捕获虚拟屏幕并打开图片预览）
+    ToolsDesktopShot,
+    /// 截取本窗口（仅捕获本窗口自身内容，无需前台，不抓其它窗口）
+    ToolsWindowShot,
+    /// 安全检查（工作区密钥扫描，离线）
+    ToolsSecurityScan,
     // 帮助
     HelpCheckUpdate,
     HelpAbout,
@@ -115,6 +121,9 @@ impl CommandId {
             CommandId::TerminalNew => "新建终端",
             CommandId::SearchGlobal => "全局搜索",
             CommandId::AiFixDiagnostics => "AI 修复当前诊断",
+            CommandId::ToolsDesktopShot => "桌面截图",
+            CommandId::ToolsWindowShot => "截取本窗口",
+            CommandId::ToolsSecurityScan => "安全检查",
             CommandId::HelpCheckUpdate => "检查更新",
             CommandId::HelpAbout => "关于",
             CommandId::MarkdownTogglePreview => "Markdown 预览",
@@ -214,11 +223,6 @@ impl MenuBar {
                     ],
                 ),
                 MenuBarItem::new(
-                    "选择(S)",
-                    // REQ-P3-01: 统一使用 EditSelectAll
-                    vec![MenuItem::new("全选", CommandId::EditSelectAll).with_shortcut("Ctrl+A")],
-                ),
-                MenuBarItem::new(
                     "查看(V)",
                     vec![
                         MenuItem::new("切换侧边栏", CommandId::ViewToggleSidebar)
@@ -226,28 +230,13 @@ impl MenuBar {
                         MenuItem::new("切换活动栏", CommandId::ViewToggleActivityBar),
                         MenuItem::new("切换状态栏", CommandId::ViewToggleStatusBar),
                         MenuItem::separator(),
-                        MenuItem::new("放大", CommandId::ViewZoomIn).with_shortcut("Ctrl+="),
-                        MenuItem::new("缩小", CommandId::ViewZoomOut).with_shortcut("Ctrl+-"),
-                        MenuItem::separator(),
                         MenuItem::new("Markdown 预览", CommandId::MarkdownTogglePreview)
                             .with_shortcut("Ctrl+Shift+V"),
                     ],
                 ),
                 MenuBarItem::new(
-                    "转到(G)",
-                    vec![
-                        MenuItem::new("转到文件...", CommandId::GotoFile).with_shortcut("Ctrl+P"),
-                        MenuItem::new("转到行...", CommandId::GotoLine).with_shortcut("Ctrl+G"),
-                    ],
-                ),
-                MenuBarItem::new(
                     "运行(R)",
-                    vec![
-                        MenuItem::new("启动调试", CommandId::RunDebug).with_shortcut("F5"),
-                        MenuItem::new("运行", CommandId::RunStart).with_shortcut("Ctrl+F5"),
-                        MenuItem::separator(),
-                        MenuItem::new("智能体沙盒评测", CommandId::RunSandboxEval),
-                    ],
+                    vec![MenuItem::new("智能体沙盒评测", CommandId::RunSandboxEval)],
                 ),
                 MenuBarItem::new(
                     "终端(T)",

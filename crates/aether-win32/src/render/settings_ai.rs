@@ -1,3 +1,4 @@
+use super::app_theme;
 use super::*;
 
 impl EditorState {
@@ -14,7 +15,7 @@ impl EditorState {
     ) -> (f32, f32, f32, f32) {
         let track_h = 4.0_f32;
         let knob_cx = track_x + track_w * ratio.clamp(0.0, 1.0);
-        let track_bg = color_f(0.30, 0.30, 0.33, 1.0);
+        let track_bg = app_theme::track_bg();
         let track_bg_brush = self
             .win
             .render_ctx
@@ -31,9 +32,9 @@ impl EditorState {
             &track_bg_brush,
         );
         let track_fill = if disabled {
-            color_f(0.40, 0.40, 0.43, 1.0)
+            app_theme::track_disabled()
         } else {
-            color_f(0.0, 0.47, 0.83, 1.0)
+            app_theme::accent()
         };
         let track_fill_brush = self
             .win
@@ -52,9 +53,9 @@ impl EditorState {
         );
         let knob_r = 8.0_f32;
         let knob_color = if disabled {
-            color_f(0.55, 0.55, 0.58, 1.0)
+            app_theme::border_strong()
         } else {
-            color_f(0.95, 0.95, 0.95, 1.0)
+            app_theme::knob()
         };
         let knob_brush = self
             .win
@@ -91,9 +92,9 @@ impl EditorState {
         let sw_w = 38.0_f32;
         let sw_h = 20.0_f32;
         let sw_bg = if checked {
-            color_f(0.0, 0.47, 0.83, 1.0)
+            app_theme::accent()
         } else {
-            color_f(0.34, 0.34, 0.37, 1.0)
+            app_theme::switch_off()
         };
         if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &sw_bg) {
             let sw_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
@@ -190,14 +191,14 @@ impl EditorState {
             .win
             .render_ctx
             .brush_cache
-            .get_brush(target, &color_f(0.18, 0.18, 0.18, 1.0))
+            .get_brush(target, &app_theme::input_bg())
             .unwrap();
         let border = if !valid {
-            color_f(0.85, 0.30, 0.30, 1.0)
+            app_theme::danger()
         } else if focused {
-            color_f(0.0, 0.47, 0.83, 1.0)
+            app_theme::accent()
         } else {
-            color_f(0.3, 0.3, 0.3, 1.0)
+            app_theme::border_strong()
         };
         let border_brush = self
             .win
@@ -221,9 +222,9 @@ impl EditorState {
             (value.to_string(), false)
         };
         let text_color = if is_placeholder {
-            color_f(0.5, 0.5, 0.5, 1.0)
+            app_theme::text_muted()
         } else {
-            color_f(0.85, 0.85, 0.85, 1.0)
+            app_theme::text_primary()
         };
         let value_brush = self
             .win
@@ -286,7 +287,7 @@ impl EditorState {
             .win
             .render_ctx
             .brush_cache
-            .get_brush(target, &color_f(0.92, 0.92, 0.92, 1.0))
+            .get_brush(target, &app_theme::text_primary())
             .unwrap();
         target.FillRectangle(
             &D2D_RECT_F {
@@ -327,19 +328,22 @@ impl EditorState {
         let input_w = form_w;
         let scroll = self.ui.settings_panel.scroll_offset;
         let mut cy = start_y - scroll;
+        // 底部固定操作栏高度：保存/测试按钮始终可见，不随表单滚动
+        let action_bar_h = 56.0_f32;
+        let scroll_avail = (avail_h - action_bar_h).max(60.0);
         unsafe {
-            // 裁剪到可视内容区：滚动后超出上下边界的内容不会绘制到标题栏/边界外
+            // 裁剪到可视内容区（预留底部固定操作栏）：滚动后超出边界的内容不绘制
             let clip_rect = D2D_RECT_F {
                 left: content_left,
                 top: start_y,
                 right: content_left + content_width,
-                bottom: start_y + avail_h,
+                bottom: start_y + scroll_avail,
             };
             target.PushAxisAlignedClip(&clip_rect, D2D1_ANTIALIAS_MODE_ALIASED);
 
             // 信息卡片：左侧强调色条 + 说明文字（对比度提高，两行自适应）
             let card_h = 56.0_f32;
-            let card_bg = color_f(0.16, 0.18, 0.22, 1.0);
+            let card_bg = app_theme::accent_soft();
             let card_bg_brush = self
                 .win
                 .render_ctx
@@ -353,7 +357,7 @@ impl EditorState {
                 bottom: cy + card_h,
             };
             target.FillRectangle(&card_rect, &card_bg_brush);
-            let accent = color_f(0.0, 0.47, 0.83, 1.0);
+            let accent = app_theme::accent();
             let accent_brush = self
                 .win
                 .render_ctx
@@ -372,7 +376,7 @@ impl EditorState {
             } else {
                 "配置 API 密钥后，AI 助手可在 Agent 模式下新建、修改、删除文件。点击「保存」时会自动验证密钥有效性，并将更改写入当前模型。"
             };
-            let info_color = color_f(0.72, 0.74, 0.78, 1.0);
+            let info_color = app_theme::text_secondary();
             let info_brush = self
                 .win
                 .render_ctx
@@ -406,7 +410,7 @@ impl EditorState {
                 )
             };
             let hint_wide: Vec<u16> = model_hint.encode_utf16().chain(Some(0)).collect();
-            let hint_color = color_f(0.60, 0.78, 0.95, 1.0);
+            let hint_color = app_theme::accent_text();
             let hint_brush = self
                 .win
                 .render_ctx
@@ -473,7 +477,7 @@ impl EditorState {
             cy += label_h;
             let apikey_focused =
                 self.ui.settings_panel.active_field == Some(crate::settings::SettingsField::ApiKey);
-            let apikey_bg = color_f(0.18, 0.18, 0.18, 1.0);
+            let apikey_bg = app_theme::input_bg();
             let apikey_bg_brush = self
                 .win
                 .render_ctx
@@ -481,9 +485,9 @@ impl EditorState {
                 .get_brush(target, &apikey_bg)
                 .unwrap();
             let apikey_border = if apikey_focused {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                app_theme::accent()
             } else {
-                color_f(0.3, 0.3, 0.3, 1.0)
+                app_theme::border_strong()
             };
             let apikey_border_brush = self
                 .win
@@ -510,9 +514,9 @@ impl EditorState {
             let eye_w = 48.0_f32;
             let eye_x = x + margin + input_w - eye_w;
             let eye_color = if self.ui.settings_panel.hover_api_key_toggle {
-                color_f(0.55, 0.78, 1.0, 1.0)
+                app_theme::accent_text()
             } else {
-                color_f(0.60, 0.60, 0.62, 1.0)
+                app_theme::text_secondary()
             };
             let eye_brush = self
                 .win
@@ -556,9 +560,9 @@ impl EditorState {
                 bottom: cy + input_h,
             };
             let key_text_color = if key_empty {
-                color_f(0.5, 0.5, 0.5, 1.0)
+                app_theme::text_muted()
             } else {
-                color_f(0.9, 0.9, 0.9, 1.0)
+                app_theme::text_primary()
             };
             let key_text_brush = self
                 .win
@@ -616,7 +620,7 @@ impl EditorState {
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
                 cy += label_h;
-                let baseurl_bg = color_f(0.18, 0.18, 0.18, 1.0);
+                let baseurl_bg = app_theme::input_bg();
                 let baseurl_bg_brush = self
                     .win
                     .render_ctx
@@ -626,9 +630,9 @@ impl EditorState {
                 let baseurl_border = if self.ui.settings_panel.active_field
                     == Some(crate::settings::SettingsField::BaseUrl)
                 {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    app_theme::accent()
                 } else {
-                    color_f(0.3, 0.3, 0.3, 1.0)
+                    app_theme::border_strong()
                 };
                 let baseurl_border_brush = self
                     .win
@@ -790,9 +794,9 @@ impl EditorState {
                 let sw_y = cy;
                 let checked = self.ui.settings_panel.thinking;
                 let sw_bg = if checked {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    app_theme::accent()
                 } else {
-                    color_f(0.34, 0.34, 0.37, 1.0)
+                    app_theme::switch_off()
                 };
                 if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &sw_bg) {
                     let sw_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
@@ -882,11 +886,11 @@ impl EditorState {
                         let selected = self.ui.settings_panel.reasoning_effort == *val;
                         let hovered = self.ui.settings_panel.hover_effort == Some(*val);
                         let seg_bg = if selected {
-                            color_f(0.0, 0.47, 0.83, 1.0)
+                            app_theme::accent()
                         } else if hovered {
-                            color_f(0.24, 0.24, 0.27, 1.0)
+                            app_theme::accent_soft_hover()
                         } else {
-                            color_f(0.18, 0.18, 0.20, 1.0)
+                            app_theme::surface_alt()
                         };
                         let seg_rect = D2D_RECT_F {
                             left: seg_x,
@@ -907,7 +911,7 @@ impl EditorState {
                                 .win
                                 .render_ctx
                                 .brush_cache
-                                .get_brush(target, &color_f(0.32, 0.32, 0.35, 1.0))
+                                .get_brush(target, &app_theme::border())
                             {
                                 target.DrawRoundedRectangle(&seg_rounded, &bb, 1.0, None);
                             }
@@ -915,7 +919,7 @@ impl EditorState {
                         let seg_text_color = if selected {
                             color_f(1.0, 1.0, 1.0, 1.0)
                         } else {
-                            color_f(0.78, 0.78, 0.80, 1.0)
+                            app_theme::text_secondary()
                         };
                         if let Ok(tb) = self
                             .win
@@ -953,11 +957,11 @@ impl EditorState {
                 let checked = self.ui.settings_panel.multimodal;
                 let hover = self.ui.settings_panel.hover_multimodal_toggle;
                 let sw_bg = if checked {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    app_theme::accent()
                 } else if hover {
-                    color_f(0.42, 0.42, 0.45, 1.0)
+                    app_theme::switch_off()
                 } else {
-                    color_f(0.34, 0.34, 0.37, 1.0)
+                    app_theme::switch_off()
                 };
                 if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &sw_bg) {
                     let sw_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
@@ -1024,7 +1028,7 @@ impl EditorState {
 
             // 采样参数禁用态：DeepSeek 思考模式下 temperature/top_p 不生效（官方文档）
             let sampling_disabled = self.ui.settings_panel.sampling_disabled_by_thinking();
-            let disabled_text_color = color_f(0.50, 0.50, 0.53, 1.0);
+            let disabled_text_color = app_theme::text_muted();
             let disabled_text_brush = self
                 .win
                 .render_ctx
@@ -1164,14 +1168,14 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.18, 0.18, 0.18, 1.0))
+                .get_brush(target, &app_theme::input_bg())
                 .unwrap();
             let maxin_border = if !maxin_valid {
-                color_f(0.85, 0.30, 0.30, 1.0)
+                app_theme::danger()
             } else if maxin_focused {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                app_theme::accent()
             } else {
-                color_f(0.3, 0.3, 0.3, 1.0)
+                app_theme::border_strong()
             };
             let maxin_border_brush = self
                 .win
@@ -1204,9 +1208,9 @@ impl EditorState {
             };
             let maxin_text: Vec<u16> = maxin_display.encode_utf16().chain(Some(0)).collect();
             let maxin_text_color = if maxin_empty {
-                color_f(0.5, 0.5, 0.5, 1.0)
+                app_theme::text_muted()
             } else {
-                color_f(0.9, 0.9, 0.9, 1.0)
+                app_theme::text_primary()
             };
             let maxin_text_brush = self
                 .win
@@ -1240,7 +1244,7 @@ impl EditorState {
                     .win
                     .render_ctx
                     .brush_cache
-                    .get_brush(target, &color_f(0.90, 0.45, 0.45, 1.0))
+                    .get_brush(target, &app_theme::danger())
                     .unwrap();
                 let warn_text: Vec<u16> = "请输入 1 到 2000000 之间的整数"
                     .encode_utf16()
@@ -1288,7 +1292,7 @@ impl EditorState {
             cy += label_h;
             let maxtok_focused = self.ui.settings_panel.active_field
                 == Some(crate::settings::SettingsField::MaxTokens);
-            let maxtok_bg = color_f(0.18, 0.18, 0.18, 1.0);
+            let maxtok_bg = app_theme::input_bg();
             let maxtok_bg_brush = self
                 .win
                 .render_ctx
@@ -1296,11 +1300,11 @@ impl EditorState {
                 .get_brush(target, &maxtok_bg)
                 .unwrap();
             let maxtok_border = if !maxtok_valid {
-                color_f(0.85, 0.30, 0.30, 1.0)
+                app_theme::danger()
             } else if maxtok_focused {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                app_theme::accent()
             } else {
-                color_f(0.3, 0.3, 0.3, 1.0)
+                app_theme::border_strong()
             };
             let maxtok_border_brush = self
                 .win
@@ -1337,9 +1341,9 @@ impl EditorState {
                 bottom: cy + input_h,
             };
             let maxtok_text_color = if maxtok_empty {
-                color_f(0.5, 0.5, 0.5, 1.0)
+                app_theme::text_muted()
             } else {
-                color_f(0.9, 0.9, 0.9, 1.0)
+                app_theme::text_primary()
             };
             let maxtok_text_brush = self
                 .win
@@ -1364,7 +1368,7 @@ impl EditorState {
             );
             cy += input_h;
             if !maxtok_valid {
-                let warn_color = color_f(0.90, 0.45, 0.45, 1.0);
+                let warn_color = app_theme::danger();
                 let warn_brush = self
                     .win
                     .render_ctx
@@ -1410,7 +1414,7 @@ impl EditorState {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
             cy += label_h;
-            let sysp_bg = color_f(0.18, 0.18, 0.18, 1.0);
+            let sysp_bg = app_theme::input_bg();
             let sysp_bg_brush = self
                 .win
                 .render_ctx
@@ -1420,9 +1424,9 @@ impl EditorState {
             let sysp_border = if self.ui.settings_panel.active_field
                 == Some(crate::settings::SettingsField::SystemPrompt)
             {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                app_theme::accent()
             } else {
-                color_f(0.3, 0.3, 0.3, 1.0)
+                app_theme::border_strong()
             };
             let sysp_border_brush = self
                 .win
@@ -1452,9 +1456,9 @@ impl EditorState {
                 bottom: cy + sysp_h - 4.0,
             };
             let sysp_text_color = if self.ui.settings_panel.system_prompt.is_empty() {
-                color_f(0.5, 0.5, 0.5, 1.0)
+                app_theme::text_muted()
             } else {
-                color_f(0.85, 0.85, 0.85, 1.0)
+                app_theme::text_primary()
             };
             let sysp_text_brush = self
                 .win
@@ -1484,7 +1488,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.28, 0.28, 0.30, 1.0))
+                .get_brush(target, &app_theme::separator())
                 .unwrap();
             target.FillRectangle(
                 &D2D_RECT_F {
@@ -1503,7 +1507,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.62, 0.62, 0.65, 1.0))
+                .get_brush(target, &app_theme::text_secondary())
                 .unwrap();
             let chev_cx = x + margin + 5.0;
             let chev_cy = cy + header_h / 2.0;
@@ -1570,7 +1574,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.70, 0.70, 0.73, 1.0))
+                .get_brush(target, &app_theme::text_secondary())
                 .unwrap();
             target.DrawText(
                 &dev_title,
@@ -1732,11 +1736,11 @@ impl EditorState {
                     let selected = self.ui.settings_panel.response_format == *val;
                     let hovered = self.ui.settings_panel.hover_response_format == Some(*val);
                     let seg_bg = if selected {
-                        color_f(0.0, 0.47, 0.83, 1.0)
+                        app_theme::accent()
                     } else if hovered {
-                        color_f(0.24, 0.24, 0.27, 1.0)
+                        app_theme::accent_soft_hover()
                     } else {
-                        color_f(0.18, 0.18, 0.20, 1.0)
+                        app_theme::surface_alt()
                     };
                     let seg_rect = D2D_RECT_F {
                         left: seg_x,
@@ -1757,7 +1761,7 @@ impl EditorState {
                             .win
                             .render_ctx
                             .brush_cache
-                            .get_brush(target, &color_f(0.32, 0.32, 0.35, 1.0))
+                            .get_brush(target, &app_theme::border())
                         {
                             target.DrawRoundedRectangle(&seg_rounded, &bb, 1.0, None);
                         }
@@ -1765,7 +1769,7 @@ impl EditorState {
                     let seg_text_color = if selected {
                         color_f(1.0, 1.0, 1.0, 1.0)
                     } else {
-                        color_f(0.78, 0.78, 0.80, 1.0)
+                        app_theme::text_secondary()
                     };
                     if let Ok(tb) = self
                         .win
@@ -1815,7 +1819,7 @@ impl EditorState {
 
             // 未保存更改提示
             if self.ui.settings_panel.is_dirty() {
-                let dot_color = color_f(0.95, 0.65, 0.20, 1.0);
+                let dot_color = app_theme::warning();
                 let dot_brush = self
                     .win
                     .render_ctx
@@ -1854,159 +1858,16 @@ impl EditorState {
                 cy += 24.0;
             }
 
-            // 操作按钮：左「保存」（验证密钥后写入）+ 右「测试连接」（只测不存，便于调参）
-            let btn_h = 34.0_f32;
-            let is_testing = self.ui.settings_panel.is_testing;
-            let btn_gap = 10.0_f32;
-            let save_x = x + margin;
-            let save_btn_w = (input_w - btn_gap) * 0.62;
-            let test_btn_w = input_w - btn_gap - save_btn_w;
-            let test_x = save_x + save_btn_w + btn_gap;
-
-            // 保存设置（主按钮；保存时会自动先测试密钥有效性）
-            let save_hover =
-                self.ui.settings_panel.hover_button == Some(crate::settings::SettingsButton::Save);
-            let save_bg = if is_testing {
-                color_f(0.0, 0.30, 0.52, 1.0)
-            } else if save_hover {
-                color_f(0.0, 0.55, 0.95, 1.0)
-            } else {
-                color_f(0.0, 0.47, 0.83, 1.0)
-            };
-            let save_bg_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &save_bg)
-                .unwrap();
-            let save_rect = D2D_RECT_F {
-                left: save_x,
-                top: cy,
-                right: save_x + save_btn_w,
-                bottom: cy + btn_h,
-            };
-            let save_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
-                rect: save_rect,
-                radiusX: 4.0,
-                radiusY: 4.0,
-            };
-            target.FillRoundedRectangle(&save_rounded, &save_bg_brush);
-            let save_label = if is_testing && self.ui.settings_panel.pending_save {
-                "验证并保存中…"
-            } else {
-                "保存"
-            };
-            let save_text: Vec<u16> = save_label.encode_utf16().chain(Some(0)).collect();
-            let btn_text_color = color_f(1.0, 1.0, 1.0, 1.0);
-            let btn_text_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &btn_text_color)
-                .unwrap();
-            target.DrawText(
-                &save_text,
-                &button_format,
-                &save_rect,
-                &btn_text_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-            self.ui.settings_panel.add_button_region(
-                crate::settings::SettingsButton::Save,
-                save_x,
-                cy,
-                save_btn_w,
-                btn_h,
-            );
-
-            // 测试连接（次要描边按钮：只验证当前参数能否连通，不写入配置）
-            let test_hover = self.ui.settings_panel.hover_button
-                == Some(crate::settings::SettingsButton::TestConnection);
-            let test_rect = D2D_RECT_F {
-                left: test_x,
-                top: cy,
-                right: test_x + test_btn_w,
-                bottom: cy + btn_h,
-            };
-            let test_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
-                rect: test_rect,
-                radiusX: 4.0,
-                radiusY: 4.0,
-            };
-            let test_bg = if (is_testing && !self.ui.settings_panel.pending_save) || test_hover {
-                color_f(0.20, 0.24, 0.30, 1.0)
-            } else {
-                color_f(0.16, 0.16, 0.18, 1.0)
-            };
-            if let Ok(tb) = self.win.render_ctx.brush_cache.get_brush(target, &test_bg) {
-                target.FillRoundedRectangle(&test_rounded, &tb);
-            }
-            let test_border = if test_hover {
-                color_f(0.28, 0.56, 0.86, 1.0)
-            } else {
-                color_f(0.34, 0.34, 0.37, 1.0)
-            };
-            if let Ok(bb) = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &test_border)
-            {
-                target.DrawRoundedRectangle(&test_rounded, &bb, 1.0, None);
-            }
-            let test_label = if is_testing && !self.ui.settings_panel.pending_save {
-                "测试中…"
-            } else {
-                "测试连接"
-            };
-            let test_text: Vec<u16> = test_label.encode_utf16().chain(Some(0)).collect();
-            let test_text_color = if test_hover {
-                color_f(0.82, 0.90, 1.0, 1.0)
-            } else {
-                color_f(0.84, 0.86, 0.90, 1.0)
-            };
-            if let Ok(ttb) = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &test_text_color)
-            {
-                target.DrawText(
-                    &test_text,
-                    &button_format,
-                    &test_rect,
-                    &ttb,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
-            }
-            self.ui.settings_panel.add_button_region(
-                crate::settings::SettingsButton::TestConnection,
-                test_x,
-                cy,
-                test_btn_w,
-                btn_h,
-            );
-            cy += btn_h + 12.0;
+            // 保存/测试按钮移至底部固定操作栏渲染（见函数尾部），不随表单滚动。
 
             // 状态消息卡片
             if !self.ui.settings_panel.test_status.is_empty() {
                 let (status_bg, status_fg) = if self.ui.settings_panel.is_testing {
-                    (
-                        color_f(0.20, 0.20, 0.12, 1.0),
-                        color_f(0.90, 0.85, 0.40, 1.0),
-                    )
+                    (app_theme::warning_soft(), app_theme::warning())
                 } else if self.ui.settings_panel.test_status.starts_with('✓') {
-                    (
-                        color_f(0.12, 0.22, 0.14, 1.0),
-                        color_f(0.40, 0.85, 0.45, 1.0),
-                    )
+                    (app_theme::accent_soft(), app_theme::accent_text())
                 } else {
-                    (
-                        color_f(0.24, 0.14, 0.14, 1.0),
-                        color_f(0.95, 0.50, 0.50, 1.0),
-                    )
+                    (app_theme::danger_soft(), app_theme::danger())
                 };
                 let status_bg_brush = self
                     .win
@@ -2064,10 +1925,10 @@ impl EditorState {
             }
             cy += 8.0;
 
-            // 结束裁剪，计算可滚动高度并绘制滚动条
+            // 结束裁剪，计算可滚动高度并绘制滚动条（可视区扣除底部固定操作栏）
             target.PopAxisAlignedClip();
             let total_content = (cy + scroll) - start_y;
-            let max_scroll = (total_content - avail_h).max(0.0);
+            let max_scroll = (total_content - scroll_avail).max(0.0);
             self.ui.settings_panel.content_height = max_scroll;
             if self.ui.settings_panel.scroll_offset > max_scroll {
                 self.ui.settings_panel.scroll_offset = max_scroll;
@@ -2075,12 +1936,12 @@ impl EditorState {
             if max_scroll > 0.0 && total_content > 0.0 {
                 let sb_w = 6.0_f32;
                 let sb_x = content_left + content_width - sb_w - 2.0;
-                let visible_ratio = (avail_h / total_content).clamp(0.1, 1.0);
-                let thumb_h = (avail_h * visible_ratio).max(30.0);
+                let visible_ratio = (scroll_avail / total_content).clamp(0.1, 1.0);
+                let thumb_h = (scroll_avail * visible_ratio).max(30.0);
                 let scroll_ratio =
                     (self.ui.settings_panel.scroll_offset / max_scroll).clamp(0.0, 1.0);
-                let thumb_y = start_y + (avail_h - thumb_h) * scroll_ratio;
-                let thumb_color = color_f(0.4, 0.4, 0.45, 1.0);
+                let thumb_y = start_y + (scroll_avail - thumb_h) * scroll_ratio;
+                let thumb_color = app_theme::track_bg();
                 let thumb_brush = self
                     .win
                     .render_ctx
@@ -2097,6 +1958,171 @@ impl EditorState {
                     &thumb_brush,
                 );
             }
+
+            // ===== 底部固定操作栏：保存/测试按钮始终可见，不随表单滚动 =====
+            let bar_top = start_y + avail_h - action_bar_h;
+            if let Ok(bar_bg) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &app_theme::surface())
+            {
+                target.FillRectangle(
+                    &D2D_RECT_F {
+                        left: content_left,
+                        top: bar_top,
+                        right: content_left + content_width,
+                        bottom: start_y + avail_h,
+                    },
+                    &bar_bg,
+                );
+            }
+            if let Ok(sep) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &app_theme::separator())
+            {
+                target.FillRectangle(
+                    &D2D_RECT_F {
+                        left: content_left,
+                        top: bar_top,
+                        right: content_left + content_width,
+                        bottom: bar_top + 1.0,
+                    },
+                    &sep,
+                );
+            }
+            let btn_h = 34.0_f32;
+            let btn_y = bar_top + (action_bar_h - btn_h) / 2.0;
+            let is_testing = self.ui.settings_panel.is_testing;
+            let btn_gap = 10.0_f32;
+            let save_x = x + margin;
+            let save_btn_w = (input_w - btn_gap) * 0.62;
+            let test_btn_w = input_w - btn_gap - save_btn_w;
+            let test_x = save_x + save_btn_w + btn_gap;
+
+            // 保存（主按钮）
+            let save_hover =
+                self.ui.settings_panel.hover_button == Some(crate::settings::SettingsButton::Save);
+            let save_bg = if is_testing {
+                app_theme::accent_hover()
+            } else if save_hover {
+                app_theme::accent_hover()
+            } else {
+                app_theme::accent()
+            };
+            let save_rect = D2D_RECT_F {
+                left: save_x,
+                top: btn_y,
+                right: save_x + save_btn_w,
+                bottom: btn_y + btn_h,
+            };
+            if let Ok(sb) = self.win.render_ctx.brush_cache.get_brush(target, &save_bg) {
+                let rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                    rect: save_rect,
+                    radiusX: 8.0,
+                    radiusY: 8.0,
+                };
+                target.FillRoundedRectangle(&rounded, &sb);
+            }
+            let save_label = if is_testing && self.ui.settings_panel.pending_save {
+                "验证并保存中…"
+            } else {
+                "保存"
+            };
+            let save_text: Vec<u16> = save_label.encode_utf16().chain(Some(0)).collect();
+            if let Ok(tb) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &color_f(1.0, 1.0, 1.0, 1.0))
+            {
+                target.DrawText(
+                    &save_text,
+                    &button_format,
+                    &save_rect,
+                    &tb,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+            }
+            self.ui.settings_panel.add_button_region(
+                crate::settings::SettingsButton::Save,
+                save_x,
+                btn_y,
+                save_btn_w,
+                btn_h,
+            );
+
+            // 测试连接（次要描边按钮）
+            let test_hover = self.ui.settings_panel.hover_button
+                == Some(crate::settings::SettingsButton::TestConnection);
+            let test_rect = D2D_RECT_F {
+                left: test_x,
+                top: btn_y,
+                right: test_x + test_btn_w,
+                bottom: btn_y + btn_h,
+            };
+            let test_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                rect: test_rect,
+                radiusX: 8.0,
+                radiusY: 8.0,
+            };
+            let test_bg = if (is_testing && !self.ui.settings_panel.pending_save) || test_hover {
+                app_theme::accent_soft_hover()
+            } else {
+                app_theme::surface()
+            };
+            if let Ok(tb) = self.win.render_ctx.brush_cache.get_brush(target, &test_bg) {
+                target.FillRoundedRectangle(&test_rounded, &tb);
+            }
+            let test_border = if test_hover {
+                app_theme::accent()
+            } else {
+                app_theme::switch_off()
+            };
+            if let Ok(bb) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &test_border)
+            {
+                target.DrawRoundedRectangle(&test_rounded, &bb, 1.0, None);
+            }
+            let test_label = if is_testing && !self.ui.settings_panel.pending_save {
+                "测试中…"
+            } else {
+                "测试连接"
+            };
+            let test_text: Vec<u16> = test_label.encode_utf16().chain(Some(0)).collect();
+            let test_text_color = if test_hover {
+                app_theme::accent_text()
+            } else {
+                app_theme::text_secondary()
+            };
+            if let Ok(ttb) = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &test_text_color)
+            {
+                target.DrawText(
+                    &test_text,
+                    &button_format,
+                    &test_rect,
+                    &ttb,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+            }
+            self.ui.settings_panel.add_button_region(
+                crate::settings::SettingsButton::TestConnection,
+                test_x,
+                btn_y,
+                test_btn_w,
+                btn_h,
+            );
         }
     }
 
@@ -2126,9 +2152,9 @@ impl EditorState {
             let is_open = self.ui.settings_panel.open_dropdown == Some(kind);
             // 标签
             let label_color = if required {
-                color_f(0.92, 0.30, 0.30, 1.0)
+                app_theme::danger()
             } else {
-                color_f(0.85, 0.85, 0.85, 1.0)
+                app_theme::text_primary()
             };
             let label_brush = self
                 .win
@@ -2170,7 +2196,7 @@ impl EditorState {
             let cy = cy + label_h + 4.0;
 
             // 下拉框背景
-            let input_bg = color_f(0.18, 0.18, 0.18, 1.0);
+            let input_bg = app_theme::input_bg();
             let input_bg_brush = self
                 .win
                 .render_ctx
@@ -2178,9 +2204,9 @@ impl EditorState {
                 .get_brush(target, &input_bg)
                 .unwrap();
             let input_border = if is_open {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                app_theme::accent()
             } else {
-                color_f(0.3, 0.3, 0.3, 1.0)
+                app_theme::border_strong()
             };
             let input_border_brush = self
                 .win
@@ -2223,9 +2249,9 @@ impl EditorState {
             }
             // 文本
             let value_color = if value.is_empty() || value.starts_with("选择") {
-                color_f(0.55, 0.55, 0.55, 1.0)
+                app_theme::text_muted()
             } else {
-                color_f(0.95, 0.95, 0.95, 1.0)
+                app_theme::text_primary()
             };
             let value_brush = self
                 .win
@@ -2278,14 +2304,14 @@ impl EditorState {
             // 如果展开，渲染下拉项
             if is_open {
                 let item_h = 28.0f32;
-                let item_bg = color_f(0.22, 0.22, 0.24, 1.0);
+                let item_bg = app_theme::surface_alt();
                 let item_bg_brush = self
                     .win
                     .render_ctx
                     .brush_cache
                     .get_brush(target, &item_bg)
                     .unwrap();
-                let selected_color = color_f(0.14, 0.30, 0.45, 1.0);
+                let selected_color = app_theme::accent_soft();
                 let selected_brush = self
                     .win
                     .render_ctx
@@ -2293,7 +2319,7 @@ impl EditorState {
                     .get_brush(target, &selected_color)
                     .unwrap();
                 // 当前已选项的强调色（左侧竖条），与主题强调蓝一致
-                let accent_color = color_f(0.0, 0.47, 0.83, 1.0);
+                let accent_color = app_theme::accent();
                 let accent_brush = self
                     .win
                     .render_ctx

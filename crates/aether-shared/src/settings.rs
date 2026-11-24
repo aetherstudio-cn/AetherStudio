@@ -20,6 +20,31 @@ pub struct AppSettings {
     /// 自动更新设置
     #[serde(default)]
     pub update: UpdateSettings,
+    /// Agent 能力开关（模拟输入等高风险能力默认需人工确认，可整体关闭）
+    #[serde(default)]
+    pub agent: AgentSettings,
+    /// 长期记忆行为开关（全局记忆 / 项目记忆）
+    #[serde(default)]
+    pub memory: MemorySettings,
+}
+
+/// 长期记忆行为配置
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct MemorySettings {
+    /// 允许读写全局记忆（跨工作区共享的通用经验）
+    pub global_enabled: bool,
+    /// 允许读写项目记忆（绑定当前工作区的经验）
+    pub project_enabled: bool,
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            global_enabled: true,
+            project_enabled: true,
+        }
+    }
 }
 
 impl std::fmt::Debug for AppSettings {
@@ -32,7 +57,25 @@ impl std::fmt::Debug for AppSettings {
             .field("ai_models", &self.ai_models)
             .field("active_model_id", &self.active_model_id)
             .field("update", &self.update)
+            .field("agent", &self.agent)
+            .field("memory", &self.memory)
             .finish()
+    }
+}
+
+/// Agent 能力配置
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct AgentSettings {
+    /// 允许 Agent 发起模拟用户输入（执行前仍必须经确认卡人工放行）
+    pub input_enabled: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            input_enabled: true,
+        }
     }
 }
 
@@ -217,28 +260,6 @@ pub struct UiSettings {
     /// 各工作区退出时仍打开的 AI 对话标签页（工作区哈希 → 标签页快照）
     #[serde(default)]
     pub ai_open_tabs: std::collections::HashMap<String, AiOpenTabsSnapshot>,
-    /// 编辑器模式：开发者模式（默认）或智能体模式
-    /// 智能体模式下 AI 对话面板在左侧为主体，文件编辑区移至右侧，设置以弹窗打开
-    #[serde(default)]
-    pub editor_mode: EditorMode,
-}
-
-/// 编辑器模式（持久化到 settings.json）
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum EditorMode {
-    /// 开发者模式：传统 IDE 布局，AI 面板在右侧
-    #[default]
-    Developer,
-    /// 智能体模式：AI 对话为主体在左侧，编辑器在右侧
-    Agent,
-}
-
-impl EditorMode {
-    /// 是否为智能体模式
-    pub fn is_agent(&self) -> bool {
-        matches!(self, Self::Agent)
-    }
 }
 
 /// AI 面板打开标签页的快照（持久化到 settings.json）
@@ -266,7 +287,6 @@ impl Default for UiSettings {
             last_workspace: None,
             show_taskbar_when_maximized: true,
             ai_open_tabs: std::collections::HashMap::new(),
-            editor_mode: EditorMode::default(),
         }
     }
 }
@@ -674,6 +694,8 @@ impl Default for AppSettings {
             ai_models: Vec::new(),
             active_model_id: None,
             update: UpdateSettings::default(),
+            agent: AgentSettings::default(),
+            memory: MemorySettings::default(),
         }
     }
 }

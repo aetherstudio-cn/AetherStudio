@@ -34,15 +34,11 @@ pub(crate) use crate::layout::{
     ActivityBarView, LayoutManager, SidebarContent, SIDEBAR_RESIZE_GRAB, TAB_BAR_HEIGHT,
 };
 pub(crate) use crate::menu_bar::MenuBar;
-pub(crate) use crate::ssh::{
-    CloneRepoDialog, RemoteFileTree, RemoteSession, SshConnectionDialog, SshManagerPanel,
-};
+pub(crate) use crate::ssh::CloneRepoDialog;
 pub(crate) use crate::status_bar::StatusBar;
 pub(crate) use crate::tabs::{Tab, TabContent, TabLayout};
 pub(crate) use crate::terminal::TerminalPanel;
 pub(crate) use aether_shared::settings::AppSettings;
-// P0-1: RemoteFs trait 为 SshRemoteFs::list_dir 等方法提供作用域
-pub(crate) use aether_remote::RemoteFs;
 
 /// 查找替换焦点状态
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -96,28 +92,10 @@ pub struct LspState {
     pub(crate) frozen: bool,
 }
 
-/// 远程开发子系统状态（SSH/远程文件树/克隆，从 EditorState 聚类抽取）
+/// 远程开发子系统状态（克隆仓库，从 EditorState 聚类抽取）
 pub struct RemoteState {
-    /// SSH 连接对话框
-    pub ssh_dialog: SshConnectionDialog,
-    /// 远程会话
-    pub session: Option<RemoteSession>,
-    /// 远程文件树
-    pub file_tree: Option<RemoteFileTree>,
-    /// 选中的远程文件节点（P0-1: 改为路径标识，适配递归树）
-    pub selected_node: Option<String>,
-    /// 悬停的远程文件节点（P0-1: 改为路径标识，适配递归树）
-    pub hover_node: Option<String>,
-    /// 远程文件树滚动偏移
-    pub scroll_y: f32,
     /// 克隆仓库对话框
     pub clone_dialog: CloneRepoDialog,
-    /// SSH 管理面板（侧边栏服务器管理）
-    pub ssh_manager_panel: SshManagerPanel,
-    /// 当前连接的服务器配置索引（对应 app_settings.remote.ssh_servers）
-    pub active_ssh_index: Option<usize>,
-    /// C-09: SSH 后台连接中（防止重复触发，控制状态栏提示）
-    pub ssh_connecting: bool,
 }
 
 /// 标签栏状态（从 EditorState 聚类抽取）
@@ -214,6 +192,10 @@ pub struct PrevFrameState {
     pub status_message: String,
     /// 上一帧的活动标签页索引（用于检测标签切换）
     pub active_tab: usize,
+    /// 上一帧的标签页数量（用于检测标签新增/关闭，active_tab 不变时也能触发重绘）
+    pub tab_count: usize,
+    /// 上一帧右面板文件树展开态（卡片页↔文件树切换需重绘右面板，防重影）
+    pub right_panel_tree_open: bool,
 }
 
 impl Default for PrevFrameState {
@@ -231,6 +213,8 @@ impl Default for PrevFrameState {
             bottom_panel_visible: false,
             status_message: "就绪".to_string(),
             active_tab: 0,
+            tab_count: 0,
+            right_panel_tree_open: false,
         }
     }
 }
@@ -375,26 +359,9 @@ pub(crate) struct SubdirScanResult {
     child_depth: u8,
 }
 
-/// C-09: SSH 异步连接结果（由后台线程通过 PostMessage 发送回 UI 线程）
-struct SshConnectResult {
-    session: Option<RemoteSession>,
-    entries: Option<Vec<aether_remote::RemoteDirEntry>>,
-    error: Option<String>,
-}
-
 /// C-09: Git 异步克隆结果（由后台线程通过 PostMessage 发送回 UI 线程）
 struct GitCloneResult {
     target_path: PathBuf,
-    error: Option<String>,
-}
-
-/// P0-1: 远程子目录异步列目录结果（由后台线程通过 PostMessage WM_APP+6 发送回 UI 线程）
-struct SshListDirResult {
-    /// 被列目录的节点路径
-    path: String,
-    /// 列目录成功时的条目
-    entries: Option<Vec<aether_remote::RemoteDirEntry>>,
-    /// 列目录失败时的错误
     error: Option<String>,
 }
 
@@ -465,8 +432,6 @@ pub struct WindowRenderState {
     pub dirty_tracker: crate::dirty_rect::DirtyRectTracker,
     /// EndDraw 连续失败计数：限制失败后自动重绘的重试次数，防止忙循环
     pub end_draw_fail_streak: u8,
-    /// Logo 位图（aether-512.png），懒加载，用于欢迎页和空占位页
-    pub(crate) logo_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
     /// 图片预览位图（设备相关缓存），由当前标签的 image_data 惰性创建；
     /// 设备丢失/切换标签时清空重建
     pub(crate) image_bitmap: Option<windows::Win32::Graphics::Direct2D::ID2D1Bitmap>,
@@ -507,6 +472,8 @@ pub struct EditorContentState {
     pub markdown_toggle_btn: Option<crate::layout::Region>,
     /// P3.1: 内联补全服务（占位）
     pub inline_completion_service: crate::inline_completion::InlineCompletionService,
+    /// 平滑滚动状态
+    pub smooth_scroll: cursor::SmoothScrollState,
 }
 
 /// 文件树与工作区状态
@@ -562,6 +529,10 @@ pub struct AiPanelState {
     pub workspace_ai_sessions: std::collections::HashMap<String, WorkspaceAiSessionSnapshot>,
     /// 当前工作区的 AI 会话 ID（None 表示未打开工作区或新工作区）
     pub current_workspace_ai_session: Option<String>,
+    /// 智能体侧栏「其它工作区会话」缓存：工作区哈希 -> 最近会话元数据（节流查库）
+    pub sidebar_ws_cache: HashMap<String, Vec<crate::ai_panel::ConversationMeta>>,
+    /// 缓存构建时间（None = 需重建，如工作区切换后）
+    pub sidebar_ws_cache_at: Option<std::time::Instant>,
 }
 
 /// 终端面板状态
@@ -609,11 +580,7 @@ pub struct UiPanelState {
     pub update_checking: bool,
     /// 侧边栏宽度调整手柄的悬停状态
     pub hover_sidebar_resize: bool,
-    /// 欢迎页悬停的操作项
-    pub welcome_hover_action: Option<crate::welcome::WelcomeAction>,
-    /// 欢迎页键盘焦点项
-    pub welcome_focus_action: Option<crate::welcome::WelcomeAction>,
-    /// 全局矢量图标缓存（欢迎页/状态栏/命令面板等共用）
+    /// 全局矢量图标缓存（状态栏/命令面板等共用）
     pub icons: crate::icons::IconCache,
     /// C-09: Git 后台克隆中（防止重复触发，控制状态栏提示）
     pub git_cloning: bool,
@@ -625,8 +592,6 @@ pub struct UiPanelState {
     pub sandbox_eval: crate::sandbox_eval::SandboxEvalPanel,
     /// 标签栏面板
     pub tabs_panel: crate::open_tabs::TabsPanel,
-    /// Git 面板
-    pub git_panel: crate::git::GitIntegration,
     /// Git 集成
     pub git: GitIntegration,
     /// 用户菜单
@@ -637,6 +602,10 @@ pub struct UiPanelState {
     pub tooltip_state: crate::tooltip::TooltipState,
     /// UI-L02: IME 集成，控制 CJK 输入法候选窗口位置
     pub ime: crate::ime::ImeIntegration,
+    /// 悬停微动效进度（活动栏/标签栏背景淡入淡出，UI_ANIM 定时器驱动）
+    pub hover_anim: crate::ui_anim::HoverAnim,
+    /// 模拟输入执行器（确认放行后的动作队列，INPUT_TIMER 驱动逐条注入）
+    pub input_sim: crate::input_sim::InputSimRunner,
 }
 
 /// 输入与交互状态
@@ -677,8 +646,8 @@ pub struct EditorState {
     pub remote: RemoteState,
     /// 空闲内存优化：Frozen 冰冻态管理（最小化/长期空闲时释放内存）
     pub power: crate::power::PowerManager,
-    /// 当前编辑器模式（开发者/智能体），从 app_settings.ui.editor_mode 同步
-    pub editor_mode: crate::layout::EditorMode,
+    /// 右面板默认页是否展开工作区文件树（false=Qoder 式快捷卡片页，true=文件树）
+    pub right_panel_tree_open: bool,
 }
 
 /// 工作区 AI 面板快照：保存切换工作区时的完整对话标签页组状态
@@ -767,32 +736,19 @@ impl EditorState {
     /// P2.3: 大文件阈值（字节数）
     pub(crate) const LARGE_FILE_BYTE_THRESHOLD: usize = 2 * 1024 * 1024;
 
-    /// 确保 logo 位图已加载（懒加载，仅在首次需要时从文件读取）
-    pub(crate) fn ensure_logo_bitmap(
-        &mut self,
-        target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
-    ) {
-        if self.win.logo_bitmap.is_some() {
-            return;
-        }
-        // 将吉祥物 PNG 嵌入二进制，避免运行时依赖外部资源文件
-        const PNG_BYTES: &[u8] = include_bytes!("../../resources/app_icons/source/aether-512.png");
-        match crate::bitmap_loader::load_png_to_bitmap(target, PNG_BYTES) {
-            Ok(bitmap) => {
-                self.win.logo_bitmap = Some(bitmap);
-            }
-            Err(e) => {
-                tracing::warn!("加载 logo 位图失败: {}", e);
-            }
-        }
-    }
-
     pub fn new(hwnd: HWND, is_main_window: bool) -> Result<Self> {
+        // 启动阶段耗时打点：窗口已可见但尚未泵消息，此间任何同步重活都会
+        // 表现为"打开软件卡顿一瞬间"。仅启动时输出数行 info 日志。
+        let startup_t = std::time::Instant::now();
         let d2d_factory = D2DFactory::new()?;
         let text_renderer = TextRenderer::new()?;
         let theme = Theme::glass();
         let key_map = KeyMap::new();
         let app_settings = AppSettings::load();
+        tracing::info!(
+            ms = startup_t.elapsed().as_millis() as u64,
+            "启动耗时：D2D/DWrite/主题/设置"
+        );
 
         // 创建 tokio runtime 驱动 LSP 异步操作
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
@@ -831,9 +787,11 @@ impl EditorState {
         // Phase H: 补全/悬停状态初始化
         let completion_items = Vec::new();
         let hover_content = None;
+        tracing::info!(
+            ms = startup_t.elapsed().as_millis() as u64,
+            "启动耗时：tokio runtime/LSP 客户端"
+        );
 
-        // 提前提取 editor_mode，避免 app_settings 被移动后无法借用
-        let editor_mode = app_settings.ui.editor_mode;
         let mut state = Self {
             win: WindowRenderState {
                 hwnd,
@@ -851,7 +809,6 @@ impl EditorState {
                 titlebar_forward_btn_x: 0.0,
                 dirty_tracker: crate::dirty_rect::DirtyRectTracker::new(1280.0, 800.0),
                 end_draw_fail_streak: 0,
-                logo_bitmap: None,
                 image_bitmap: None,
                 image_zoom: 1.0,
                 image_offset_x: 0.0,
@@ -872,6 +829,7 @@ impl EditorState {
                 markdown_preview: false,
                 markdown_toggle_btn: None,
                 inline_completion_service: crate::inline_completion::InlineCompletionService::new(),
+                smooth_scroll: cursor::SmoothScrollState::default(),
             },
             fs: FileTreeState {
                 file_tree: None,
@@ -900,6 +858,8 @@ impl EditorState {
                 ai_panel: AiPanel::new(),
                 workspace_ai_sessions: std::collections::HashMap::new(),
                 current_workspace_ai_session: None,
+                sidebar_ws_cache: HashMap::new(),
+                sidebar_ws_cache_at: None,
             },
             terminal: TerminalState {
                 terminal_panel: TerminalPanel::new(),
@@ -928,7 +888,13 @@ impl EditorState {
             ui: UiPanelState {
                 status_message: "就绪".to_string(),
                 key_map,
-                layout: LayoutManager::new(1280.0, 800.0),
+                layout: {
+                    let mut l = LayoutManager::new(1280.0, 800.0);
+                    // 常驻右侧工作区文件面板（参考 Qoder）：默认显示，聊天区居中变窄
+                    l.right_panel_visible = true;
+                    l.right_panel_width = 280.0;
+                    l
+                },
                 menu_bar: MenuBar::new(),
                 activity_bar: ActivityBar::new(),
                 status_bar: StatusBar::new(),
@@ -941,15 +907,12 @@ impl EditorState {
                 update_available_version: None,
                 update_checking: false,
                 hover_sidebar_resize: false,
-                welcome_hover_action: None,
-                welcome_focus_action: None,
                 icons: crate::icons::IconCache::new(),
                 git_cloning: false,
                 settings_panel: crate::settings::SettingsPanel::from_settings(&app_settings),
                 app_settings,
                 sandbox_eval: crate::sandbox_eval::SandboxEvalPanel::new(),
                 tabs_panel: crate::open_tabs::TabsPanel::new(),
-                git_panel: crate::git::GitIntegration::new(),
                 git: GitIntegration::new(),
                 user_menu: crate::user_menu::UserMenu::new(),
                 context_menus: ContextMenusState {
@@ -961,6 +924,8 @@ impl EditorState {
                 },
                 tooltip_state: crate::tooltip::TooltipState::default(),
                 ime: crate::ime::ImeIntegration::new(hwnd),
+                hover_anim: crate::ui_anim::HoverAnim::new(),
+                input_sim: crate::input_sim::InputSimRunner::default(),
             },
             input: InputState {
                 mouse_press: MousePressState::default(),
@@ -970,22 +935,11 @@ impl EditorState {
                 event_queue: crate::events::EventQueue::new(),
             },
             remote: RemoteState {
-                ssh_dialog: SshConnectionDialog::new(),
-                session: None,
-                file_tree: None,
-                selected_node: None,
-                hover_node: None,
-                scroll_y: 0.0,
                 clone_dialog: CloneRepoDialog::new(),
-                ssh_manager_panel: SshManagerPanel::new(),
-                active_ssh_index: None,
-                ssh_connecting: false,
             },
             power: crate::power::PowerManager::new(),
-            editor_mode,
+            right_panel_tree_open: false,
         };
-        // 加载 logo 位图（aether-512.png）
-        // 注意：此时还没有 render target，位图会在首次渲染时通过 ensure_logo_bitmap 懒加载
         // 应用持久化的活动栏/菜单栏顺序（空配置使用默认顺序）
         let activity_order = state.ui.app_settings.ui.activity_bar_order.clone();
         let menu_order = state.ui.app_settings.ui.menu_bar_order.clone();
@@ -999,7 +953,7 @@ impl EditorState {
         if !menu_order.is_empty() {
             state.ui.menu_bar.apply_order(&menu_order);
         }
-        // 无项目的新窗口显示欢迎页（空标签栏），不创建新标签页；
+        // 无项目的新窗口不创建标签页，AI 面板聊天区显示欢迎卡（render/ai.rs）；
         // 默认新标签页仅在打开项目时创建（open_folder -> ensure_default_new_tab）
         state.editor.tab_bar.active_tab = 0;
 
@@ -1018,6 +972,10 @@ impl EditorState {
                 }
             }
         }
+        tracing::info!(
+            ms = startup_t.elapsed().as_millis() as u64,
+            "启动耗时：恢复上次工作区 open_folder"
+        );
 
         // 自动保存：启动周期兜底定时器（防抖定时器由编辑事件按需调度）
         state.start_autosave_periodic();
@@ -1032,16 +990,24 @@ impl EditorState {
             );
         }
 
-        // 语义检索：初始化嵌入模型（模型文件缺失时回退 n-gram，不阻塞启动）
-        crate::ai_panel::try_init_default_model();
+        // 语义检索：嵌入模型（~90MB ONNX + tokenizer）在后台线程加载。
+        // 此前在 UI 线程同步 commit_from_file，启动瞬间会卡顿数百毫秒到数秒
+        //（调试构建更明显）；模型未就绪期间 embed_text 自动回退 n-gram 哈希向量。
+        let _ = std::thread::spawn(crate::ai_panel::try_init_default_model);
 
         // ACE Reflector：用当前 AI 配置启用归档后自动反思（无 API Key 时静默禁用）
         if let Some(warm) = state.ai.ai_panel.warm_data_store.as_ref() {
             warm.enable_reflector(&state.ui.app_settings.active_ai_settings());
+            // 记忆行为开关（全局/项目）随设置同步给温数据存储
+            warm.set_memory_toggles(&state.ui.app_settings.memory);
         }
 
         // Phase 2: 启动时从磁盘加载历史索引
         state.refresh_ai_history();
+        tracing::info!(
+            ms = startup_t.elapsed().as_millis() as u64,
+            "启动耗时：AI 历史索引"
+        );
 
         Ok(state)
     }
@@ -1228,9 +1194,6 @@ impl EditorState {
                     })
                     .unwrap_or(relative);
                 Some(abs)
-            }
-            crate::layout::SidebarContent::RemoteFileTree => {
-                self.remote.hover_node.clone().filter(|s| !s.is_empty())
             }
             _ => None,
         }
@@ -2256,12 +2219,11 @@ mod tests {
 
 mod dialogs;
 mod find;
-mod git;
 mod ime;
 pub(crate) mod scrollbar;
 
 mod ai;
-mod cursor;
+pub(crate) mod cursor;
 mod editing;
 mod events;
 mod file_tree;

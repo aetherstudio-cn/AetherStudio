@@ -34,9 +34,7 @@ impl Region {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivityBarView {
     Explorer,
-    SourceControl,
     Terminal,
-    RemoteManager,
     AiAssistant,
 }
 
@@ -44,9 +42,7 @@ impl ActivityBarView {
     pub fn label(&self) -> &'static str {
         match self {
             ActivityBarView::Explorer => "工作区",
-            ActivityBarView::SourceControl => "源代码管理",
             ActivityBarView::Terminal => "终端",
-            ActivityBarView::RemoteManager => "远程资源管理器",
             ActivityBarView::AiAssistant => "AI 助手",
         }
     }
@@ -54,9 +50,7 @@ impl ActivityBarView {
     pub fn icon(&self) -> crate::icons::IconKind {
         match self {
             ActivityBarView::Explorer => crate::icons::IconKind::Folder,
-            ActivityBarView::SourceControl => crate::icons::IconKind::GitBranch,
             ActivityBarView::Terminal => crate::icons::IconKind::Terminal,
-            ActivityBarView::RemoteManager => crate::icons::IconKind::Ssh,
             ActivityBarView::AiAssistant => crate::icons::IconKind::Bot,
         }
     }
@@ -65,32 +59,23 @@ impl ActivityBarView {
     pub fn key(&self) -> &'static str {
         match self {
             ActivityBarView::Explorer => "explorer",
-            ActivityBarView::SourceControl => "sourceControl",
             ActivityBarView::Terminal => "terminal",
-            ActivityBarView::RemoteManager => "remoteManager",
             ActivityBarView::AiAssistant => "aiAssistant",
         }
     }
 
     /// 默认顺序
     pub fn default_order() -> Vec<ActivityBarView> {
-        vec![
-            ActivityBarView::Explorer,
-            ActivityBarView::SourceControl,
-            ActivityBarView::RemoteManager,
-        ]
+        vec![ActivityBarView::Explorer]
     }
 
     /// 从字符串键解析
     pub fn from_key(key: &str) -> Option<ActivityBarView> {
         match key {
             "explorer" => Some(ActivityBarView::Explorer),
-            "sourceControl" => Some(ActivityBarView::SourceControl),
-            "terminal" => None, // 终端已迁移到标题栏按钮
-            "remoteManager" => Some(ActivityBarView::RemoteManager),
-            "openTabs" => Some(ActivityBarView::RemoteManager), // 兼容旧设置
-            "aiAssistant" => None,                              // AI助手已迁移到标题栏按钮
-            _ => None,
+            "terminal" => None,    // 终端已迁移到标题栏按钮
+            "aiAssistant" => None, // AI助手已迁移到标题栏按钮
+            _ => None,             // 旧版 sourceControl/remoteManager/openTabs 等开发者入口已移除
         }
     }
 }
@@ -99,10 +84,7 @@ impl ActivityBarView {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SidebarContent {
     FileTree,
-    SourceControlPanel,
     TerminalPanel,
-    RemoteManagerPanel,
-    RemoteFileTree,
     AiAssistantPanel,
 }
 
@@ -110,9 +92,7 @@ impl SidebarContent {
     pub fn from_view(view: ActivityBarView) -> Self {
         match view {
             ActivityBarView::Explorer => SidebarContent::FileTree,
-            ActivityBarView::SourceControl => SidebarContent::SourceControlPanel,
             ActivityBarView::Terminal => SidebarContent::TerminalPanel,
-            ActivityBarView::RemoteManager => SidebarContent::RemoteManagerPanel,
             ActivityBarView::AiAssistant => SidebarContent::AiAssistantPanel,
         }
     }
@@ -134,13 +114,6 @@ pub const MAX_SIDEBAR_WIDTH: f32 = 500.0;
 /// 拐角手柄（两条分割线交点）的命中区域边长
 pub const CORNER_HANDLE_SIZE: f32 = 12.0;
 
-/// 编辑器模式：开发者模式（默认）或智能体模式
-///
-/// 智能体模式下 AI 对话面板在左侧为主体，文件编辑区移至右侧，
-/// 设置以弹窗形式打开，终端注册为独立标签页。
-/// 枚举定义在 aether-shared（与 settings.json 序列化形状一致），此处重导出。
-pub use aether_shared::settings::EditorMode;
-
 /// 标题栏右侧按钮布局（单一事实源）。
 ///
 /// 此前同一套公式在渲染/悬停/点击/菜单定位四处重复手写，
@@ -161,12 +134,7 @@ pub struct TitlebarButtons {
     pub user_btn_x: f32,
     pub settings_btn_x: f32,
     pub right_panel_btn_x: f32,
-    pub bottom_panel_btn_x: f32,
     pub left_sidebar_btn_x: f32,
-    /// 模式切换按钮（智能体/开发者）X 位置，位于左侧边栏按钮左侧
-    pub mode_btn_x: f32,
-    /// 模式切换按钮宽度（文字按钮比图标按钮宽）
-    pub mode_btn_width: f32,
     pub divider_x: f32,
     pub forward_btn_x: f32,
     pub back_btn_x: f32,
@@ -186,11 +154,8 @@ impl TitlebarButtons {
         let user_btn_x = minimize_x - tool_btn_gap - user_btn_size;
         let settings_btn_x = user_btn_x - tool_btn_gap - tool_btn_size;
         let right_panel_btn_x = settings_btn_x - tool_btn_gap - tool_btn_size;
-        let bottom_panel_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
-        let left_sidebar_btn_x = bottom_panel_btn_x - tool_btn_gap - tool_btn_size;
-        let mode_btn_width = 44.0; // 文字按钮加宽
-        let mode_btn_x = left_sidebar_btn_x - tool_btn_gap - mode_btn_width;
-        let divider_x = mode_btn_x - tool_btn_gap - 4.0;
+        let left_sidebar_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
+        let divider_x = left_sidebar_btn_x - tool_btn_gap - 4.0;
         let forward_btn_x = divider_x - tool_btn_gap - tool_btn_size;
         let back_btn_x = forward_btn_x - tool_btn_gap - tool_btn_size;
         Self {
@@ -204,10 +169,7 @@ impl TitlebarButtons {
             user_btn_x,
             settings_btn_x,
             right_panel_btn_x,
-            bottom_panel_btn_x,
             left_sidebar_btn_x,
-            mode_btn_x,
-            mode_btn_width,
             divider_x,
             forward_btn_x,
             back_btn_x,
@@ -264,12 +226,6 @@ pub struct LayoutManager {
     pub corner_right_resizing: bool,
     /// 侧边栏宽度动画状态（None = 静态无动画）
     pub sidebar_anim: Option<SidebarAnim>,
-    /// 当前是否处于欢迎页（每帧同步）。
-    /// 欢迎页上活动栏固定常驻（侧边栏功能按钮入口，不可关闭），
-    /// 侧边栏面板默认隐藏，用户可经图标/Ctrl+B/标题栏按钮调起。
-    pub welcome_active: bool,
-    /// 欢迎页期间用户是否调起了侧边栏面板（进入欢迎页时重置为 false）
-    pub welcome_left_opened: bool,
     /// 当前已应用的 DPI 缩放因子（用于 DPI 变化时按比例换算用户可调尺寸）
     dpi_scale: f32,
 }
@@ -330,8 +286,6 @@ impl LayoutManager {
             corner_left_resizing: false,
             corner_right_resizing: false,
             sidebar_anim: None,
-            welcome_active: false,
-            welcome_left_opened: false,
             dpi_scale: 1.0,
         }
     }
@@ -357,18 +311,9 @@ impl LayoutManager {
         self.dpi_scale = scale;
     }
 
-    /// 欢迎页侧边栏面板抑制：面板默认隐藏（不渲染/不占位），
-    /// 用户手动调起（welcome_left_opened）后解除。不修改 visible 标志，
-    /// 避免渲染副作用改写用户状态（曾导致工作区场景点击回归）。
-    /// 活动栏不受此抑制：欢迎页上固定常驻（见 activity_bar_shown）。
-    pub fn welcome_sidebar_suppressed(&self) -> bool {
-        self.welcome_active && !self.welcome_left_opened
-    }
-
-    /// 活动栏是否占位/渲染：常规场景跟随用户 visible 标志；
-    /// 欢迎页上固定常驻（侧边栏功能按钮入口，不可关闭）。
+    /// 活动栏是否占位/渲染：跟随用户 visible 标志。
     pub fn activity_bar_shown(&self) -> bool {
-        self.activity_bar_visible || self.welcome_active
+        self.activity_bar_visible
     }
 
     /// 计算标题栏区域
@@ -413,7 +358,7 @@ impl LayoutManager {
         } else {
             0.0
         };
-        if !self.sidebar_visible || self.welcome_sidebar_suppressed() {
+        if !self.sidebar_visible {
             return Region::new(x, self.top_offset(), 0.0, self.content_height());
         }
         Region::new(
@@ -426,13 +371,11 @@ impl LayoutManager {
 
     /// 计算编辑器区域（包含标签栏和编辑器内容）
     pub fn editor_region(&self) -> Region {
-        // 欢迎页活动栏固定占位，侧边栏面板仅调起时占位（与渲染条件一致）
-        let suppress = self.welcome_sidebar_suppressed();
         let x = (if self.activity_bar_shown() {
             self.activity_bar_width
         } else {
             0.0
-        } + if self.sidebar_visible && !suppress {
+        } + if self.sidebar_visible {
             self.sidebar_width
         } else {
             0.0
@@ -501,8 +444,7 @@ impl LayoutManager {
     /// 拖拽该拐角可同时调整侧边栏宽度（水平）与底部面板高度（垂直）。
     /// 仅当侧边栏与底部面板同时可见时存在，否则返回 None。
     pub fn corner_left_handle(&self) -> Option<Region> {
-        if !(self.sidebar_visible && self.bottom_panel_visible) || self.welcome_sidebar_suppressed()
-        {
+        if !(self.sidebar_visible && self.bottom_panel_visible) {
             return None;
         }
         let editor = self.editor_region();
@@ -617,14 +559,6 @@ impl LayoutManager {
 
     /// 切换侧边栏可见性（带动画）
     pub fn toggle_sidebar(&mut self) {
-        // 欢迎页：活动栏固定，仅切换侧边栏面板（welcome_left_opened）
-        if self.welcome_active {
-            self.welcome_left_opened = !self.welcome_left_opened;
-            if self.welcome_left_opened {
-                self.sidebar_visible = true;
-            }
-            return;
-        }
         if self.sidebar_visible {
             // 当前可见 → 启动收起动画
             self.sidebar_anim = Some(SidebarAnim::new(self.sidebar_width, 0.0));
@@ -647,12 +581,8 @@ impl LayoutManager {
         self.sidebar_visible = true;
     }
 
-    /// 切换活动栏可见性（欢迎页上活动栏固定，此操作为 no-op）
+    /// 切换活动栏可见性
     pub fn toggle_activity_bar(&mut self) {
-        // 欢迎页：活动栏是侧边栏功能按钮入口，固定常驻，不允许关闭
-        if self.welcome_active {
-            return;
-        }
         self.activity_bar_visible = !self.activity_bar_visible;
     }
 
@@ -688,6 +618,15 @@ impl LayoutManager {
             self.right_panel_width = 300.0;
         } else {
             self.right_panel_width = 0.0;
+        }
+    }
+
+    /// 确保右侧面板可见：收起或零宽时以默认宽度展开。
+    /// 打开文件/标签等内容落入右面板的操作统一调用，避免"可见但零宽"的隐藏态。
+    pub fn ensure_right_panel_visible(&mut self) {
+        self.right_panel_visible = true;
+        if self.right_panel_width < 1.0 {
+            self.right_panel_width = 320.0;
         }
     }
 
@@ -733,14 +672,7 @@ mod tests {
     #[test]
     fn test_activity_bar_view_default_order() {
         let order = ActivityBarView::default_order();
-        assert_eq!(
-            order,
-            vec![
-                ActivityBarView::Explorer,
-                ActivityBarView::SourceControl,
-                ActivityBarView::RemoteManager,
-            ]
-        );
+        assert_eq!(order, vec![ActivityBarView::Explorer]);
     }
 
     #[test]
@@ -749,18 +681,9 @@ mod tests {
             ActivityBarView::from_key("explorer"),
             Some(ActivityBarView::Explorer)
         );
-        assert_eq!(
-            ActivityBarView::from_key("sourceControl"),
-            Some(ActivityBarView::SourceControl)
-        );
-        assert_eq!(
-            ActivityBarView::from_key("remoteManager"),
-            Some(ActivityBarView::RemoteManager)
-        );
-        assert_eq!(
-            ActivityBarView::from_key("openTabs"),
-            Some(ActivityBarView::RemoteManager)
-        );
+        assert_eq!(ActivityBarView::from_key("sourceControl"), None);
+        assert_eq!(ActivityBarView::from_key("remoteManager"), None);
+        assert_eq!(ActivityBarView::from_key("openTabs"), None);
         assert_eq!(ActivityBarView::from_key("terminal"), None);
         assert_eq!(ActivityBarView::from_key("aiAssistant"), None);
         assert_eq!(ActivityBarView::from_key("unknown"), None);
@@ -773,16 +696,8 @@ mod tests {
             SidebarContent::FileTree
         );
         assert_eq!(
-            SidebarContent::from_view(ActivityBarView::SourceControl),
-            SidebarContent::SourceControlPanel
-        );
-        assert_eq!(
             SidebarContent::from_view(ActivityBarView::Terminal),
             SidebarContent::TerminalPanel
-        );
-        assert_eq!(
-            SidebarContent::from_view(ActivityBarView::RemoteManager),
-            SidebarContent::RemoteManagerPanel
         );
         assert_eq!(
             SidebarContent::from_view(ActivityBarView::AiAssistant),

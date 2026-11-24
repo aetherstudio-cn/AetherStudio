@@ -20,37 +20,19 @@ impl EditorState {
         }
 
         unsafe {
-            // 背景
-            let bg_color = if self.win.theme.glass_enabled {
-                self.win.theme.sidebar_bg
-            } else {
-                color_f(0.13, 0.13, 0.14, 1.0)
-            };
-            let bg_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &bg_color)
-                .unwrap();
             let bg_rect = D2D_RECT_F {
                 left: x,
                 top: y,
                 right: x + width,
                 bottom: y + height,
             };
-            target.FillRectangle(&bg_rect, &bg_brush);
+            app_theme::fill_app_gradient(target, &bg_rect, self.win.window_height as f32);
 
-            // 左边框（与中间 AI 面板分隔）
-            let border_color = if self.win.theme.glass_enabled {
-                self.win.theme.panel_border
-            } else {
-                color_f(0.2, 0.2, 0.2, 1.0)
-            };
             let border_brush = self
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &border_color)
+                .get_brush(target, &app_theme::border())
                 .unwrap();
             let border_rect = D2D_RECT_F {
                 left: x,
@@ -78,26 +60,26 @@ impl EditorState {
 
             if content_h > 1.0 {
                 if !has_tabs || self.active_tab_is_new_tab() {
-                    // 新标签页（NTP）：快捷搜索框 + 快捷操作按钮
-                    self.render_new_tab_page(target, x, content_y, width, content_h);
+                    if self.right_panel_tree_open {
+                        // 展开态：工作区文件树（由「打开工作区文件」卡片触发）
+                        self.ai.ai_panel.agent_file_tree_offset_y = 0.0;
+                        if let Ok(tb) = self
+                            .win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &self.win.theme.text_default)
+                        {
+                            self.render_file_tree_sidebar(
+                                target, x, content_y, width, content_h, &tb,
+                            );
+                        }
+                    } else {
+                        // 默认态：Qoder 式快捷卡片页
+                        self.render_new_tab_page(target, x, content_y, width, content_h);
+                    }
                 } else if self.active_tab_is_settings() {
-                    let text_brush = match self
-                        .win
-                        .render_ctx
-                        .brush_cache
-                        .get_brush(target, &self.win.theme.text_default)
-                    {
-                        Ok(b) => b,
-                        Err(_) => return,
-                    };
-                    self.render_settings_sidebar(
-                        target,
-                        x,
-                        content_y,
-                        width,
-                        content_h,
-                        &text_brush,
-                    );
+                    // 设置为独立整页：由 render/mod.rs 的覆盖层统一渲染（含返回条），
+                    // 此处不重复渲染，避免命中区重复注册与几何冲突。
                 } else if self.active_tab_is_sandbox_eval() {
                     self.render_sandbox_eval_page(target, x, content_y, width, content_h);
                 } else if self.active_tab_is_terminal() {
@@ -118,8 +100,8 @@ impl EditorState {
         }
     }
 
-    /// 新标签页（NTP）起始页：快捷搜索框 + 快捷操作按钮（打开本地文件/新建文件/打开终端）。
-    /// 经典模式与智能体模式共用，几何取自 new_tab_page_region（与点击/光标/IME 一致）。
+    /// 新标签页（NTP）起始页：Qoder 式居中快捷卡片列表（图标块 + 标题 + 快捷键）。
+    /// 「打开工作区文件」卡片展开文件树；其余卡片打开浏览器/终端/审阅等。
     pub(crate) fn render_new_tab_page(
         &mut self,
         target: &windows::Win32::Graphics::Direct2D::ID2D1HwndRenderTarget,
@@ -129,175 +111,190 @@ impl EditorState {
         _height: f32,
     ) {
         unsafe {
-            let text_brush = self
+            self.ui.icons.ensure_created_from_target(target);
+            let page = self.new_tab_page_region(&self.ui.layout);
+            if page.width < 80.0 || page.height < 80.0 {
+                return;
+            }
+            let title_brush = self
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &self.win.theme.text_default)
+                .get_brush(target, &app_theme::text_primary())
                 .unwrap();
             let dim_brush = self
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.5, 0.5, 0.5, 1.0))
+                .get_brush(target, &app_theme::text_muted())
+                .unwrap();
+            let icon_brush = self
+                .win
+                .render_ctx
+                .brush_cache
+                .get_brush(target, &app_theme::accent())
                 .unwrap();
 
-            let btn_width = crate::render::NEW_TAB_BTN_WIDTH;
-            let btn_height = crate::render::NEW_TAB_BTN_HEIGHT;
-            let btn_gap = crate::render::NEW_TAB_BTN_GAP;
-            let page_region = self.new_tab_page_region(&self.ui.layout);
-            let search_box = crate::render::new_tab_page_geom_in(page_region);
-            let btn_x = search_box.x;
-            let start_y = search_box.y;
-
-            let buttons = [
-                ("搜索或输入网址", crate::icons::IconKind::Search),
-                ("打开本地文件", crate::icons::IconKind::OpenFolder),
-                ("新建文件", crate::icons::IconKind::NewFile),
-                ("打开终端", crate::icons::IconKind::Terminal),
-            ];
-
-            let btn_format = self
+            let title_format = self
                 .win
                 .render_ctx
                 .text_format_cache
                 .get_format(
                     13.0,
+                    windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_SEMI_BOLD.0 as u32,
+                    DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
+                )
+                .unwrap();
+            let sub_format = self
+                .win
+                .render_ctx
+                .text_format_cache
+                .get_format(
+                    11.0,
                     DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
-                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u32,
+                    DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u32,
                 )
                 .unwrap();
 
-            // 搜索框状态快照（避免渲染中持有 self 可变借用）
-            let search_focused = self.browser.empty_search_focused;
-            let search_text = self.browser.empty_search_text.clone();
-            let search_comp = self.browser.empty_search_composition.clone();
-            let search_caret = self.browser.empty_search_caret_visible;
+            // (标题, 副标题/快捷键, 图标, 命中区动作)
+            let cards = [
+                (
+                    "打开工作区文件",
+                    "Ctrl Alt E",
+                    crate::icons::IconKind::OpenFolder,
+                    "ntp:open_files",
+                ),
+                (
+                    "打开内置浏览器",
+                    "Ctrl T",
+                    crate::icons::IconKind::Search,
+                    "ntp:browser",
+                ),
+                (
+                    "打开终端",
+                    "Ctrl Shift J",
+                    crate::icons::IconKind::Terminal,
+                    "ntp:terminal",
+                ),
+                (
+                    "打开审阅",
+                    "Ctrl Shift G",
+                    crate::icons::IconKind::GitBranch,
+                    "ntp:review",
+                ),
+                ("更多工具", "", crate::icons::IconKind::Settings, "ntp:more"),
+            ];
 
-            for (i, (label, icon)) in buttons.iter().enumerate() {
-                let btn_y = start_y + i as f32 * (btn_height + btn_gap);
-                let btn_rect = D2D_RECT_F {
-                    left: btn_x,
-                    top: btn_y,
-                    right: btn_x + btn_width,
-                    bottom: btn_y + btn_height,
-                };
+            let margin = 16.0f32;
+            let card_w = (page.width - margin * 2.0).min(360.0);
+            let card_h = 64.0f32;
+            let gap = 12.0f32;
+            let total_h = cards.len() as f32 * card_h + (cards.len() as f32 - 1.0) * gap;
+            let start_y = page.y + ((page.height - total_h) / 2.0).max(8.0);
+            let card_x = page.x + (page.width - card_w) / 2.0;
 
-                // 背景（圆角矩形）：搜索框聚焦时加深并描高亮边
-                let btn_bg = if i == 0 && search_focused {
-                    color_f(0.13, 0.13, 0.16, 1.0)
-                } else {
-                    color_f(0.18, 0.18, 0.20, 1.0)
+            for (i, (title, sub, icon, action)) in cards.iter().enumerate() {
+                let cy = start_y + i as f32 * (card_h + gap);
+                let card_rect = D2D_RECT_F {
+                    left: card_x,
+                    top: cy,
+                    right: card_x + card_w,
+                    bottom: cy + card_h,
                 };
-                let btn_bg_brush = self
+                // 卡片背景（圆角 + 柔和边框）
+                if let Ok(bg) = self
                     .win
                     .render_ctx
                     .brush_cache
-                    .get_brush(target, &btn_bg)
-                    .unwrap();
-                let rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
-                    rect: btn_rect,
-                    radiusX: 6.0,
-                    radiusY: 6.0,
-                };
-                target.FillRoundedRectangle(&rounded, &btn_bg_brush);
-                if i == 0 && search_focused {
-                    let accent_brush = self
+                    .get_brush(target, &app_theme::surface())
+                {
+                    let rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: card_rect,
+                        radiusX: 10.0,
+                        radiusY: 10.0,
+                    };
+                    target.FillRoundedRectangle(&rounded, &bg);
+                    if let Ok(border) = self
                         .win
                         .render_ctx
                         .brush_cache
-                        .get_brush(target, &color_f(0.35, 0.55, 0.95, 1.0))
-                        .unwrap();
-                    target.DrawRoundedRectangle(&rounded, &accent_brush, 1.5, None);
+                        .get_brush(target, &app_theme::border())
+                    {
+                        target.DrawRoundedRectangle(&rounded, &border, 1.0, None);
+                    }
                 }
-
-                // 图标
-                let icon_size = 16.0f32;
+                // 左侧图标块
+                let tile = 40.0f32;
+                let tile_x = card_x + 12.0;
+                let tile_y = cy + (card_h - tile) / 2.0;
+                if let Ok(tbg) = self
+                    .win
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &app_theme::accent_soft())
+                {
+                    let tr = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: D2D_RECT_F {
+                            left: tile_x,
+                            top: tile_y,
+                            right: tile_x + tile,
+                            bottom: tile_y + tile,
+                        },
+                        radiusX: 8.0,
+                        radiusY: 8.0,
+                    };
+                    target.FillRoundedRectangle(&tr, &tbg);
+                }
                 self.ui.icons.draw(
                     target,
                     *icon,
-                    btn_x + 12.0,
-                    btn_y + (btn_height - icon_size) / 2.0,
-                    icon_size,
-                    icon_size,
-                    &dim_brush,
+                    tile_x + 10.0,
+                    tile_y + 10.0,
+                    20.0,
+                    20.0,
+                    &icon_brush,
                 );
-
-                if i == 0 {
-                    // 首行：快捷搜索框 —— 已输入文本（+内联合成串）与光标；未输入显示占位提示
-                    let text_left = btn_x + 36.0;
-                    let text_rect = D2D_RECT_F {
-                        left: text_left,
-                        top: btn_y,
-                        right: btn_x + btn_width - 8.0,
-                        bottom: btn_y + btn_height,
-                    };
-                    let display =
-                        format!("{}{}", search_text, search_comp.as_deref().unwrap_or(""));
-                    if display.is_empty() {
-                        let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
-                        target.DrawText(
-                            &label_wide,
-                            &btn_format,
-                            &text_rect,
-                            &dim_brush,
-                            D2D1_DRAW_TEXT_OPTIONS_NONE,
-                            DWRITE_MEASURING_MODE_NATURAL,
-                        );
-                    } else {
-                        let wide: Vec<u16> = display.encode_utf16().chain(Some(0)).collect();
-                        target.DrawText(
-                            &wide,
-                            &btn_format,
-                            &text_rect,
-                            &text_brush,
-                            D2D1_DRAW_TEXT_OPTIONS_NONE,
-                            DWRITE_MEASURING_MODE_NATURAL,
-                        );
-                    }
-                    // 光标（追加式编辑，固定在文本末尾）
-                    if search_focused && search_caret {
-                        let weight = DWRITE_FONT_WEIGHT_NORMAL.0 as u32;
-                        let tw = self
-                            .win
-                            .render_ctx
-                            .text_format_cache
-                            .measure_text_width(&display, 13.0, weight)
-                            .unwrap_or(0.0);
-                        let caret_brush = self
-                            .win
-                            .render_ctx
-                            .brush_cache
-                            .get_brush(target, &self.win.theme.text_default)
-                            .unwrap();
-                        let caret_rect = D2D_RECT_F {
-                            left: text_left + tw + 1.0,
-                            top: btn_y + 9.0,
-                            right: text_left + tw + 2.5,
-                            bottom: btn_y + btn_height - 9.0,
-                        };
-                        target.FillRectangle(&caret_rect, &caret_brush);
-                    }
-                    continue;
-                }
-
-                // 其余行：普通按钮文字
-                let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
-                let text_rect = D2D_RECT_F {
-                    left: btn_x + 36.0,
-                    top: btn_y,
-                    right: btn_x + btn_width - 8.0,
-                    bottom: btn_y + btn_height,
+                // 标题 + 副标题
+                let text_x = tile_x + tile + 12.0;
+                let text_right = card_x + card_w - 12.0;
+                let title_wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+                let title_y = if sub.is_empty() {
+                    cy + (card_h - 18.0) / 2.0
+                } else {
+                    cy + 14.0
                 };
                 target.DrawText(
-                    &label_wide,
-                    &btn_format,
-                    &text_rect,
-                    &text_brush,
+                    &title_wide,
+                    &title_format,
+                    &D2D_RECT_F {
+                        left: text_x,
+                        top: title_y,
+                        right: text_right,
+                        bottom: title_y + 18.0,
+                    },
+                    &title_brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
+                if !sub.is_empty() {
+                    let sub_wide: Vec<u16> = sub.encode_utf16().chain(Some(0)).collect();
+                    target.DrawText(
+                        &sub_wide,
+                        &sub_format,
+                        &D2D_RECT_F {
+                            left: text_x,
+                            top: cy + 34.0,
+                            right: text_right,
+                            bottom: cy + 50.0,
+                        },
+                        &dim_brush,
+                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        DWRITE_MEASURING_MODE_NATURAL,
+                    );
+                }
+                crate::hit_test::register_hit_region(*action, card_x, cy, card_w, card_h);
             }
         }
     }
@@ -340,7 +337,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.16, 0.16, 0.17, 1.0))
+                .get_brush(target, &app_theme::surface_alt())
                 .unwrap();
             target.FillRectangle(
                 &D2D_RECT_F {
@@ -355,7 +352,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.23, 0.23, 0.24, 1.0))
+                .get_brush(target, &app_theme::border())
                 .unwrap();
             target.FillRectangle(
                 &D2D_RECT_F {
@@ -401,7 +398,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.38, 0.38, 0.40, 1.0))
+                .get_brush(target, &app_theme::text_muted())
                 .unwrap();
             let back_brush = if can_back {
                 &enabled_brush
@@ -450,7 +447,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.11, 0.11, 0.12, 1.0))
+                .get_brush(target, &app_theme::input_bg())
                 .unwrap();
             let addr_rect = D2D_RECT_F {
                 left: addr_x,
@@ -469,7 +466,7 @@ impl EditorState {
                     .win
                     .render_ctx
                     .brush_cache
-                    .get_brush(target, &color_f(0.30, 0.51, 0.86, 1.0))
+                    .get_brush(target, &app_theme::accent())
                     .unwrap();
                 target.DrawRoundedRectangle(&rounded, &focus_brush, 1.5, None);
             }
@@ -479,7 +476,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.45, 0.45, 0.47, 1.0))
+                .get_brush(target, &app_theme::text_muted())
                 .unwrap();
             let addr_format = self
                 .win

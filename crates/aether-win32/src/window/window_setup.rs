@@ -313,6 +313,21 @@ pub(crate) unsafe fn on_copydata(
     _wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // repro 自动化通道：dwData=1 模拟输入脚本，本机同用户 IPC 直接入队执行（无需 UI 确认）
+    if let Some(script) = crate::launch::parse_copydata_input_script(lparam) {
+        if let Some(state) = get_and_set_state(hwnd) {
+            let parsed = crate::input_sim::parse_input_script(&script);
+            {
+                let mut st = state.borrow_mut();
+                match parsed {
+                    Ok(actions) => st.start_input_simulation(actions),
+                    Err(e) => st.ui.status_message = format!("模拟输入（repro）脚本错误：{}", e),
+                }
+            }
+            invalidate_window(hwnd);
+            return copydata_result(true);
+        }
+    }
     if let Some(args) = parse_copydata_lparam(lparam) {
         if let Some(state) = get_and_set_state(hwnd) {
             apply_launch_args(&mut state.borrow_mut(), &args);

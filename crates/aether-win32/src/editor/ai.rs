@@ -102,7 +102,8 @@ impl EditorState {
         }
 
         // 文件/终端操作必须在已打开的工作区内进行；未打开文件夹时提示用户。
-        let has_actions = crate::ai_panel::has_agent_markers(&text);
+        // 浏览器工具（OPEN / READPAGE）不依赖工作区，不受此限。
+        let has_actions = crate::ai_panel::has_workspace_scoped_markers(&text);
         if has_actions && self.fs.current_folder.is_none() {
             self.ai.ai_panel
                 .add_assistant_message_to(conv_idx, "提示：尚未打开工作区文件夹，无法直接创建/修改文件。请先通过“文件 → 打开文件夹”打开一个项目再试。".to_string());
@@ -217,14 +218,24 @@ impl EditorState {
             }
         }
 
-        // 3. 只读探查工具（读取文件 / 列出目录）：同步执行，结果回喂给模型
+        // 3. 只读探查工具（读取文件 / 列出目录 / 浏览器）：探查同步执行，
+        //    浏览器正文采集异步进行（结果由主循环轮询回喂）
         let tool_reqs = crate::ai_panel::parse_tool_requests(&text);
         let mut tool_display: Vec<String> = Vec::new();
         let mut tool_feedback = String::new();
+        let mut tool_async = false;
         if !tool_reqs.is_empty() {
-            let (display, feedback) = self.execute_tool_requests(&tool_reqs);
+            let (display, feedback, async_pending) =
+                self.execute_tool_requests(&tool_reqs, conv_idx);
             tool_display = display;
             tool_feedback = feedback;
+            tool_async = async_pending;
+        }
+
+        // 3.5 模拟输入脚本：设置门禁 + 确认卡片 + 确认对话框，放行后交 UI 线程定时器执行
+        let input_scripts = crate::ai_panel::parse_input_scripts(&text);
+        if !input_scripts.is_empty() {
+            self.handle_agent_input_scripts(&input_scripts, conv_idx);
         }
 
         // 4. 结构化任务总结反馈到对应会话（执行的功能/修复的 Bug/代码修改/审计信息/失败项）
@@ -299,19 +310,34 @@ impl EditorState {
 
         // 5. 只读探查结果驱动续跑：仅活动会话，且本轮没有 RUN 命令
         //    （RUN 有自身的异步续跑路径，避免重复触发并发请求；受最大轮次限制）。
-        if conv_idx == self.ai.ai_panel.active && commands.is_empty() && !tool_feedback.is_empty() {
+        //    浏览器正文采集在途时同样跳过：结果到达后由 handle_agent_page_read_results 续跑。
+        //    工具产物附图（截图）随 Tool 消息一并发送；不续跑的普通轮次丢弃，避免串轮。
+        let tool_images = std::mem::take(&mut self.ai.ai_panel.agent_tool_images);
+        if conv_idx == self.ai.ai_panel.active
+            && commands.is_empty()
+            && !tool_feedback.is_empty()
+            && !tool_async
+        {
             // 续跑必须用激活模型档案（含解密后的 API Key）；旧单一 ai 字段无 key
             let settings = self.ui.app_settings.active_ai_settings();
             let mode = self.ai.ai_panel.mode;
-            if let Err(e) =
-                self.ai
-                    .ai_panel
-                    .continue_agent_with_tool_result(&settings, tool_feedback, mode)
+            if let Err(e) = self
+                .ai
+                .ai_panel
+                .continue_agent_with_tool_result_with_images(
+                    &settings,
+                    tool_feedback,
+                    mode,
+                    tool_images,
+                )
             {
                 self.ai
                     .ai_panel
                     .add_assistant_message_to(conv_idx, format!("（{}，如需继续请手动发消息）", e));
             }
+        } else if tool_async && !tool_images.is_empty() {
+            // 异步采集在途：附图保留，待网页结果回喂时一并发送
+            self.ai.ai_panel.agent_tool_images = tool_images;
         }
     }
 
@@ -431,10 +457,8 @@ impl EditorState {
             self.open_in_new_tab(tab);
         }
 
-        // 智能体模式下打开标签需保证右侧编辑区可见
-        if self.editor_mode.is_agent() {
-            self.ui.layout.right_panel_visible = true;
-        }
+        // 打开标签需保证右侧编辑区可见（含零宽兜底）
+        self.ui.layout.ensure_right_panel_visible();
         self.ui.status_message = format!("已打开: {}", path.display());
         self.win.dirty_tracker.mark_full_window();
     }
@@ -551,10 +575,12 @@ impl EditorState {
                 // 续跑必须用激活模型档案（含解密后的 API Key）；旧单一 ai 字段无 key
                 let settings = self.ui.app_settings.active_ai_settings();
                 let mode = self.ai.ai_panel.mode;
+                // 本轮截图附图随网页结果一并发送（仅首个任务携带，取走后为空）
+                let images = std::mem::take(&mut self.ai.ai_panel.agent_tool_images);
                 if let Err(e) = self
                     .ai
                     .ai_panel
-                    .continue_agent_with_tool_result(&settings, feedback, mode)
+                    .continue_agent_with_tool_result_with_images(&settings, feedback, mode, images)
                 {
                     self.ai
                         .ai_panel
@@ -589,6 +615,57 @@ impl EditorState {
             }
         }
         self.ai.ai_panel.clamp_history_page();
+    }
+
+    /// 构建智能体侧栏「其它工作区会话」缓存（workspace_hash -> 最近会话元数据）。
+    /// 30 秒节流 + 缺失哈希触发重建，避免每帧扫描 AetherDB 拖慢渲染。
+    pub fn ensure_agent_workspace_conv_cache(&mut self, hashes: &[String]) {
+        if hashes.is_empty() {
+            return;
+        }
+        const TTL: std::time::Duration = std::time::Duration::from_secs(30);
+        const PER_WS_LIMIT: usize = 12;
+        let stale = self
+            .ai
+            .sidebar_ws_cache_at
+            .map_or(true, |t| t.elapsed() >= TTL)
+            || hashes
+                .iter()
+                .any(|h| !self.ai.sidebar_ws_cache.contains_key(h));
+        if !stale {
+            return;
+        }
+        let built = {
+            let Some(store) = self.ai.ai_panel.warm_data_store.as_ref() else {
+                return;
+            };
+            let mut cache: std::collections::HashMap<
+                String,
+                Vec<crate::ai_panel::ConversationMeta>,
+            > = std::collections::HashMap::new();
+            if let Ok(convs) = store.search_conversations("", false, 500) {
+                for c in convs {
+                    let list = cache.entry(c.workspace_hash).or_default();
+                    if list.len() < PER_WS_LIMIT {
+                        list.push(crate::ai_panel::ConversationMeta {
+                            id: c.id,
+                            title: c.title,
+                            updated_at: c.updated_at,
+                            message_count: c.message_count as usize,
+                            preview: String::new(),
+                            mode: c.mode,
+                        });
+                    }
+                }
+            }
+            // 保证需要展示的工作区都有键（无历史时为空列表，避免每帧重复查库）
+            for h in hashes {
+                cache.entry(h.clone()).or_default();
+            }
+            cache
+        };
+        self.ai.sidebar_ws_cache = built;
+        self.ai.sidebar_ws_cache_at = Some(std::time::Instant::now());
     }
 
     /// 打开历史记录中的某条会话详情（懒加载完整消息；由详情视图再恢复会话）。
@@ -893,6 +970,50 @@ impl EditorState {
         &mut self,
         edits: &[AiEdit],
     ) -> std::result::Result<Vec<PathBuf>, String> {
+        // 批量编辑确认门：≥2 个文件或含删除操作的编辑批属高风险变更，
+        // 先在聊天区以 PendingConfirmation 卡片展示编辑摘要，再经确认对话框
+        // （沿用现有确认 UI 模式）取得用户明确同意后才执行。
+        let mut distinct_paths: Vec<&Path> = Vec::new();
+        for e in edits {
+            if !distinct_paths.contains(&e.path.as_path()) {
+                distinct_paths.push(e.path.as_path());
+            }
+        }
+        let has_delete = edits.iter().any(|e| e.is_delete());
+        if distinct_paths.len() >= 2 || has_delete {
+            let mut summary = String::new();
+            for e in edits {
+                let (op, detail) = if e.is_delete() {
+                    ("删除", String::new())
+                } else if e.is_create_new() {
+                    ("新建", format!("（{} 行）", e.replace.lines().count()))
+                } else {
+                    (
+                        "修改",
+                        format!(
+                            "（替换 {} 行 → {} 行）",
+                            e.search.lines().count(),
+                            e.replace.lines().count()
+                        ),
+                    )
+                };
+                summary.push_str(&format!("• {} `{}`{}\n", op, e.path.display(), detail));
+            }
+            self.ai
+                .ai_panel
+                .add_pending_edit_confirmation(summary.clone());
+            self.win.dirty_tracker.mark_full_window();
+            let msg = format!(
+                "AI 即将执行以下批量编辑（{} 个文件{}）：\n\n{}\n确认执行？",
+                distinct_paths.len(),
+                if has_delete { "，含删除操作" } else { "" },
+                summary
+            );
+            if !crate::dialogs::Dialogs::confirm_yes_no(self.win.hwnd, "批量编辑确认", &msg) {
+                return Err("用户取消了本次批量编辑".to_string());
+            }
+        }
+
         let mut applied = Vec::new();
         let original_tab = self.editor.tab_bar.active_tab;
 
@@ -985,12 +1106,10 @@ impl EditorState {
                         replaced.replace_range(pos..pos + edit.search.len(), &edit.replace);
                         replaced
                     }
-                    None => {
-                        return Err(format!(
-                            "无法在 {} 中找到要替换的代码片段",
-                            full_path.display()
-                        ));
-                    }
+                    // 精确匹配失败 → 容错匹配（忽略行首尾空白，保留原文件缩进）；
+                    // 多命中/无命中时返回错误要求模型补充上下文
+                    None => crate::ai_panel::fuzzy_replace(&old_text, &edit.search, &edit.replace)
+                        .map_err(|e| format!("{}: {}", full_path.display(), e))?,
                 }
             };
 
@@ -1487,23 +1606,98 @@ impl EditorState {
     }
 
     /// 读取工作区内文件内容（沙箱校验 + 大小/长度限制），供 Agent 只读探查。
-    fn read_workspace_file(&self, rel: &str) -> std::result::Result<String, String> {
-        let path = self.workspace_sandbox_path(rel)?;
+    ///
+    /// 参数为读取规格 `path[:start[-end]]`（1-based 闭区间）：指定行范围时按行切片、
+    /// 输出带行号前缀与总行数提示，且不受 1MB 整文件上限约束（大文件可分段读）；
+    /// 整文件读取超 8000 字符截断时提示可用行范围续读。
+    fn read_workspace_file(&self, arg: &str) -> std::result::Result<String, String> {
+        let spec = crate::ai_panel::parse_read_spec(arg);
+        let path = self.workspace_sandbox_path(&spec.path)?;
         let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
         if meta.is_dir() {
             return Err("这是一个目录，请改用列目录工具".to_string());
         }
+        if spec.has_range() {
+            return Self::read_file_line_range(&path, &spec);
+        }
         const MAX_BYTES: u64 = 1024 * 1024; // 1MB 上限，避免超大文件撑爆上下文
         if meta.len() > MAX_BYTES {
             return Err(format!(
-                "文件过大（{} 字节，上限 1MB），请分段查看或改用命令",
-                meta.len()
+                "文件过大（{} 字节，整读上限 1MB），请用 `AETHER_READ {}:起始行-结束行` 按行范围读取",
+                meta.len(),
+                spec.path
             ));
         }
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         let content = String::from_utf8_lossy(&bytes);
-        // 限制回喂给模型的长度，避免占满上下文预算
-        Ok(truncate_chars(&content, 8000))
+        // 限制回喂给模型的长度，避免占满上下文预算；截断时提示按行范围续读
+        let total = content.lines().count();
+        let truncated = truncate_chars(&content, 8000);
+        if truncated.chars().count() < content.chars().count() {
+            return Ok(format!(
+                "{}\n（共 {} 行；可用 `AETHER_READ {}:起始行-结束行` 按行范围继续读取）",
+                truncated, total, spec.path
+            ));
+        }
+        Ok(content.into_owned())
+    }
+
+    /// 按行范围流式读取文件（1-based 闭区间），输出带行号前缀与总行数信息。
+    /// 不受整文件大小上限约束；输出超预算时截断并提示续读起始行。
+    fn read_file_line_range(
+        path: &Path,
+        spec: &crate::ai_panel::ReadSpec,
+    ) -> std::result::Result<String, String> {
+        use std::io::BufRead;
+        let start = spec.start.unwrap_or(1);
+        if let Some(end) = spec.end {
+            if end < start {
+                return Err(format!("结束行 {} 小于起始行 {}", end, start));
+            }
+        }
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let reader = std::io::BufReader::new(file);
+        const MAX_CHARS: usize = 8000;
+        let mut out = String::new();
+        let mut used = 0usize;
+        let mut total = 0usize;
+        let mut collected_end = 0usize; // 实际输出的最后一行行号
+        let mut truncated = false;
+        for (idx, line) in reader.lines().enumerate() {
+            let line = line.map_err(|e| format!("读取失败（可能不是 UTF-8 文本）: {}", e))?;
+            let no = idx + 1;
+            total = no;
+            if no < start || spec.end.is_some_and(|e| no > e) || truncated {
+                continue; // 范围外/已截断：仅继续累计总行数
+            }
+            let row = format!("{:>6} | {}\n", no, line);
+            let row_chars = row.chars().count();
+            if used + row_chars > MAX_CHARS {
+                truncated = true;
+                continue;
+            }
+            out.push_str(&row);
+            used += row_chars;
+            collected_end = no;
+        }
+        if total == 0 {
+            return Ok("（空文件）".to_string());
+        }
+        if start > total {
+            return Err(format!("起始行 {} 超出文件总行数 {}", start, total));
+        }
+        let end_shown = spec.end.unwrap_or(total).min(total);
+        let mut result = format!("（第 {}-{} 行 / 共 {} 行）\n", start, end_shown, total);
+        result.push_str(&out);
+        if truncated {
+            result.push_str(&format!(
+                "…（输出过长已截断；可用 `AETHER_READ {}:{}-{}` 继续读取）\n",
+                spec.path,
+                collected_end.max(start - 1) + 1,
+                end_shown
+            ));
+        }
+        Ok(result)
     }
 
     /// 列出工作区内目录条目（沙箱校验 + 数量限制），目录在前、名称排序。
@@ -1573,14 +1767,76 @@ impl EditorState {
         Ok(lines.join("\n"))
     }
 
-    /// 执行一批只读探查请求，返回 `(面板展示行, 回喂给模型的反馈文本)`。
+    /// 按标识符查询工作区符号索引（aether-symbol）：返回定义清单 + 最佳命中的完整源码。
+    /// 索引为进程级缓存（根目录变化或超过 TTL 时重建），不依赖任何语言服务器进程。
+    fn lookup_workspace_symbols(&self, query: &str) -> std::result::Result<String, String> {
+        let root = self
+            .fs
+            .current_folder
+            .as_ref()
+            .ok_or_else(|| "未打开工作区文件夹".to_string())?;
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            return Err("符号名不能为空".to_string());
+        }
+        Ok(with_cached_symbol_index(root, |index| {
+            let hits = index.find(&query, 20);
+            if hits.is_empty() {
+                return format!(
+                    "未找到符号 \"{}\" 的定义（索引共 {} 个符号，可能名称不完整，可改用 SEARCH 子串搜索）",
+                    query,
+                    index.len()
+                );
+            }
+            let mut listing: Vec<String> = Vec::new();
+            for s in hits.iter() {
+                listing.push(format!(
+                    "[{}] {} @ {}:{}  |  {}",
+                    s.kind.label(),
+                    s.name,
+                    s.path,
+                    s.line,
+                    s.signature
+                ));
+            }
+            let mut out = format!(
+                "找到 {} 处定义（精确→前缀→子串排序）：\n{}",
+                hits.len(),
+                listing.join("\n")
+            );
+            // 最佳命中回读完整源码（最多 3 处、共享字符预算），让模型一次看懂实现
+            const SRC_BUDGET: usize = 6000;
+            let mut used = 0usize;
+            for s in hits.iter().take(3) {
+                if used >= SRC_BUDGET {
+                    break;
+                }
+                if let Some(src) = index.source_of(s) {
+                    let src = truncate_chars(&src, SRC_BUDGET - used);
+                    used += src.chars().count();
+                    out.push_str(&format!(
+                        "\n--- {} 完整定义（{}:{}）---\n```\n{}\n```",
+                        s.name, s.path, s.line, src
+                    ));
+                }
+            }
+            out
+        }))
+    }
+
+    /// 执行一批工具请求，返回 `(面板展示行, 回喂给模型的反馈文本, 是否有异步任务在途)`。
+    ///
+    /// 文件类探查同步执行并立即回喂；浏览器正文采集为异步（WebView2 需等页面加载），
+    /// 此时同步探查结果挂到在途任务上，随首个网页结果一起回喂，避免同一轮发两次请求。
     fn execute_tool_requests(
-        &self,
+        &mut self,
         reqs: &[crate::ai_panel::ToolRequest],
-    ) -> (Vec<String>, String) {
+        conv_idx: usize,
+    ) -> (Vec<String>, String, bool) {
         use crate::ai_panel::ToolRequest;
         let mut display: Vec<String> = Vec::new();
         let mut feedback: Vec<String> = Vec::new();
+        let mut async_pending = false;
         for req in reqs {
             match req {
                 ToolRequest::Read(path) => match self.read_workspace_file(path) {
@@ -1618,9 +1874,345 @@ impl EditorState {
                         feedback.push(format!("[搜索失败] {}：{}", keyword, e));
                     }
                 },
+                ToolRequest::Symbol(name) => match self.lookup_workspace_symbols(name) {
+                    Ok(results) => {
+                        display.push(format!("✦ 已查找符号 `{}`", name));
+                        feedback.push(format!("[符号定义] {}\n{}", name, results));
+                    }
+                    Err(e) => {
+                        display.push(format!("✕ 查找符号 `{}` 失败：{}", name, e));
+                        feedback.push(format!("[符号查找失败] {}：{}", name, e));
+                    }
+                },
+                // 浏览器打开：只把页面呈现给用户，成功时不产生回喂
+                ToolRequest::Open(query) => match self.agent_browser_open(query) {
+                    Ok(url) => {
+                        display.push(format!("◍ 已在内置浏览器打开 `{}`", url));
+                        self.win.dirty_tracker.mark_full_window();
+                    }
+                    Err(e) => {
+                        display.push(format!("✕ 打开浏览器失败：{}", e));
+                        feedback.push(format!("[浏览器不可用] {}", e));
+                    }
+                },
+                // 网页正文提取：异步采集，结果由主循环轮询后回喂
+                ToolRequest::ReadPage(url) => match self.agent_browser_read(url) {
+                    Ok(id) => {
+                        let shown = if url.trim().is_empty() {
+                            self.browser
+                                .get(id)
+                                .map(|i| i.url.clone())
+                                .unwrap_or_default()
+                        } else {
+                            crate::browser::normalize_url(url)
+                        };
+                        display.push(format!("◍ 正在读取网页 `{}`", shown));
+                        self.browser
+                            .pending_reads
+                            .push(crate::browser::PendingPageRead {
+                                id,
+                                conv_idx,
+                                started: std::time::Instant::now(),
+                                url: shown,
+                                extra_feedback: String::new(),
+                                is_interaction: false,
+                            });
+                        async_pending = true;
+                        self.win.dirty_tracker.mark_full_window();
+                    }
+                    Err(e) => {
+                        display.push(format!("✕ 读取网页失败：{}", e));
+                        feedback.push(format!("[网页读取失败] {}：{}", url, e));
+                    }
+                },
+                // 桌面截图：捕获落盘 → 回喂路径；多模态模型同时回喂附图
+                ToolRequest::Shot(scope) => {
+                    let result = if scope == "window" {
+                        // 仅捕获本窗口自身内容（无需前台、不抓其它窗口）
+                        crate::screen_capture::capture_own_window_to_path(
+                            self.win.hwnd,
+                            &crate::screen_capture::selfshot_path(),
+                        )
+                    } else {
+                        crate::screen_capture::capture_screen_to_file()
+                    };
+                    match result {
+                        Ok(path) => {
+                            display.push(format!("▣ 截图已保存 `{}`", path.display()));
+                            let mut note = String::new();
+                            // 多模态门禁：开启时把截图经附件链路随续跑发给模型
+                            if self.ui.app_settings.active_ai_settings().multimodal {
+                                if let Ok(bytes) = std::fs::read(&path) {
+                                    if let Some(img) = aether_ai::ChatImage::from_bytes(&bytes) {
+                                        self.ai.ai_panel.agent_tool_images.push(
+                                            crate::ai_panel::AiImageAttachment {
+                                                filename: path
+                                                    .file_name()
+                                                    .map(|f| f.to_string_lossy().to_string())
+                                                    .unwrap_or_else(|| "shot.png".to_string()),
+                                                mime: img.mime,
+                                                data_b64: img.data_b64,
+                                            },
+                                        );
+                                        note =
+                                            "\n[截图附图] 已随本条结果附上图片，可直接分析画面内容"
+                                                .to_string();
+                                    }
+                                }
+                            }
+                            feedback.push(format!("[截图] 已落盘 {}{}", path.display(), note));
+                        }
+                        Err(e) => {
+                            display.push(format!("✕ 截图失败：{}", e));
+                            feedback.push(format!("[截图失败] {}", e));
+                        }
+                    }
+                }
+                // 网络安全检查：生成离线优先报告（deps/tls 范围在用户触发时联网）
+                ToolRequest::SecCheck(scope) => {
+                    let root = self.fs.current_folder.clone();
+                    let base_url = self.ui.app_settings.active_ai_settings().base_url;
+                    let start = std::time::Instant::now();
+                    let report = crate::security_scan::run_security_scan(
+                        root.as_deref(),
+                        base_url.as_deref(),
+                        scope,
+                    );
+                    let ms = start.elapsed().as_millis();
+                    display.push(format!("◈ 安全检查完成（{}，{}ms）", scope, ms));
+                    feedback.push(format!("[安全检查]\n{}", report));
+                    self.ui.status_message = format!("安全检查完成（{}）", scope);
+                }
+                // 验证门：异步跑校验命令（测试/构建），结果经终端哨兵回喂模型判定成败
+                ToolRequest::Verify(cmd) => {
+                    display.push(format!("◉ 验证 `{}`", cmd));
+                    self.ui.layout.bottom_panel_visible = true;
+                    self.terminal.bottom_panel_tab = crate::editor::BottomPanelTab::Terminal;
+                    if let Some(folder) = self.fs.current_folder.clone() {
+                        self.terminal.terminal_panel.cwd = folder.to_string_lossy().to_string();
+                    }
+                    if !self.terminal.terminal_panel.running {
+                        let _ = self.terminal.terminal_panel.start();
+                    }
+                    self.terminal
+                        .terminal_panel
+                        .queue_agent_command(conv_idx, cmd.clone());
+                    unsafe {
+                        let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                            self.win.hwnd,
+                            crate::window::TERM_TIMER_ID,
+                            crate::window::TERM_REFRESH_MS,
+                            None,
+                        );
+                    }
+                    async_pending = true;
+                    self.win.dirty_tracker.mark_full_window();
+                }
+                // 记忆检索：语义检索跨会话长期记忆（playbook），结果回喂模型
+                ToolRequest::Recall(query) => {
+                    let result = self
+                        .ai
+                        .ai_panel
+                        .warm_data_store
+                        .as_ref()
+                        .map(|warm| warm.playbook_context(query, 5));
+                    match result {
+                        Some(Ok(ctx)) if !ctx.trim().is_empty() => {
+                            display.push(format!("◈ 检索记忆 `{}`", query));
+                            feedback.push(format!("[长期记忆]\n{}", ctx));
+                        }
+                        Some(Ok(_)) => {
+                            display.push(format!("◈ 检索记忆 `{}`（无相关条目）", query));
+                            feedback.push(format!("[长期记忆] 查询「{}」暂无相关沉淀经验", query));
+                        }
+                        Some(Err(e)) => {
+                            display.push(format!("✕ 检索记忆失败：{}", e));
+                            feedback.push(format!("[记忆检索失败] {}", e));
+                        }
+                        None => {
+                            display.push("◈ 记忆库未启用".to_string());
+                            feedback.push("[长期记忆] 记忆库未启用，无法检索".to_string());
+                        }
+                    }
+                }
+                // 浏览器交互：注入 JS 执行 click/type/scroll 等，结果异步回喂
+                ToolRequest::BrowserAct(command) => match self.agent_browser_act(command) {
+                    Ok(id) => {
+                        display.push(format!("◍ 浏览器交互 `{}`", command));
+                        self.browser
+                            .pending_reads
+                            .push(crate::browser::PendingPageRead {
+                                id,
+                                conv_idx,
+                                started: std::time::Instant::now(),
+                                url: String::new(),
+                                extra_feedback: String::new(),
+                                is_interaction: true,
+                            });
+                        async_pending = true;
+                        self.win.dirty_tracker.mark_full_window();
+                    }
+                    Err(e) => {
+                        display.push(format!("✕ 浏览器交互失败：{}", e));
+                        feedback.push(format!("[浏览器交互失败] {}", e));
+                    }
+                },
             }
         }
-        (display, feedback.join("\n\n"))
+        // 有异步采集在途时，把本轮同步探查结果挂到首个任务，随网页内容一起回喂
+        if async_pending {
+            let joined = feedback.join("\n\n");
+            if !joined.is_empty() {
+                if let Some(task) = self
+                    .browser
+                    .pending_reads
+                    .iter_mut()
+                    .find(|t| t.conv_idx == conv_idx && t.extra_feedback.is_empty())
+                {
+                    task.extra_feedback = joined;
+                }
+                feedback.clear();
+            }
+        }
+        (display, feedback.join("\n\n"), async_pending)
+    }
+
+    /// 处理 AI 回复中的模拟输入脚本块：设置门禁 → 解析校验 → 确认卡片 + 确认对话框
+    /// → 放行后交 UI 线程定时器逐条注入（不阻塞消息泵）。
+    fn handle_agent_input_scripts(&mut self, scripts: &[String], conv_idx: usize) {
+        if !self.ui.app_settings.agent.input_enabled {
+            self.ai.ai_panel.add_assistant_message_to(
+                conv_idx,
+                "（模拟输入能力已在设置中关闭，本脚本未执行）".to_string(),
+            );
+            return;
+        }
+        for script in scripts {
+            let actions = match crate::input_sim::parse_input_script(script) {
+                Ok(a) => a,
+                Err(e) => {
+                    self.ai.ai_panel.add_assistant_message_to(
+                        conv_idx,
+                        format!("（模拟输入脚本解析失败：{}）", e),
+                    );
+                    continue;
+                }
+            };
+            let summary = crate::input_sim::action_summary(&actions);
+            self.ai
+                .ai_panel
+                .add_pending_input_confirmation(summary.clone());
+            self.win.dirty_tracker.mark_full_window();
+            let msg = format!(
+                "AI 请求模拟执行以下用户输入（共 {} 个动作），确认后将在系统层面注入：\n\n{}",
+                actions.len(),
+                summary
+            );
+            if !crate::dialogs::Dialogs::confirm_yes_no(self.win.hwnd, "模拟输入确认", &msg) {
+                self.ai
+                    .ai_panel
+                    .add_assistant_message_to(conv_idx, "（用户取消了本次模拟输入）".to_string());
+                continue;
+            }
+            self.start_input_simulation(actions);
+        }
+    }
+
+    /// 将已确认的模拟输入动作入队并启动 UI 线程定时器（INPUT_TIMER 驱动执行）。
+    pub fn start_input_simulation(&mut self, actions: Vec<crate::input_sim::InputAction>) {
+        if actions.is_empty() {
+            return;
+        }
+        let n = actions.len();
+        self.ui.input_sim.enqueue(actions);
+        self.ui.status_message = format!("模拟输入执行中…（{} 个动作）", n);
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                self.win.hwnd,
+                crate::window::INPUT_TIMER_ID,
+                crate::window::INPUT_TIMER_MS,
+                None,
+            );
+        }
+        let sb = self.ui.layout.status_bar_region();
+        self.win.dirty_tracker.mark_region(
+            sb.x,
+            sb.y,
+            sb.width,
+            sb.height,
+            crate::dirty_rect::DirtyRegionType::StatusBar,
+        );
+    }
+
+    /// 内置浏览器网页正文采集完成（主循环每帧轮询驱动）：
+    /// 把 `[网页内容]` 作为工具结果回喂对应会话，驱动「搜索 → 阅读 → 回答」循环。
+    pub fn handle_agent_page_read_results(
+        &mut self,
+        results: Vec<(
+            crate::browser::PendingPageRead,
+            std::result::Result<String, String>,
+        )>,
+    ) {
+        for (task, result) in results {
+            let body = if task.is_interaction {
+                match result {
+                    Ok(raw) => format!("[浏览器交互结果] {}", raw),
+                    Err(e) => format!("[浏览器交互失败] {}", e),
+                }
+            } else {
+                match result {
+                    Ok(json) => {
+                        let text = crate::browser::format_page_content(
+                            &json,
+                            crate::browser::PAGE_CONTENT_MAX_CHARS,
+                        );
+                        format!("[网页内容] {}\n{}", task.url, text)
+                    }
+                    Err(e) => format!("[网页读取失败] {}：{}", task.url, e),
+                }
+            };
+            let mut feedback = body;
+            if !task.extra_feedback.is_empty() {
+                feedback = format!("{}\n\n{}", task.extra_feedback, feedback);
+            }
+            // 展示一条助手提示，让用户知道内容已回传（不刷屏，仅一行）
+            let display = if task.is_interaction {
+                "◍ 浏览器交互结果已回传给 AI".to_string()
+            } else if task.url.is_empty() {
+                "◍ 网页内容已回传给 AI".to_string()
+            } else {
+                format!("◍ 已读取网页 `{}` 并回传给 AI", task.url)
+            };
+            self.ai
+                .ai_panel
+                .add_assistant_message_to(task.conv_idx, display);
+            self.win.dirty_tracker.mark_full_window();
+
+            if task.conv_idx != self.ai.ai_panel.active {
+                // 后台会话：不回喂续跑（避免与活动会话并发抢占模型请求）
+                self.ai.ai_panel.add_assistant_message_to(
+                    task.conv_idx,
+                    format!(
+                        "（该会话未激活，网页内容未自动续跑：{}）",
+                        truncate_chars(&feedback, 200)
+                    ),
+                );
+                continue;
+            }
+            let settings = self.ui.app_settings.active_ai_settings();
+            let mode = self.ai.ai_panel.mode;
+            let images = std::mem::take(&mut self.ai.ai_panel.agent_tool_images);
+            if let Err(e) = self
+                .ai
+                .ai_panel
+                .continue_agent_with_tool_result_with_images(&settings, feedback, mode, images)
+            {
+                self.ai.ai_panel.add_assistant_message_to(
+                    task.conv_idx,
+                    format!("（{}，如需继续请手动发消息）", e),
+                );
+            }
+        }
     }
 
     // ==================== CoT 多任务编排流水线 ====================
@@ -1653,6 +2245,7 @@ impl EditorState {
         }
         // 用可读计划替换规划器输出的原始 AETHER_PLAN 块，避免裸标记显示
         self.ai.ai_panel.rewrite_last_assistant(lines.join("\n"));
+        let task_count = tasks.len();
         self.ai.ai_panel.agent_pipeline = Some(crate::ai_panel::AgentPipeline {
             goal,
             tasks,
@@ -1660,6 +2253,7 @@ impl EditorState {
             created_files: Vec::new(),
             failed_files: Vec::new(),
             resume_count: 0,
+            statuses: vec![crate::ai_panel::TaskStatus::Pending; task_count],
         });
         self.win.dirty_tracker.mark_full_window();
         self.run_pipeline_until_file_task_or_finish();
@@ -1668,6 +2262,15 @@ impl EditorState {
     /// 顺序推进：RUN 任务直接执行并前进；FILE 任务发起 worker 调用后返回（由完成回调续推进）；任务耗尽则收尾。
     fn run_pipeline_until_file_task_or_finish(&mut self) {
         use crate::ai_panel::PlannedTaskKind;
+        // 子目标边界：折叠早期上下文为长期记忆（接 P1），长任务不丢早期上下文
+        let budget = self
+            .ui
+            .app_settings
+            .active_ai_settings()
+            .max_input_tokens
+            .map(|v| v as usize)
+            .unwrap_or(24000);
+        self.ai.ai_panel.fold_context_memory(budget);
         loop {
             let snapshot = {
                 let Some(p) = self.ai.ai_panel.agent_pipeline.as_ref() else {
@@ -1692,6 +2295,9 @@ impl EditorState {
                 self.finish_agent_pipeline();
                 return;
             };
+            if let Some(p) = self.ai.ai_panel.agent_pipeline.as_mut() {
+                p.mark_current(crate::ai_panel::TaskStatus::Running);
+            }
             match kind {
                 PlannedTaskKind::Run => {
                     self.ai.ai_panel.add_assistant_message(format!(
@@ -1704,6 +2310,7 @@ impl EditorState {
                         self.run_pipeline_command(&target);
                     }
                     if let Some(p) = self.ai.ai_panel.agent_pipeline.as_mut() {
+                        p.mark_current(crate::ai_panel::TaskStatus::Done);
                         p.cursor += 1;
                     }
                     continue;
@@ -1801,8 +2408,9 @@ impl EditorState {
                 ));
                 // 将当前任务标记为失败，继续下一任务
                 if let Some(p) = self.ai.ai_panel.agent_pipeline.as_mut() {
-                    if let Some(task) = p.tasks.get(p.cursor) {
-                        p.failed_files.push(task.target.clone());
+                    if let Some(target) = p.tasks.get(p.cursor).map(|t| t.target.clone()) {
+                        p.failed_files.push(target);
+                        p.mark_current(crate::ai_panel::TaskStatus::Failed);
                     }
                     p.cursor += 1;
                     p.resume_count = 0; // 重置续写计数
@@ -1866,21 +2474,80 @@ impl EditorState {
         if let Some(text) = self.ai.ai_panel.last_assistant_text_of(conv_idx) {
             let edits = crate::ai_panel::parse_edits(&text, None);
             if !edits.is_empty() && self.fs.current_folder.is_some() {
+                // 检查点：任务前快照各目标文件原始内容（None=原本不存在），供验证失败回滚
+                let checkpoints: Vec<crate::ai_panel::verify::FileCheckpoint> = edits
+                    .iter()
+                    .map(|e| {
+                        let full = self.resolve_edit_path(&e.path);
+                        crate::ai_panel::verify::FileCheckpoint {
+                            path: full.to_string_lossy().to_string(),
+                            original: std::fs::read_to_string(&full).ok(),
+                        }
+                    })
+                    .collect();
                 match self.apply_ai_workspace_edits(&edits) {
                     Ok(paths) => {
-                        wrote_ok = !paths.is_empty();
-                        for p in &paths {
-                            let name = self
-                                .fs
-                                .current_folder
-                                .as_ref()
-                                .and_then(|root| p.strip_prefix(root).ok())
-                                .unwrap_or(p.as_path());
-                            self.ai
-                                .ai_panel
-                                .add_assistant_message(format!("✓ 已写入 `{}`", name.display()));
+                        // 验证门：重读落盘结果校验编辑真正生效（不信任写入返回值）
+                        let mut verify_fail: Option<String> = None;
+                        for e in &edits {
+                            let full = self.resolve_edit_path(&e.path);
+                            if e.is_delete() {
+                                if full.exists() {
+                                    verify_fail =
+                                        Some(format!("`{}` 应删除但仍存在", e.path.display()));
+                                    break;
+                                }
+                            } else {
+                                let after = std::fs::read_to_string(&full).unwrap_or_default();
+                                if !crate::ai_panel::verify::verify_edit_applied(
+                                    &e.search, &e.replace, &after,
+                                ) {
+                                    verify_fail =
+                                        Some(format!("`{}` 编辑未生效", e.path.display()));
+                                    break;
+                                }
+                            }
                         }
-                        self.refresh_file_tree_light();
+                        match verify_fail {
+                            None => {
+                                wrote_ok = !paths.is_empty();
+                                for p in &paths {
+                                    let name = self
+                                        .fs
+                                        .current_folder
+                                        .as_ref()
+                                        .and_then(|root| p.strip_prefix(root).ok())
+                                        .unwrap_or(p.as_path());
+                                    self.ai.ai_panel.add_assistant_message(format!(
+                                        "✓ 已写入 `{}`",
+                                        name.display()
+                                    ));
+                                }
+                                self.refresh_file_tree_light();
+                            }
+                            Some(reason) => {
+                                // 回滚到任务前快照，避免半应用/损坏状态
+                                for cp in &checkpoints {
+                                    match cp.rollback_action() {
+                                        crate::ai_panel::verify::RollbackAction::Restore(
+                                            content,
+                                        ) => {
+                                            let _ = std::fs::write(&cp.path, content);
+                                        }
+                                        crate::ai_panel::verify::RollbackAction::Delete => {
+                                            let _ = std::fs::remove_file(&cp.path);
+                                        }
+                                    }
+                                }
+                                self.refresh_file_tree_light();
+                                error_msg =
+                                    Some(format!("验证失败：{}，已回滚到任务前状态", reason));
+                                self.ai.ai_panel.add_assistant_message(format!(
+                                    "↺ 验证失败：{}，已回滚",
+                                    reason
+                                ));
+                            }
+                        }
                     }
                     Err(e) => {
                         error_msg = Some(e.clone());
@@ -1901,14 +2568,16 @@ impl EditorState {
         // 记录成败并前进：只有真正写入成功才标记完成
         let mut failed_task_info: Option<(String, String)> = None;
         if let Some(p) = self.ai.ai_panel.agent_pipeline.as_mut() {
-            if let Some(task) = p.tasks.get(p.cursor) {
+            if let Some(target) = p.tasks.get(p.cursor).map(|t| t.target.clone()) {
                 if wrote_ok {
-                    p.created_files.push(task.target.clone());
+                    p.created_files.push(target);
+                    p.mark_current(crate::ai_panel::TaskStatus::Done);
                 } else {
-                    p.failed_files.push(task.target.clone());
+                    p.failed_files.push(target.clone());
+                    p.mark_current(crate::ai_panel::TaskStatus::Failed);
                     // 收集失败信息，稍后统一显示
                     if let Some(err) = error_msg {
-                        failed_task_info = Some((task.target.clone(), err));
+                        failed_task_info = Some((target, err));
                     }
                 }
             }
@@ -2073,4 +2742,109 @@ fn truncate_chars(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(max).collect();
     out.push_str("\n…（输出过长已截断）");
     out
+}
+
+/// 进程级符号索引缓存：`(工作区根目录, 构建时刻, 索引)`。
+/// 根目录变化或超过 TTL 时下次访问重建；AI 落盘编辑后最迟 TTL 秒内可见。
+static SYMBOL_INDEX_CACHE: std::sync::Mutex<
+    Option<(PathBuf, std::time::Instant, aether_symbol::SymbolIndex)>,
+> = std::sync::Mutex::new(None);
+
+/// 索引有效期（秒）：权衡"AI 连续多轮探查不重复建索引"与"看到最新代码"
+const SYMBOL_INDEX_TTL_SECS: u64 = 60;
+
+/// 以缓存索引执行查询闭包（首次/过期时在调用线程同步构建——纯 std 单遍遍历，
+/// 常规仓库毫秒级，无需语言服务器进程）。
+fn with_cached_symbol_index<T>(root: &Path, f: impl FnOnce(&aether_symbol::SymbolIndex) -> T) -> T {
+    let mut cache = SYMBOL_INDEX_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let stale = match cache.as_ref() {
+        Some((r, built, _)) => {
+            r.as_path() != root || built.elapsed().as_secs() > SYMBOL_INDEX_TTL_SECS
+        }
+        None => true,
+    };
+    if stale {
+        tracing::info!("构建工作区符号索引: {}", root.display());
+        let index = aether_symbol::SymbolIndex::build(root);
+        tracing::info!("符号索引构建完成: {} 个符号", index.len());
+        *cache = Some((root.to_path_buf(), std::time::Instant::now(), index));
+    }
+    let (_, _, index) = cache.as_ref().expect("索引刚构建，必定存在");
+    f(index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 写临时文件并返回路径（测试结束自动清理）
+    fn temp_file(name: &str, content: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("aether_test_{}_{}", std::process::id(), name));
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    fn spec(path: &str, start: Option<usize>, end: Option<usize>) -> crate::ai_panel::ReadSpec {
+        crate::ai_panel::ReadSpec {
+            path: path.to_string(),
+            start,
+            end,
+        }
+    }
+
+    #[test]
+    fn test_line_range_slice_with_line_numbers() {
+        let p = temp_file("range.txt", "l1\nl2\nl3\nl4\nl5\n");
+        let out =
+            EditorState::read_file_line_range(&p, &spec("range.txt", Some(2), Some(4))).unwrap();
+        let _ = std::fs::remove_file(&p);
+        assert!(out.contains("（第 2-4 行 / 共 5 行）"), "{}", out);
+        assert!(out.contains("2 | l2"), "{}", out);
+        assert!(out.contains("4 | l4"), "{}", out);
+        assert!(!out.contains("l1"), "{}", out);
+        assert!(!out.contains("l5"), "{}", out);
+    }
+
+    #[test]
+    fn test_line_range_open_ended() {
+        let p = temp_file("open.txt", "a\nb\nc\nd\n");
+        let out = EditorState::read_file_line_range(&p, &spec("open.txt", Some(3), None)).unwrap();
+        let _ = std::fs::remove_file(&p);
+        assert!(out.contains("（第 3-4 行 / 共 4 行）"), "{}", out);
+        assert!(out.contains("3 | c"), "{}", out);
+        assert!(out.contains("4 | d"), "{}", out);
+    }
+
+    #[test]
+    fn test_line_range_invalid() {
+        let p = temp_file("invalid.txt", "a\nb\n");
+        // 起始行超出总行数
+        assert!(
+            EditorState::read_file_line_range(&p, &spec("invalid.txt", Some(9), None)).is_err()
+        );
+        // 结束行小于起始行
+        assert!(
+            EditorState::read_file_line_range(&p, &spec("invalid.txt", Some(2), Some(1))).is_err()
+        );
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn test_line_range_truncation_hint() {
+        // 每行 100 字符 × 300 行，远超 8000 字符预算 → 截断并提示续读
+        let line = "x".repeat(100);
+        let content = std::iter::repeat(format!("{}\n", line))
+            .take(300)
+            .collect::<String>();
+        let p = temp_file("big.txt", &content);
+        let out =
+            EditorState::read_file_line_range(&p, &spec("big.txt", Some(1), Some(300))).unwrap();
+        let _ = std::fs::remove_file(&p);
+        assert!(out.contains("已截断"), "{}", &out[..200.min(out.len())]);
+        assert!(out.contains("AETHER_READ big.txt:"), "应含续读指令提示");
+        assert!(out.contains("共 300 行"), "{}", &out[..200.min(out.len())]);
+    }
 }

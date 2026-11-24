@@ -37,24 +37,11 @@ pub(super) fn open_in_new_tab(state: &mut EditorState, tab: Tab) {
     state.swap_tab_content(state.editor.tab_bar.active_tab);
     state.editor.is_selecting = false;
     state.dismiss_default_new_tab();
+    // 打开标签需保证右侧编辑区可见（智能体模式面板默认收起，否则新标签无视觉反馈）
+    state.ui.layout.ensure_right_panel_visible();
+    // emit_event(TabChanged) 内部已标记右面板（标签栏+内容）与状态栏脏区，
+    // 无需再标中间列（AI 面板与活动标签无关）
     state.emit_event(crate::events::EditorEvent::TabChanged);
-    // 标记标签栏和编辑器区域脏区，避免新标签打开时触发全窗口重绘
-    let editor_region = state.ui.layout.editor_region();
-    let tab_region = state.ui.layout.tab_bar_region(state.show_tab_bar());
-    state.win.dirty_tracker.mark_region(
-        editor_region.x,
-        editor_region.y,
-        editor_region.width,
-        editor_region.height,
-        crate::dirty_rect::DirtyRegionType::EditorContent,
-    );
-    state.win.dirty_tracker.mark_region(
-        tab_region.x,
-        tab_region.y,
-        tab_region.width,
-        tab_region.height,
-        crate::dirty_rect::DirtyRegionType::TabBar,
-    );
 }
 
 pub fn load_file(state: &mut EditorState, path: PathBuf) {
@@ -81,6 +68,8 @@ pub fn load_file(state: &mut EditorState, path: PathBuf) {
                 state.editor.content.markdown_preview = false;
                 state.editor.markdown_preview = false;
                 reset_editor_state(state);
+                // 复用空标签同样需保证右侧编辑区可见
+                state.ui.layout.ensure_right_panel_visible();
                 // REQ-P1-09: state.editor.content 即活动标签页状态，无需再手动同步到 Tab
                 state.ui.status_message = format!("已打开: {}", path.display());
             } else {
@@ -146,6 +135,7 @@ pub(super) fn load_image_file(state: &mut EditorState, path: PathBuf) {
         state.editor.content.buffer = PieceTable::from_string(content);
         state.editor.content.image_data = image_data;
         reset_editor_state(state);
+        state.ui.layout.ensure_right_panel_visible();
         state.ui.status_message = format!("已打开图片: {}", path.display());
     } else {
         let mut tab_content = TabContent::with_loaded_buffer(
@@ -174,6 +164,7 @@ pub(super) fn show_unsupported_file(state: &mut EditorState, path: &Path) {
         state.editor.content.language = Language::PlainText;
         state.editor.content.buffer = PieceTable::from_string(message);
         reset_editor_state(state);
+        state.ui.layout.ensure_right_panel_visible();
         state.ui.status_message = format!("不支持的文件格式: .{}", ext);
     } else {
         let tab = Tab::File(TabContent::with_loaded_buffer(
@@ -257,33 +248,6 @@ where
 /// 保存文件，返回是否成功
 pub fn save_file(state: &mut EditorState) -> bool {
     if let Some(path) = &state.editor.content.file_path.clone() {
-        // 处理远程文件保存
-        if let Some(remote_path) = path.to_str().and_then(|s| s.strip_prefix("remote:")) {
-            // 远程路径仍需 &[u8]，这里不得不做一次全量拷贝
-            let mut buf: Vec<u8> = Vec::with_capacity(state.editor.content.buffer.len_bytes());
-            if let Err(e) = state.editor.content.buffer.write_to(&mut buf) {
-                state.ui.status_message = format!("保存失败: {}", e);
-                return false;
-            }
-            if let Some(session) = &state.remote.session {
-                match session.write_remote_file(remote_path, &buf) {
-                    Ok(()) => {
-                        state.editor.content.is_dirty = false;
-                        state.ui.status_message = format!("已保存到远程: {}", remote_path);
-                        // 同步自动保存状态（去重基线 / 冲突复位 / 停止防抖）
-                        state.note_save_succeeded();
-                        return true;
-                    }
-                    Err(e) => {
-                        state.ui.status_message = format!("保存远程文件失败: {}", e);
-                        return false;
-                    }
-                }
-            } else {
-                state.ui.status_message = "远程会话未连接".to_string();
-                return false;
-            }
-        }
         // 本地文件保存：直接将 buffer 流式写入临时文件，避免 get_all_text 的
         // 全量 String 分配和 UTF-8 lossy 转换。对未编辑的 mmap 大文件尤其显著。
         // P4-2: 仍保持原子写入语义（临时文件 + fsync + rename）。
@@ -325,6 +289,7 @@ pub fn save_as(state: &mut EditorState, path: PathBuf) -> bool {
 }
 
 pub fn open_folder(state: &mut EditorState, path: PathBuf) {
+    let t_open = std::time::Instant::now();
     // 异步扫描：先快速同步验证路径可读，再启动后台线程扫描根层
     // 同步预检避免无效路径白白启动线程
     if let Err(e) = std::fs::read_dir(&path) {
@@ -352,13 +317,25 @@ pub fn open_folder(state: &mut EditorState, path: PathBuf) {
     if let Some(warm) = state.ai.ai_panel.warm_data_store.as_ref() {
         warm.set_workspace(&path);
     }
+    // 项目记忆按工作区隔离：切换后记忆页缓存需重建
+    state.ui.settings_panel.memory_dirty = true;
+    // 侧栏「其它工作区会话」缓存失效：切换后需要按新归属重建
+    state.ai.sidebar_ws_cache_at = None;
     // 同步终端工作目录到新工作区
     state.terminal.terminal_panel.cwd = path.to_string_lossy().to_string();
-    // 立即持久化 last_workspace（读盘改写，避免其它窗口的陈旧副本覆写）
-    state.ui.app_settings.ui.last_workspace = state.fs.current_folder.clone();
-    if let Err(e) = aether_shared::settings::AppSettings::persist_last_workspace(Some(&path)) {
-        eprintln!("警告: 保存 last_workspace 失败: {}", e);
+    // 立即持久化 last_workspace（读盘改写，避免其它窗口的陈旧副本覆写）。
+    // 启动恢复上次工作区时磁盘值与目标一致，跳过整份 settings.json 的
+    // 读改写（原子写 + fsync），消除启动路径上的一次磁盘往返。
+    if state.ui.app_settings.ui.last_workspace.as_deref() != Some(path.as_path()) {
+        state.ui.app_settings.ui.last_workspace = state.fs.current_folder.clone();
+        if let Err(e) = aether_shared::settings::AppSettings::persist_last_workspace(Some(&path)) {
+            eprintln!("警告: 保存 last_workspace 失败: {}", e);
+        }
     }
+    tracing::info!(
+        ms = t_open.elapsed().as_millis() as u64,
+        "启动耗时：open_folder 持久化 last_workspace"
+    );
     state.ui.status_message = format!("正在扫描: {}...", path.display());
     state.ui.recent_projects.add(&path);
 
@@ -366,6 +343,10 @@ pub fn open_folder(state: &mut EditorState, path: PathBuf) {
     // （保存已在上面完成，此处仅加载）
     let workspace_hash = workspace_path_hash(&path);
     load_workspace_ai_session(state, &workspace_hash);
+    tracing::info!(
+        ms = t_open.elapsed().as_millis() as u64,
+        "启动耗时：open_folder 加载工作区 AI 会话"
+    );
 
     state.fs.file_tree = Some(FileTree::new());
     // 重置文件树缓存与交互状态，防止旧索引在新树中越界/错位
@@ -389,6 +370,10 @@ pub fn open_folder(state: &mut EditorState, path: PathBuf) {
     state.lsp.lsp.completion_items.clear();
     state.lsp.lsp.completion_visible = false;
     state.lsp.lsp.init(&path);
+    tracing::info!(
+        ms = t_open.elapsed().as_millis() as u64,
+        "启动耗时：open_folder 初始化 LSP"
+    );
 
     let hwnd = state.win.hwnd;
     let path_clone = path.clone();
@@ -476,7 +461,6 @@ pub(crate) fn on_folder_scan_batch_ref(state: &mut EditorState, batch: &ScannedB
                 state.ui.status_bar.update_git_branch(None);
             }
             state.ui.status_message = format!("已打开文件夹: {}", folder.display());
-            state.ui.welcome_focus_action = None;
             // 自动打开 README（若存在）
             try_open_readme(state, &folder);
         }
@@ -530,6 +514,7 @@ pub fn close_workspace(state: &mut EditorState) {
     if let Some(warm) = state.ai.ai_panel.warm_data_store.as_ref() {
         warm.set_workspace(std::path::Path::new(""));
     }
+    state.ui.settings_panel.memory_dirty = true;
 
     state.fs.file_tree = None;
     state.fs.current_folder = None;
@@ -562,7 +547,6 @@ pub fn close_workspace(state: &mut EditorState) {
     state.fs.file_tree_rows_dirty = true;
     state.fs.file_tree_rows_tree_len = 0;
     state.fs.sidebar_scroll_y = 0.0;
-    state.ui.welcome_focus_action = None;
     // 释放旧工作区的 LSP 诊断与补全缓存（否则随 Url key 永久驻留）
     state.lsp.lsp.diagnostics.clear();
     state.lsp.lsp.completion_items.clear();

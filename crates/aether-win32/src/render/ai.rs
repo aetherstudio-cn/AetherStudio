@@ -19,9 +19,13 @@ impl EditorState {
             // 局部重绘自包含：脏矩形裁剪帧跳过全窗口 clear（render/mod.rs），
             // 若此处不先铺面板背景，流式生成期间新文字会叠加在上一帧残影上，
             // 抗锯齿边缘逐帧累积导致文字变暗/闪烁（全窗口帧与裁剪帧交替时尤为明显）。
-            self.win
-                .render_ctx
-                .fill_rect(x, y, width, height, &self.win.theme.editor_bg);
+            let panel_rect = D2D_RECT_F {
+                left: x,
+                top: y,
+                right: x + width,
+                bottom: y + height,
+            };
+            app_theme::fill_app_gradient(target, &panel_rect, self.win.window_height as f32);
 
             // 文件卡片命中区域每帧重建（P0 可展开预览）；
             // 放在函数开头，历史视图/早退分支下也不会残留旧区域。
@@ -80,7 +84,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.9, 0.9, 0.9, 1.0))
+                .get_brush(target, &app_theme::text_primary())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -89,7 +93,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.52, 0.56, 0.62, 1.0))
+                .get_brush(target, &app_theme::text_secondary())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -98,7 +102,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.13, 0.19, 0.28, 1.0))
+                .get_brush(target, &app_theme::accent_soft_hover())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -107,7 +111,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.16, 0.17, 0.20, 1.0))
+                .get_brush(target, &app_theme::surface())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -116,7 +120,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.13, 0.14, 0.16, 1.0))
+                .get_brush(target, &app_theme::surface_alt())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -125,7 +129,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.11, 0.12, 0.14, 1.0))
+                .get_brush(target, &app_theme::input_bg())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -134,7 +138,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.22, 0.24, 0.28, 1.0))
+                .get_brush(target, &app_theme::border())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -143,7 +147,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
+                .get_brush(target, &app_theme::accent())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -152,7 +156,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.30, 0.78, 0.42, 1.0))
+                .get_brush(target, &app_theme::accent())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -161,7 +165,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.9, 0.7, 0.2, 1.0))
+                .get_brush(target, &app_theme::warning())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -170,7 +174,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.08, 0.08, 0.09, 1.0))
+                .get_brush(target, &app_theme::surface_alt())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -179,7 +183,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .brush_cache
-                .get_brush(target, &color_f(0.85, 0.85, 0.85, 1.0))
+                .get_brush(target, &app_theme::text_primary())
             {
                 Ok(b) => b,
                 Err(_) => return,
@@ -201,204 +205,13 @@ impl EditorState {
             // 清空命中区域（每帧重建；必须在注册任何命中区之前调用）
             self.ai.ai_panel.clear_hit_regions();
 
-            // ===== 对话标签条（多会话）：仅开发者模式渲染，智能体模式移至左侧边栏 =====
-            if !self.editor_mode.is_agent() {
-                let tab_h = 24.0f32;
-                let tab_y = cy;
-                let gap = 4.0f32;
-                let tab_w = 92.0f32;
-                let close_w = 16.0f32;
-                // 右侧预留：加号图标 + 历史图标（各 22px + 2px 间距）
-                let right_reserve = 22.0f32 * 2.0 + 2.0;
-                let strip_right = x + width - margin - right_reserve;
-                let mut tx = x + margin;
-                let n = self.ai.ai_panel.conversations.len();
-                for i in 0..n {
-                    if tx + tab_w > strip_right {
-                        break; // 溢出裁剪：其余会话经"历史"访问
-                    }
-                    let is_active = i == self.ai.ai_panel.active;
-                    let generating = self.ai.ai_panel.conv_is_generating(i);
-                    let title = self.ai.ai_panel.conv_title(i).to_string();
-                    let tab_rect = D2D_RECT_F {
-                        left: tx,
-                        top: tab_y,
-                        right: tx + tab_w,
-                        bottom: tab_y + tab_h,
-                    };
-                    let bg = if is_active {
-                        color_f(0.18, 0.30, 0.48, 1.0)
-                    } else if !self.ai.ai_panel.history_open
-                        && self.ai.ai_panel.hover_tab == Some(i)
-                    {
-                        color_f(0.22, 0.24, 0.29, 1.0)
-                    } else {
-                        color_f(0.16, 0.17, 0.20, 1.0)
-                    };
-                    if let Ok(b) = self.win.render_ctx.brush_cache.get_brush(target, &bg) {
-                        fill_round_rect(target, &tab_rect, 5.0, &b);
-                    }
-                    // 激活会话标签：底部 2px 强调条，明确当前会话归属
-                    if is_active {
-                        if let Ok(ab) = self
-                            .win
-                            .render_ctx
-                            .brush_cache
-                            .get_brush(target, &color_f(0.30, 0.62, 1.0, 1.0))
-                        {
-                            target.FillRectangle(
-                                &D2D_RECT_F {
-                                    left: tx + 7.0,
-                                    top: tab_y + tab_h - 2.0,
-                                    right: tx + tab_w - 7.0,
-                                    bottom: tab_y + tab_h,
-                                },
-                                &ab,
-                            );
-                        }
-                    }
-                    let mut title_left = tx + 8.0;
-                    if generating {
-                        if let Ok(gb) = self
-                            .win
-                            .render_ctx
-                            .brush_cache
-                            .get_brush(target, &color_f(0.95, 0.75, 0.2, 1.0))
-                        {
-                            let dot = D2D_RECT_F {
-                                left: tx + 6.0,
-                                top: tab_y + tab_h / 2.0 - 3.0,
-                                right: tx + 12.0,
-                                bottom: tab_y + tab_h / 2.0 + 3.0,
-                            };
-                            target.FillRectangle(&dot, &gb);
-                        }
-                        title_left = tx + 16.0;
-                    }
-                    let title_rect = D2D_RECT_F {
-                        left: title_left,
-                        top: tab_y + 3.0,
-                        right: tx + tab_w - close_w - 2.0,
-                        bottom: tab_y + tab_h - 2.0,
-                    };
-                    // 显示层缩写：标题超出可用宽度时截断加 "…"，避免溢出到关闭按钮
-                    let title = self
-                        .win
-                        .render_ctx
-                        .text_format_cache
-                        .truncate_with_ellipsis(
-                            &title,
-                            10.0,
-                            DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
-                            title_rect.right - title_rect.left,
-                        );
-                    let tw: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-                    let tcol: &ID2D1SolidColorBrush =
-                        if is_active { &white_brush } else { &dim_brush };
-                    target.DrawText(
-                        &tw,
-                        &small_format,
-                        &title_rect,
-                        tcol,
-                        D2D1_DRAW_TEXT_OPTIONS_NONE,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                    );
-                    let close_x = tx + tab_w - close_w;
-                    let close_rect = D2D_RECT_F {
-                        left: close_x,
-                        top: tab_y + 3.0,
-                        right: tx + tab_w - 2.0,
-                        bottom: tab_y + tab_h - 2.0,
-                    };
-                    let xw: Vec<u16> = "×".encode_utf16().chain(Some(0)).collect();
-                    target.DrawText(
-                        &xw,
-                        &small_format,
-                        &close_rect,
-                        &dim_brush,
-                        D2D1_DRAW_TEXT_OPTIONS_NONE,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                    );
-                    self.ai
-                        .ai_panel
-                        .tab_regions
-                        .push((i, tx, tab_y, tab_w - close_w, tab_h));
-                    self.ai
-                        .ai_panel
-                        .tab_close_regions
-                        .push((i, close_x, tab_y, close_w, tab_h));
-                    tx += tab_w + gap;
-                }
-                // 右侧图标区域：竖线分隔 + Plus 图标 + Clock 图标（靠右对齐）
-                let icon_btn = 22.0f32;
-                let icon_gap = 4.0f32;
-                let icon_size = 14.0f32;
-                let icon_pad = (icon_btn - icon_size) / 2.0;
-                let icons_right = x + width - margin;
-                let icons_w = icon_btn * 2.0 + icon_gap;
-                let icons_left = icons_right - icons_w;
-
-                // 竖线分隔（图标区与标签区之间）
-                let sep_x = icons_left - 6.0;
-                let sep_line = D2D_RECT_F {
-                    left: sep_x,
-                    top: tab_y + 4.0,
-                    right: sep_x + 1.0,
-                    bottom: tab_y + tab_h - 4.0,
-                };
-                target.FillRectangle(&sep_line, &sep_brush);
-
-                // Plus 图标（新建对话）
-                let plus_x = icons_left;
-                self.ui.icons.draw(
-                    target,
-                    crate::icons::IconKind::Plus,
-                    plus_x + icon_pad,
-                    tab_y + (tab_h - icon_size) / 2.0,
-                    icon_size,
-                    icon_size,
-                    &dim_brush,
-                );
-                self.ai.ai_panel.new_tab_region = Some((plus_x, tab_y, icon_btn, tab_h));
-
-                // Clock 图标（历史记录）
-                let hb_x = icons_left + icon_btn + icon_gap;
-                self.ui.icons.draw(
-                    target,
-                    crate::icons::IconKind::Clock,
-                    hb_x + icon_pad,
-                    tab_y + (tab_h - icon_size) / 2.0,
-                    icon_size,
-                    icon_size,
-                    &dim_brush,
-                );
-                self.ai.ai_panel.history_button_region = Some((hb_x, tab_y, icon_btn, tab_h));
-                crate::hit_test::register_hit_region(
-                    "ai:history_button",
-                    hb_x,
-                    tab_y,
-                    icon_btn,
-                    tab_h,
-                );
-
-                cy += tab_h + 8.0;
-                let sep2 = D2D_RECT_F {
-                    left: x + margin,
-                    top: cy,
-                    right: x + width - margin,
-                    bottom: cy + 1.0,
-                };
-                target.FillRectangle(&sep2, &sep_brush);
-                cy += 8.0;
-            }
-
             // ===== 策略库已迁移到设置面板，此处不再渲染 =====
 
             // ===== 欢迎页/空工作区提示 =====
             let has_workspace =
                 self.fs.current_folder.is_some() || self.editor.content.file_path.is_some();
             if !has_workspace {
-                let hint_bg_color = color_f(0.15, 0.15, 0.17, 1.0);
+                let hint_bg_color = app_theme::accent_soft();
                 let hint_bg_brush = match self
                     .win
                     .render_ctx
@@ -450,7 +263,7 @@ impl EditorState {
                     .win
                     .render_ctx
                     .brush_cache
-                    .get_brush(target, &color_f(0.0, 0.47, 0.83, 1.0))
+                    .get_brush(target, &app_theme::accent())
                 {
                     Ok(b) => b,
                     Err(_) => return,
@@ -520,6 +333,9 @@ impl EditorState {
                 bottom: chat_bottom,
             };
             target.PushAxisAlignedClip(&chat_clip_rect, D2D1_ANTIALIAS_MODE_ALIASED);
+
+            // 空会话引导卡（"你好，我是 AI 助手" + 快捷提示 chips）已移除：
+            // 无消息时聊天区保持空白，引导由底部输入框承担。
 
             for (msg_index, msg) in self.ai.ai_panel.messages.iter().enumerate() {
                 if msg.role == crate::ai_panel::AiRole::System {
@@ -611,7 +427,7 @@ impl EditorState {
                                         .win
                                         .render_ctx
                                         .brush_cache
-                                        .get_brush(target, &color_f(0.14, 0.13, 0.18, 1.0))
+                                        .get_brush(target, &app_theme::accent_soft())
                                     {
                                         fill_round_rect(
                                             target,
@@ -645,7 +461,7 @@ impl EditorState {
                                         .win
                                         .render_ctx
                                         .brush_cache
-                                        .get_brush(target, &color_f(0.66, 0.68, 0.74, 1.0))
+                                        .get_brush(target, &app_theme::text_secondary())
                                     {
                                         let origin = windows::Win32::Graphics::Direct2D::Common::D2D_POINT_2F {
                                             x: content_left + 14.0,
@@ -692,14 +508,22 @@ impl EditorState {
                             // 按 ``` 代码围栏拆分为普通段 / 代码段
                             let mut in_code = false;
                             let mut buf: Vec<&str> = Vec::new();
+                            let mut current_lang: Option<String> = None;
                             for line in t.lines() {
                                 if line.trim_start().starts_with("```") {
                                     if !buf.is_empty() {
                                         render_items.push(AiRenderItem::Seg {
                                             is_code: in_code,
                                             text: buf.join("\n"),
+                                            lang: current_lang.clone(),
                                         });
                                         buf.clear();
+                                    }
+                                    // 提取语言标识
+                                    if !in_code {
+                                        current_lang = crate::ai_panel::syntax_highlight::extract_language_from_fence(line);
+                                    } else {
+                                        current_lang = None;
                                     }
                                     in_code = !in_code;
                                     continue;
@@ -710,6 +534,7 @@ impl EditorState {
                                 render_items.push(AiRenderItem::Seg {
                                     is_code: in_code,
                                     text: buf.join("\n"),
+                                    lang: current_lang,
                                 });
                             }
                         }
@@ -735,6 +560,17 @@ impl EditorState {
                         crate::ai_panel::AgentDisplayBlock::List { path } => {
                             render_items.push(AiRenderItem::List { path: path.clone() });
                         }
+                        crate::ai_panel::AgentDisplayBlock::Symbol { name } => {
+                            render_items.push(AiRenderItem::Symbol { name: name.clone() });
+                        }
+                        crate::ai_panel::AgentDisplayBlock::Open { query } => {
+                            render_items.push(AiRenderItem::Open {
+                                query: query.clone(),
+                            });
+                        }
+                        crate::ai_panel::AgentDisplayBlock::ReadPage { url } => {
+                            render_items.push(AiRenderItem::ReadPage { url: url.clone() });
+                        }
                         crate::ai_panel::AgentDisplayBlock::Incomplete { path } => {
                             // 流式生成中的最后一条消息：未闭合块是正常中间态（正在生成），
                             // 只有生成结束后仍未闭合才是真正的"生成中断"。
@@ -758,6 +594,7 @@ impl EditorState {
                     render_items.push(AiRenderItem::Seg {
                         is_code: false,
                         text: String::new(),
+                        lang: None,
                     });
                 }
 
@@ -793,8 +630,12 @@ impl EditorState {
                 let mut ask_block_seq = 0usize;
                 for item in &render_items {
                     // AI 文件/命令操作 → 渲染为清晰的操作卡片；其余按文本/代码段渲染
-                    let (is_code, seg_text) = match item {
-                        AiRenderItem::Seg { is_code, text } => (is_code, text),
+                    let (is_code, seg_text, seg_lang) = match item {
+                        AiRenderItem::Seg {
+                            is_code,
+                            text,
+                            lang,
+                        } => (is_code, text, lang),
                         // 询问卡片：问题文本 + 选项按钮 + 自定义回答入口
                         AiRenderItem::Ask { question, options } => {
                             let seq = ask_block_seq;
@@ -818,7 +659,7 @@ impl EditorState {
                                         .win
                                         .render_ctx
                                         .brush_cache
-                                        .get_brush(target, &color_f(0.14, 0.15, 0.19, 1.0))
+                                        .get_brush(target, &app_theme::accent_soft())
                                     {
                                         fill_round_rect(
                                             target,
@@ -836,7 +677,7 @@ impl EditorState {
                                         .win
                                         .render_ctx
                                         .brush_cache
-                                        .get_brush(target, &color_f(0.62, 0.72, 0.64, 1.0))
+                                        .get_brush(target, &app_theme::accent_text())
                                     {
                                         let sw: Vec<u16> =
                                             summary.encode_utf16().chain(Some(0)).collect();
@@ -894,7 +735,7 @@ impl EditorState {
                                     .win
                                     .render_ctx
                                     .brush_cache
-                                    .get_brush(target, &color_f(0.15, 0.15, 0.20, 1.0))
+                                    .get_brush(target, &app_theme::surface_alt())
                                 {
                                     fill_round_rect(
                                         target,
@@ -956,7 +797,7 @@ impl EditorState {
                                     .win
                                     .render_ctx
                                     .brush_cache
-                                    .get_brush(target, &color_f(0.88, 0.88, 0.92, 1.0))
+                                    .get_brush(target, &app_theme::text_primary())
                                 {
                                     let qw: Vec<u16> =
                                         question.encode_utf16().chain(Some(0)).collect();
@@ -980,9 +821,9 @@ impl EditorState {
                                     let oy = opts_top + oi as f32 * (opt_h + opt_gap);
                                     let selected = answered.as_deref() == Some(opt.as_str());
                                     let bgc = if selected {
-                                        color_f(0.28, 0.38, 0.58, 1.0)
+                                        app_theme::accent_soft_hover()
                                     } else {
-                                        color_f(0.19, 0.20, 0.26, 1.0)
+                                        app_theme::surface_alt()
                                     };
                                     if let Ok(ob) =
                                         self.win.render_ctx.brush_cache.get_brush(target, &bgc)
@@ -1005,9 +846,9 @@ impl EditorState {
                                         opt.clone()
                                     };
                                     let tc = if selected {
-                                        color_f(0.95, 0.97, 1.0, 1.0)
+                                        app_theme::accent_text()
                                     } else {
-                                        color_f(0.78, 0.80, 0.85, 1.0)
+                                        app_theme::text_secondary()
                                     };
                                     if let Ok(tb) =
                                         self.win.render_ctx.brush_cache.get_brush(target, &tc)
@@ -1047,9 +888,9 @@ impl EditorState {
                                         .iter()
                                         .any(|o| Some(o.as_str()) == answered.as_deref());
                                 let cbgc = if custom_selected {
-                                    color_f(0.28, 0.38, 0.58, 1.0)
+                                    app_theme::accent_soft_hover()
                                 } else {
-                                    color_f(0.16, 0.17, 0.21, 1.0)
+                                    app_theme::surface_alt()
                                 };
                                 if let Ok(cb) =
                                     self.win.render_ctx.brush_cache.get_brush(target, &cbgc)
@@ -1077,9 +918,9 @@ impl EditorState {
                                     "✎ 自定义回答…".to_string()
                                 };
                                 let ctc = if awaiting_custom || custom_selected {
-                                    color_f(0.95, 0.97, 1.0, 1.0)
+                                    app_theme::accent_text()
                                 } else {
-                                    color_f(0.62, 0.64, 0.70, 1.0)
+                                    app_theme::text_secondary()
                                 };
                                 if let Ok(ctb) =
                                     self.win.render_ctx.brush_cache.get_brush(target, &ctc)
@@ -1188,7 +1029,7 @@ impl EditorState {
                                     .win
                                     .render_ctx
                                     .brush_cache
-                                    .get_brush(target, &color_f(0.16, 0.17, 0.20, 1.0))
+                                    .get_brush(target, &app_theme::surface())
                                 {
                                     fill_round_rect(
                                         target,
@@ -1226,7 +1067,7 @@ impl EditorState {
                                     .win
                                     .render_ctx
                                     .brush_cache
-                                    .get_brush(target, &color_f(0.72, 0.76, 0.82, 1.0))
+                                    .get_brush(target, &app_theme::text_secondary())
                                 {
                                     self.ui.icons.draw(
                                         target,
@@ -1243,7 +1084,7 @@ impl EditorState {
                                     .win
                                     .render_ctx
                                     .brush_cache
-                                    .get_brush(target, &color_f(0.85, 0.87, 0.90, 1.0))
+                                    .get_brush(target, &app_theme::text_primary())
                                 {
                                     let nw: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
                                     target.DrawText(
@@ -1362,7 +1203,7 @@ impl EditorState {
                                         .win
                                         .render_ctx
                                         .brush_cache
-                                        .get_brush(target, &color_f(0.60, 0.62, 0.66, 1.0))
+                                        .get_brush(target, &app_theme::text_secondary())
                                     {
                                         let ind = if expanded { "v" } else { ">" };
                                         let iw: Vec<u16> =
@@ -1394,7 +1235,7 @@ impl EditorState {
                                                     if let Ok(mb) =
                                                         self.win.render_ctx.brush_cache.get_brush(
                                                             target,
-                                                            &color_f(0.55, 0.57, 0.60, 1.0),
+                                                            &app_theme::text_secondary(),
                                                         )
                                                     {
                                                         let mw: Vec<u16> = format!(
@@ -1432,7 +1273,7 @@ impl EditorState {
                                                         Some(color_f(0.85, 0.35, 0.35, 0.25)),
                                                     ),
                                                     crate::ai_panel::diff::DiffKind::Same => {
-                                                        (" ", color_f(0.62, 0.64, 0.68, 1.0), None)
+                                                        (" ", app_theme::text_secondary(), None)
                                                     }
                                                 };
                                                 if let Some(bg) = bg_color {
@@ -1504,7 +1345,7 @@ impl EditorState {
                                                 .win
                                                 .render_ctx
                                                 .brush_cache
-                                                .get_brush(target, &color_f(0.72, 0.76, 0.70, 1.0))
+                                                .get_brush(target, &app_theme::text_secondary())
                                             {
                                                 let cw: Vec<u16> =
                                                     shown.encode_utf16().chain(Some(0)).collect();
@@ -1555,7 +1396,7 @@ impl EditorState {
                                     .win
                                     .render_ctx
                                     .brush_cache
-                                    .get_brush(target, &color_f(0.16, 0.17, 0.20, 1.0))
+                                    .get_brush(target, &app_theme::surface())
                                 {
                                     fill_round_rect(
                                         target,
@@ -1616,7 +1457,7 @@ impl EditorState {
                                     .win
                                     .render_ctx
                                     .brush_cache
-                                    .get_brush(target, &color_f(0.78, 0.80, 0.84, 1.0))
+                                    .get_brush(target, &app_theme::text_secondary())
                                 {
                                     let dw: Vec<u16> =
                                         detail.encode_utf16().chain(Some(0)).collect();
@@ -1641,26 +1482,32 @@ impl EditorState {
                     };
                     let inner_w = if *is_code {
                         (content_right - content_left - seg_pad * 2.0 - 8.0).max(20.0)
+                    } else if is_user {
+                        // 用户气泡最大宽度约内容区 72%，右对齐、随内容收缩（参考 Qoder）
+                        ((content_right - content_left) * 0.72 - seg_pad * 2.0).max(40.0)
                     } else {
                         (content_right - content_left - seg_pad * 2.0).max(20.0)
                     };
 
-                    // 普通段解析轻量 Markdown；代码段保持原文
+                    // 普通段解析轻量 Markdown；代码段应用语法高亮
                     #[allow(clippy::type_complexity)]
-                    let (layout_wide, bolds, headings, codes): (
+                    let (layout_wide, bolds, headings, codes, highlight_ranges): (
                         Vec<u16>,
                         Vec<(u32, u32)>,
                         Vec<(u32, u32, f32)>,
                         Vec<(u32, u32)>,
+                        Vec<crate::ai_panel::syntax_highlight::HighlightRange>,
                     ) = if *is_code {
-                        (
-                            seg_text.encode_utf16().collect(),
-                            Vec::new(),
-                            Vec::new(),
-                            Vec::new(),
-                        )
+                        // 代码段：应用语法高亮
+                        let (text, ranges) = crate::ai_panel::syntax_highlight::highlight_code_block(
+                            seg_text,
+                            seg_lang.as_deref(),
+                        );
+                        (text, Vec::new(), Vec::new(), Vec::new(), ranges)
                     } else {
-                        crate::ai_panel::parse_markdown_segment(seg_text)
+                        // 普通段：解析轻量 Markdown
+                        let (text, b, h, c) = crate::ai_panel::parse_markdown_segment(seg_text);
+                        (text, b, h, c, Vec::new())
                     };
                     let layout =
                         match dwrite.CreateTextLayout(&layout_wide, &msg_format, inner_w, 100000.0)
@@ -1712,6 +1559,36 @@ impl EditorState {
                                 link_ranges.push((cs, cl, tok));
                             }
                         }
+                    } else {
+                        // 代码段：应用语法高亮样式
+                        for range in &highlight_ranges {
+                            let dwrite_range =
+                                windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_RANGE {
+                                    startPosition: range.start,
+                                    length: range.len,
+                                };
+
+                            // 应用前景色
+                            let (r, g, b, a) = range.fg_color;
+                            if let Ok(brush) = self
+                                .win
+                                .render_ctx
+                                .brush_cache
+                                .get_brush(target, &color_f(r, g, b, a))
+                            {
+                                let _ = layout.SetDrawingEffect(&brush, dwrite_range);
+                            }
+
+                            // 应用粗体
+                            if range.bold {
+                                let _ = layout.SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, dwrite_range);
+                            }
+
+                            // 应用斜体
+                            if range.italic {
+                                let _ = layout.SetFontStyle(DWRITE_FONT_STYLE_ITALIC, dwrite_range);
+                            }
+                        }
                     }
                     let mut m =
                         windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_METRICS::default();
@@ -1730,6 +1607,10 @@ impl EditorState {
 
                     let seg_left = if *is_code {
                         content_left + 4.0
+                    } else if is_user {
+                        // 右对齐气泡：宽度随文本内容收缩，最大不超过 inner_w + 内边距
+                        let bubble_w = (m.width + seg_pad * 2.0).min(inner_w + seg_pad * 2.0);
+                        content_right - bubble_w
                     } else {
                         content_left
                     };
@@ -1756,7 +1637,8 @@ impl EditorState {
                             right: content_right,
                             bottom: msg_y + seg_h,
                         };
-                        fill_round_rect(target, &seg_rect, 6.0, seg_bg);
+                        let seg_radius = if is_user { 12.0 } else { 6.0 };
+                        fill_round_rect(target, &seg_rect, seg_radius, seg_bg);
 
                         // 待确认消息添加左侧黄色竖线标识
                         if is_pending_confirmation {
@@ -1864,7 +1746,7 @@ impl EditorState {
                             right: save_btn_x + save_btn_w,
                             bottom: save_btn_y + save_btn_h,
                         };
-                        let save_bg = color_f(0.2, 0.5, 0.3, 1.0);
+                        let save_bg = app_theme::accent();
                         if let Ok(save_brush) =
                             self.win.render_ctx.brush_cache.get_brush(target, &save_bg)
                         {
@@ -1906,7 +1788,7 @@ impl EditorState {
                             .win
                             .render_ctx
                             .brush_cache
-                            .get_brush(target, &color_f(0.45, 0.72, 1.0, 0.9))
+                            .get_brush(target, &app_theme::accent_border())
                         {
                             let _ = target.DrawRectangle(
                                 &D2D_RECT_F {
@@ -1946,7 +1828,7 @@ impl EditorState {
                     .win
                     .render_ctx
                     .brush_cache
-                    .get_brush(target, &color_f(0.45, 0.47, 0.53, 0.80))
+                    .get_brush(target, &app_theme::border_strong())
                 {
                     fill_round_rect(target, &thumb_rect, 2.0, &sb);
                 }
@@ -2058,7 +1940,7 @@ impl EditorState {
                     .win
                     .render_ctx
                     .brush_cache
-                    .get_brush(target, &color_f(0.20, 0.60, 0.86, 1.0))
+                    .get_brush(target, &app_theme::accent())
                 {
                     Ok(b) => b,
                     Err(_) => return,
@@ -2095,9 +1977,9 @@ impl EditorState {
                     bottom: apply_y + apply_btn_h,
                 };
                 let apply_bg_color = if self.ai.ai_panel.hover_apply_button {
-                    color_f(0.0, 0.55, 0.95, 1.0)
+                    app_theme::accent_hover()
                 } else {
-                    color_f(0.0, 0.47, 0.83, 1.0)
+                    app_theme::accent()
                 };
                 let apply_bg_brush = match self
                     .win
@@ -2142,7 +2024,7 @@ impl EditorState {
                     .win
                     .render_ctx
                     .brush_cache
-                    .get_brush(target, &color_f(0.62, 0.24, 0.24, 1.0))
+                    .get_brush(target, &app_theme::danger())
                 {
                     fill_round_rect(target, &stop_rect, 5.0, &b);
                 }
@@ -2221,14 +2103,28 @@ impl EditorState {
                 right: x + width - margin,
                 bottom: input_y + input_area_h,
             };
-            fill_round_rect(target, &card_rect, 8.0, &input_bg_brush);
+            fill_round_rect(target, &card_rect, 12.0, &input_bg_brush);
 
-            // 卡片描边：聚焦时切换为强调色，提供明确的焦点视觉反馈
-            let card_border_color = if self.ai.ai_panel.input_focused {
-                color_f(0.0, 0.47, 0.83, 1.0)
-            } else {
-                color_f(0.24, 0.26, 0.30, 1.0)
-            };
+            // 聚焦环：微动效进度淡入淡出（聚焦状态变化时由渲染侧启动 UI_ANIM 定时器）
+            let focused = self.ai.ai_panel.input_focused;
+            if self.ui.hover_anim.ai_focus_seen != focused {
+                self.ui.hover_anim.ai_focus_seen = focused;
+                let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                    self.win.hwnd,
+                    crate::window::UI_ANIM_TIMER_ID,
+                    crate::window::UI_ANIM_INTERVAL_MS,
+                    None,
+                );
+            }
+            let f = crate::ui_anim::quantize(self.ui.hover_anim.ai_focus);
+            let border_base = app_theme::border();
+            let border_focus = app_theme::accent_border();
+            let card_border_color = color_f(
+                border_base.r + (border_focus.r - border_base.r) * f,
+                border_base.g + (border_focus.g - border_base.g) * f,
+                border_base.b + (border_focus.b - border_base.b) * f,
+                1.0,
+            );
             let card_border_brush = match self
                 .win
                 .render_ctx
@@ -2240,10 +2136,33 @@ impl EditorState {
             };
             let card_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
                 rect: card_rect,
-                radiusX: 8.0,
-                radiusY: 8.0,
+                radiusX: 12.0,
+                radiusY: 12.0,
             };
             target.DrawRoundedRectangle(&card_rounded, &card_border_brush, 1.0, None);
+            // 聚焦外发光：柔和光晕环强化焦点反馈
+            if f > 0.0 {
+                let mut glow_color = app_theme::accent_border();
+                glow_color.a = 0.22 * f;
+                if let Ok(glow) = self
+                    .win
+                    .render_ctx
+                    .brush_cache
+                    .get_brush(target, &glow_color)
+                {
+                    let glow_rounded = windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT {
+                        rect: D2D_RECT_F {
+                            left: card_rect.left - 2.0,
+                            top: card_rect.top - 2.0,
+                            right: card_rect.right + 2.0,
+                            bottom: card_rect.bottom + 2.0,
+                        },
+                        radiusX: 14.0,
+                        radiusY: 14.0,
+                    };
+                    target.DrawRoundedRectangle(&glow_rounded, &glow, 3.0, None);
+                }
+            }
 
             // 2. 中间输入区域（使用前面计算的动态高度）
             let text_input_y = input_y + 6.0;
@@ -2271,7 +2190,8 @@ impl EditorState {
                     crate::ai_panel::ExpandAnimPhase::FadeOut => {
                         // 渐隐阶段：显示原文，透明度从 1.0 渐变为 0.0
                         let alpha = 1.0 - self.ai.ai_panel.expand_anim_progress;
-                        let fade_color = color_f(0.9, 0.9, 0.9, alpha);
+                        let mut fade_color = app_theme::text_primary();
+                        fade_color.a = alpha;
                         if let Ok(fade_brush) = self
                             .win
                             .render_ctx
@@ -2302,7 +2222,8 @@ impl EditorState {
                         let new_text = &self.ai.ai_panel.input;
                         if !new_text.is_empty() {
                             // 新文本使用带轻微透明度的白色，营造"写入中"感
-                            let stream_color = color_f(0.9, 0.9, 0.9, 0.92);
+                            let mut stream_color = app_theme::text_primary();
+                            stream_color.a = 0.92;
                             if let Ok(stream_brush) = self
                                 .win
                                 .render_ctx
@@ -2341,7 +2262,8 @@ impl EditorState {
                             // 闪烁效果：基于时间戳
                             let blink = (crate::ai_panel::now_millis() / 400) % 2 == 0;
                             if blink {
-                                let indicator_color = color_f(0.0, 0.47, 0.83, 0.8);
+                                let mut indicator_color = app_theme::accent();
+                                indicator_color.a = 0.8;
                                 if let Ok(ind_brush) = self
                                     .win
                                     .render_ctx
@@ -2419,7 +2341,7 @@ impl EditorState {
                         .win
                         .render_ctx
                         .brush_cache
-                        .get_brush(target, &color_f(1.0, 0.9, 0.4, 1.0))
+                        .get_brush(target, &app_theme::warning())
                         .unwrap();
                     target.DrawText(
                         &comp_text,
@@ -2525,9 +2447,9 @@ impl EditorState {
                     }
                     let hovered = self.ai.ai_panel.hover_image_chip == Some(i);
                     let chip_bg = if hovered {
-                        color_f(0.28, 0.24, 0.24, 1.0)
+                        app_theme::accent_soft_hover()
                     } else {
-                        color_f(0.20, 0.21, 0.24, 1.0)
+                        app_theme::surface_alt()
                     };
                     if let Ok(cb) = self.win.render_ctx.brush_cache.get_brush(target, &chip_bg) {
                         fill_round_rect(
@@ -2546,7 +2468,7 @@ impl EditorState {
                         .win
                         .render_ctx
                         .brush_cache
-                        .get_brush(target, &color_f(0.32, 0.32, 0.36, 1.0))
+                        .get_brush(target, &app_theme::border_strong())
                     {
                         target.DrawRectangle(
                             &D2D_RECT_F {
@@ -2602,174 +2524,65 @@ impl EditorState {
             // 4. 底部工具栏
             let toolbar_y = toolbar_sep_y + 4.0;
             let toolbar_h = 26.0f32;
-            let btn_bg = color_f(0.18, 0.18, 0.20, 1.0);
-            let btn_bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &btn_bg) {
-                Ok(b) => b,
-                Err(_) => return,
-            };
-            let btn_hover_bg = color_f(0.25, 0.25, 0.28, 1.0);
-            let _btn_hover_brush = match self
+
+            // 左侧：模型选择下拉按钮（宽度随模型名自适应，悬停微动效提亮）
+            let model_label = self.ui.app_settings.active_model_display_name();
+            let label_w = self
                 .win
                 .render_ctx
-                .brush_cache
-                .get_brush(target, &btn_hover_bg)
-            {
-                Ok(b) => b,
-                Err(_) => return,
-            };
-
-            // 左侧：模式切换按钮（Ask / Agent）
-            let mode_btn_w = 52.0f32;
-            let mode_btn_h = toolbar_h;
-            let mode_btn_y = toolbar_y;
-            let mode_gap = 4.0f32;
-            let mut mode_x = x + margin + input_margin;
-
-            // 清空并重建模式按钮命中区域
-            self.ai.ai_panel.mode_button_regions.clear();
-
-            for mode in [crate::ai_panel::AiMode::Ask, crate::ai_panel::AiMode::Agent] {
-                let is_active = self.ai.ai_panel.mode == mode;
-                let btn_rect = D2D_RECT_F {
-                    left: mode_x,
-                    top: mode_btn_y,
-                    right: mode_x + mode_btn_w,
-                    bottom: mode_btn_y + mode_btn_h,
-                };
-                // 背景：激活时高亮
-                let bg = if is_active {
-                    color_f(0.0, 0.47, 0.83, 1.0)
-                } else {
-                    btn_bg
-                };
-                let bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &bg) {
-                    Ok(b) => b,
-                    Err(_) => return,
-                };
-                fill_round_rect(target, &btn_rect, 4.0, &bg_brush);
-
-                // 文字
-                let label = mode.label();
-                let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
-                let text_rect = D2D_RECT_F {
-                    left: mode_x,
-                    top: mode_btn_y + 4.0,
-                    right: mode_x + mode_btn_w,
-                    bottom: mode_btn_y + mode_btn_h - 2.0,
-                };
-                let text_color = if is_active { &white_brush } else { &dim_brush };
-                target.DrawText(
-                    &label_wide,
-                    &small_format,
-                    &text_rect,
-                    text_color,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
-
-                // 注册命中区域（绝对坐标）
-                self.ai
-                    .ai_panel
-                    .mode_button_regions
-                    .push((mode, mode_x, mode_btn_y, mode_btn_w, mode_btn_h));
-
-                mode_x += mode_btn_w + mode_gap;
-            }
-
-            // 附件 chips（上下文附件切换）
-            let attachments = crate::ai_panel::AiPanel::toggleable_attachments();
-            let chip_h = toolbar_h;
-            let chip_gap = 4.0f32;
-            let mut chip_x = mode_x + 8.0; // 与模式按钮间距
-
-            // 清空并重建附件 chip 命中区域
-            self.ai.ai_panel.attachment_chip_regions.clear();
-
-            for (i, att) in attachments.iter().enumerate() {
-                let is_attached = self.ai.ai_panel.has_attachment(att);
-                let label = att.short_label();
-                let chip_w = (label.chars().count() as f32 * 7.0 + 16.0).clamp(40.0, 80.0);
-
-                let chip_rect = D2D_RECT_F {
-                    left: chip_x,
-                    top: mode_btn_y,
-                    right: chip_x + chip_w,
-                    bottom: mode_btn_y + chip_h,
-                };
-
-                // 背景：已附加时高亮
-                let bg = if is_attached {
-                    color_f(0.16, 0.30, 0.46, 1.0)
-                } else {
-                    btn_bg
-                };
-                let bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &bg) {
-                    Ok(b) => b,
-                    Err(_) => return,
-                };
-                fill_round_rect(target, &chip_rect, 4.0, &bg_brush);
-
-                // 文字
-                let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
-                let text_rect = D2D_RECT_F {
-                    left: chip_x,
-                    top: mode_btn_y + 4.0,
-                    right: chip_x + chip_w,
-                    bottom: mode_btn_y + chip_h - 2.0,
-                };
-                let text_color = if is_attached {
-                    &white_brush
-                } else {
-                    &dim_brush
-                };
-                target.DrawText(
-                    &label_wide,
-                    &small_format,
-                    &text_rect,
-                    text_color,
-                    D2D1_DRAW_TEXT_OPTIONS_NONE,
-                    DWRITE_MEASURING_MODE_NATURAL,
-                );
-
-                // 注册命中区域（绝对坐标）
-                self.ai
-                    .ai_panel
-                    .attachment_chip_regions
-                    .push((i, chip_x, mode_btn_y, chip_w, chip_h));
-
-                chip_x += chip_w + chip_gap;
-            }
-
-            // 中间：模型选择下拉按钮
-            let model_btn_w = 140.0f32;
-            let model_btn_x = chip_x + 8.0; // 与附件 chips 间距
+                .text_format_cache
+                .measure_text_width(&model_label, 10.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
+                .unwrap_or(60.0);
+            let model_btn_w = (label_w + 34.0).clamp(96.0, 200.0);
+            let model_btn_x = x + margin + input_margin;
             let model_btn_rect = D2D_RECT_F {
                 left: model_btn_x,
                 top: toolbar_y,
                 right: model_btn_x + model_btn_w,
                 bottom: toolbar_y + toolbar_h,
             };
-            fill_round_rect(target, &model_btn_rect, 4.0, &btn_bg_brush);
-            // 获取当前激活模型显示名称（与设置面板同步）
-            let model_label = self.ui.app_settings.active_model_display_name();
+            let pm = crate::ui_anim::quantize(self.ui.hover_anim.ai_btn_progress(1));
+            let model_base = app_theme::surface_alt();
+            let model_hover = app_theme::accent_soft_hover();
+            let model_bg = color_f(
+                model_base.r + (model_hover.r - model_base.r) * pm,
+                model_base.g + (model_hover.g - model_base.g) * pm,
+                model_base.b + (model_hover.b - model_base.b) * pm,
+                1.0,
+            );
+            if let Ok(mb) = self.win.render_ctx.brush_cache.get_brush(target, &model_bg) {
+                fill_round_rect(target, &model_btn_rect, 8.0, &mb);
+            }
             let model_text: Vec<u16> = format!("{} ▼", model_label)
                 .encode_utf16()
                 .chain(Some(0))
                 .collect();
             let model_text_rect = D2D_RECT_F {
-                left: model_btn_x + 6.0,
+                left: model_btn_x + 8.0,
                 top: toolbar_y + 4.0,
-                right: model_btn_x + model_btn_w - 4.0,
+                right: model_btn_x + model_btn_w - 6.0,
                 bottom: toolbar_y + toolbar_h - 2.0,
             };
-            target.DrawText(
-                &model_text,
-                &small_format,
-                &model_text_rect,
-                &dim_brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
+            let model_text_base = app_theme::text_secondary();
+            let model_text_hover = app_theme::accent_text();
+            let model_fg = color_f(
+                model_text_base.r + (model_text_hover.r - model_text_base.r) * pm,
+                model_text_base.g + (model_text_hover.g - model_text_base.g) * pm,
+                model_text_base.b + (model_text_hover.b - model_text_base.b) * pm,
+                1.0,
             );
+            if let Ok(mf) = self.win.render_ctx.brush_cache.get_brush(target, &model_fg) {
+                target.DrawText(
+                    &model_text,
+                    &small_format,
+                    &model_text_rect,
+                    &mf,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                );
+            }
+            self.ai.ai_panel.model_btn_region =
+                Some((model_btn_x, toolbar_y, model_btn_w, toolbar_h));
 
             // 当前模型下拉弹层（点击模型按钮展开，向上弹出，列出所有已启用模型）
             if self.ai.ai_panel.model_menu_open {
@@ -2800,7 +2613,7 @@ impl EditorState {
                     let menu_h = models.len() as f32 * item_h + 8.0;
                     let menu_top = menu_bottom - menu_h;
                     // 弹层背景 + 边框
-                    let menu_bg = color_f(0.15, 0.15, 0.17, 1.0);
+                    let menu_bg = app_theme::surface();
                     if let Ok(menu_bg_brush) =
                         self.win.render_ctx.brush_cache.get_brush(target, &menu_bg)
                     {
@@ -2816,7 +2629,7 @@ impl EditorState {
                             &menu_bg_brush,
                         );
                     }
-                    let menu_border = color_f(0.32, 0.32, 0.36, 1.0);
+                    let menu_border = app_theme::border_strong();
                     if let Ok(menu_border_brush) = self
                         .win
                         .render_ctx
@@ -2835,7 +2648,7 @@ impl EditorState {
                             None,
                         );
                     }
-                    let sel_bg = color_f(0.16, 0.30, 0.46, 1.0);
+                    let sel_bg = app_theme::accent_soft_hover();
                     let sel_bg_brush = self
                         .win
                         .render_ctx
@@ -2865,6 +2678,12 @@ impl EditorState {
                             format!("    {}", label)
                         };
                         let item_wide: Vec<u16> = item_str.encode_utf16().chain(Some(0)).collect();
+                        let active_item_brush = self
+                            .win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &app_theme::accent_text())
+                            .unwrap();
                         target.DrawText(
                             &item_wide,
                             &small_format,
@@ -2874,7 +2693,11 @@ impl EditorState {
                                 right: menu_x + menu_w - 10.0,
                                 bottom: iy + item_h,
                             },
-                            if *is_active { &white_brush } else { text_brush },
+                            if *is_active {
+                                &active_item_brush
+                            } else {
+                                text_brush
+                            },
                             D2D1_DRAW_TEXT_OPTIONS_NONE,
                             DWRITE_MEASURING_MODE_NATURAL,
                         );
@@ -2885,10 +2708,10 @@ impl EditorState {
             // 右侧功能按钮区域
             let right_btn_area_x = x + width - margin - input_margin;
 
-            // 发送/中断按钮（根据生成状态切换）
-            let send_btn_size = 24.0f32;
+            // 发送/中断按钮（根据生成状态切换；空输入时禁用态降低误导）
+            let send_btn_size = 26.0f32;
             let send_btn_x = right_btn_area_x - send_btn_size;
-            let send_btn_y = toolbar_y + 1.0;
+            let send_btn_y = toolbar_y;
             let send_btn_rect = D2D_RECT_F {
                 left: send_btn_x,
                 top: send_btn_y,
@@ -2896,86 +2719,289 @@ impl EditorState {
                 bottom: send_btn_y + send_btn_size,
             };
 
-            // 根据是否正在生成切换按钮样式
+            // 根据是否正在生成切换按钮样式；悬停经微动效提亮
             let is_generating = self.ai.ai_panel.is_generating;
+            let send_enabled = is_generating || !self.ai.ai_panel.input.trim().is_empty();
+            let ps = crate::ui_anim::quantize(self.ui.hover_anim.ai_btn_progress(2));
+            let smix = |a: f32, b: f32| a + (b - a) * ps;
+            let danger = app_theme::danger();
+            let danger_hover = color_f(0.68, 0.18, 0.18, 1.0);
+            let accent = app_theme::accent();
+            let accent_hover = app_theme::accent_hover();
             let (btn_bg, icon_kind) = if is_generating {
-                // 中断按钮：红色背景 + 停止图标
                 (
-                    color_f(0.83, 0.18, 0.18, 1.0),
+                    color_f(
+                        smix(danger.r, danger_hover.r),
+                        smix(danger.g, danger_hover.g),
+                        smix(danger.b, danger_hover.b),
+                        1.0,
+                    ),
                     crate::icons::IconKind::Close,
                 )
+            } else if send_enabled {
+                (
+                    color_f(
+                        smix(accent.r, accent_hover.r),
+                        smix(accent.g, accent_hover.g),
+                        smix(accent.b, accent_hover.b),
+                        1.0,
+                    ),
+                    crate::icons::IconKind::Send,
+                )
             } else {
-                // 发送按钮：蓝色背景 + 发送图标
-                (color_f(0.0, 0.47, 0.83, 1.0), crate::icons::IconKind::Send)
+                (app_theme::surface_alt(), crate::icons::IconKind::Send)
             };
 
             let send_bg_brush = match self.win.render_ctx.brush_cache.get_brush(target, &btn_bg) {
                 Ok(b) => b,
                 Err(_) => return,
             };
-            fill_round_rect(target, &send_btn_rect, 6.0, &send_bg_brush);
-            // 使用 SVG 图标绘制按钮
+            fill_round_rect(target, &send_btn_rect, 9.0, &send_bg_brush);
+            // 使用 SVG 图标绘制按钮（禁用态图标同步降亮度）
+            let send_icon_brush = if send_enabled { white_brush } else { dim_brush };
             self.ui.icons.draw(
                 target,
                 icon_kind,
-                send_btn_x + 2.0,
-                send_btn_y + 2.0,
-                send_btn_size - 4.0,
-                send_btn_size - 4.0,
-                &white_brush,
+                send_btn_x + 3.0,
+                send_btn_y + 3.0,
+                send_btn_size - 6.0,
+                send_btn_size - 6.0,
+                &send_icon_brush,
             );
+            self.ai.ai_panel.send_btn_region =
+                Some((send_btn_x, send_btn_y, send_btn_size, send_btn_size));
 
-            // 快捷按钮（星星）——问题扩写
-            let star_btn_size = 24.0f32;
-            let star_btn_x = send_btn_x - star_btn_size - 4.0;
-            let star_btn_rect = D2D_RECT_F {
-                left: star_btn_x,
-                top: send_btn_y,
-                right: star_btn_x + star_btn_size,
-                bottom: send_btn_y + star_btn_size,
-            };
-            fill_round_rect(target, &star_btn_rect, 4.0, &btn_bg_brush);
-            // 使用 SVG 图标绘制闪光/星星
-            self.ui.icons.draw(
-                target,
-                crate::icons::IconKind::Sparkles,
-                star_btn_x + 2.0,
-                send_btn_y + 2.0,
-                star_btn_size - 4.0,
-                send_btn_size - 4.0,
-                &dim_brush,
-            );
-
-            // 附加图片按钮（多模态）：仅当前激活模型声明支持多模态时显示，
-            // 点击打开文件对话框选择图片，附加后随下一条消息发送。
-            let active_multimodal = self.ui.app_settings.active_ai_settings().multimodal;
-            if active_multimodal {
-                let img_btn_size = 24.0f32;
-                let img_btn_x = star_btn_x - img_btn_size - 4.0;
-                let img_btn_rect = D2D_RECT_F {
-                    left: img_btn_x,
-                    top: send_btn_y,
-                    right: img_btn_x + img_btn_size,
-                    bottom: send_btn_y + img_btn_size,
+            // 工具栏中部状态 chip（人体工程学：外围视野、紧凑扁平、不侵占聊天区，
+            // 窄面板自动隐藏）。流水线运行时显示任务进度，否则显示上下文占用。
+            self.ai.ai_panel.context_chip_region = None;
+            let pipeline_progress = self
+                .ai
+                .ai_panel
+                .agent_pipeline
+                .as_ref()
+                .map(|p| p.progress());
+            let chip_x = model_btn_x + model_btn_w + 8.0;
+            let right_limit = send_btn_x - 8.0;
+            if let Some((done, failed, total, cursor)) = pipeline_progress {
+                // ===== 任务进度 chip =====
+                let cur = (cursor + 1).min(total).max(1);
+                let main_label = format!("任务 {}/{}", cur, total);
+                let suffix = if failed > 0 {
+                    format!("  ✕{}", failed)
+                } else {
+                    String::new()
                 };
-                fill_round_rect(target, &img_btn_rect, 4.0, &btn_bg_brush);
-                self.ui.icons.draw(
-                    target,
-                    crate::icons::IconKind::Image,
-                    img_btn_x + 2.0,
-                    send_btn_y + 2.0,
-                    img_btn_size - 4.0,
-                    img_btn_size - 4.0,
-                    &dim_brush,
-                );
-                // 命中区以面板相对坐标注册（点击处理用 rp_rel_x/rp_rel_y 比对，
-                // 与发送/星星按钮的相对坐标系一致；渲染用的 img_btn_x/send_btn_y
-                // 是绝对坐标，需减去面板原点 x/y 转换）。
-                self.ai.ai_panel.image_button_region =
-                    Some((img_btn_x - x, send_btn_y - y, img_btn_size, img_btn_size));
+                let main_w = self
+                    .win
+                    .render_ctx
+                    .text_format_cache
+                    .measure_text_width(&main_label, 10.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
+                    .unwrap_or(50.0);
+                let suffix_w = if suffix.is_empty() {
+                    0.0
+                } else {
+                    self.win
+                        .render_ctx
+                        .text_format_cache
+                        .measure_text_width(&suffix, 10.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
+                        .unwrap_or(20.0)
+                };
+                let bar_w = 30.0f32;
+                let chip_w = 8.0 + bar_w + 6.0 + main_w + suffix_w + 8.0;
+                if chip_x + chip_w <= right_limit {
+                    let chip_rect = D2D_RECT_F {
+                        left: chip_x,
+                        top: toolbar_y,
+                        right: chip_x + chip_w,
+                        bottom: toolbar_y + toolbar_h,
+                    };
+                    if let Ok(bg) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &app_theme::surface_alt())
+                    {
+                        fill_round_rect(target, &chip_rect, 8.0, &bg);
+                    }
+                    // 迷你进度条：已完成（含失败）占比，强调色填充
+                    let bar_x = chip_x + 8.0;
+                    let bar_y = toolbar_y + toolbar_h / 2.0 - 2.5;
+                    if let Ok(bb) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &app_theme::track_bg())
+                    {
+                        let r = D2D_RECT_F {
+                            left: bar_x,
+                            top: bar_y,
+                            right: bar_x + bar_w,
+                            bottom: bar_y + 5.0,
+                        };
+                        fill_round_rect(target, &r, 2.5, &bb);
+                    }
+                    let frac = if total > 0 {
+                        (done + failed) as f32 / total as f32
+                    } else {
+                        0.0
+                    };
+                    let fill_w = bar_w * frac.clamp(0.0, 1.0);
+                    if fill_w > 0.5 {
+                        if let Ok(fb) = self
+                            .win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &app_theme::accent())
+                        {
+                            let r = D2D_RECT_F {
+                                left: bar_x,
+                                top: bar_y,
+                                right: bar_x + fill_w.max(3.0),
+                                bottom: bar_y + 5.0,
+                            };
+                            fill_round_rect(target, &r, 2.5, &fb);
+                        }
+                    }
+                    // 主标签（灰）+ 失败计数（柔和红）
+                    let text_left = bar_x + bar_w + 6.0;
+                    let main_wide: Vec<u16> = main_label.encode_utf16().chain(Some(0)).collect();
+                    if let Ok(fg) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &app_theme::text_secondary())
+                    {
+                        target.DrawText(
+                            &main_wide,
+                            &small_format,
+                            &D2D_RECT_F {
+                                left: text_left,
+                                top: toolbar_y + 4.0,
+                                right: text_left + main_w,
+                                bottom: toolbar_y + toolbar_h - 2.0,
+                            },
+                            &fg,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+                    }
+                    if !suffix.is_empty() {
+                        let suf_wide: Vec<u16> = suffix.encode_utf16().chain(Some(0)).collect();
+                        if let Ok(fr) = self
+                            .win
+                            .render_ctx
+                            .brush_cache
+                            .get_brush(target, &app_theme::danger())
+                        {
+                            target.DrawText(
+                                &suf_wide,
+                                &small_format,
+                                &D2D_RECT_F {
+                                    left: text_left + main_w,
+                                    top: toolbar_y + 4.0,
+                                    right: text_left + main_w + suffix_w,
+                                    bottom: toolbar_y + toolbar_h - 2.0,
+                                },
+                                &fr,
+                                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                DWRITE_MEASURING_MODE_NATURAL,
+                            );
+                        }
+                    }
+                    self.ai.ai_panel.context_chip_region =
+                        Some((chip_x, toolbar_y, chip_w, toolbar_h));
+                }
             } else {
-                self.ai.ai_panel.image_button_region = None;
+                // ===== 上下文占用 chip（P1）=====
+                let budget = self
+                    .ui
+                    .app_settings
+                    .active_ai_settings()
+                    .max_input_tokens
+                    .map(|v| v as usize)
+                    .unwrap_or(24000);
+                let (_used, _budget, ratio) = self.ai.ai_panel.context_usage(budget);
+                let has_memory = !self.ai.ai_panel.context_memory.trim().is_empty();
+                let pct = (ratio * 100.0).round() as u32;
+                let label = if has_memory {
+                    format!("上下文 {}% · 记忆", pct)
+                } else {
+                    format!("上下文 {}%", pct)
+                };
+                let text_w = self
+                    .win
+                    .render_ctx
+                    .text_format_cache
+                    .measure_text_width(&label, 10.0, DWRITE_FONT_WEIGHT_NORMAL.0 as u32)
+                    .unwrap_or(60.0);
+                let chip_w = text_w + 24.0;
+                // 响应式：中部空位不足时不渲染，避免与发送按钮拥挤
+                if chip_x + chip_w <= right_limit {
+                    let chip_rect = D2D_RECT_F {
+                        left: chip_x,
+                        top: toolbar_y,
+                        right: chip_x + chip_w,
+                        bottom: toolbar_y + toolbar_h,
+                    };
+                    if let Ok(bg) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &app_theme::surface_alt())
+                    {
+                        fill_round_rect(target, &chip_rect, 8.0, &bg);
+                    }
+                    // 占用分级柔和色：<60% 绿、<85% 琥珀、否则红
+                    let dot_color = if ratio < 0.60 {
+                        color_f(0.32, 0.72, 0.48, 1.0)
+                    } else if ratio < 0.85 {
+                        color_f(0.86, 0.66, 0.28, 1.0)
+                    } else {
+                        app_theme::danger()
+                    };
+                    if let Ok(db) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &dot_color)
+                    {
+                        let dot = D2D_RECT_F {
+                            left: chip_x + 8.0,
+                            top: toolbar_y + toolbar_h / 2.0 - 3.0,
+                            right: chip_x + 14.0,
+                            bottom: toolbar_y + toolbar_h / 2.0 + 3.0,
+                        };
+                        fill_round_rect(target, &dot, 3.0, &db);
+                    }
+                    let label_wide: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
+                    if let Ok(fg) = self
+                        .win
+                        .render_ctx
+                        .brush_cache
+                        .get_brush(target, &app_theme::text_secondary())
+                    {
+                        target.DrawText(
+                            &label_wide,
+                            &small_format,
+                            &D2D_RECT_F {
+                                left: chip_x + 18.0,
+                                top: toolbar_y + 4.0,
+                                right: chip_x + chip_w - 6.0,
+                                bottom: toolbar_y + toolbar_h - 2.0,
+                            },
+                            &fg,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+                    }
+                    self.ai.ai_panel.context_chip_region =
+                        Some((chip_x, toolbar_y, chip_w, toolbar_h));
+                }
             }
+
+            // 快捷按钮（星星）——问题扩写（已移除，由 AI 自动决策）
+            // 附加图片按钮（多模态）——已移除，由 AI 自动决策
+            self.ai.ai_panel.image_button_region = None;
         }
     }
 }
@@ -2985,6 +3011,8 @@ enum AiRenderItem {
     Seg {
         is_code: bool,
         text: String,
+        /// 代码块语言标识（从 ``` 围栏提取）
+        lang: Option<String>,
     },
     File {
         kind: crate::ai_panel::FileOpKind,
@@ -3001,6 +3029,18 @@ enum AiRenderItem {
     },
     List {
         path: String,
+    },
+    /// 符号查找卡片（轻量符号索引：按名称定位函数/变量/类型定义）
+    Symbol {
+        name: String,
+    },
+    /// 内置浏览器打开卡片（AETHER_OPEN：把网页呈现给用户，不回喂内容）
+    Open {
+        query: String,
+    },
+    /// 内置浏览器正文读取卡片（AETHER_READPAGE：提取网页内容回喂 AI）
+    ReadPage {
+        url: String,
     },
     /// 未闭合的文件块（流式截断）——渲染为"未落盘"警告卡片
     Incomplete {
@@ -3067,6 +3107,21 @@ fn agent_op_display(
             path.clone(),
             color_f(0.60, 0.72, 0.88, 1.0),
         ),
+        AiRenderItem::Symbol { name } => (
+            "✦",
+            "查找符号",
+            name.clone(),
+            color_f(0.98, 0.75, 0.43, 1.0),
+        ),
+        AiRenderItem::Open { query } => (
+            "◍",
+            "打开网页",
+            query.clone(),
+            color_f(0.45, 0.72, 0.95, 1.0),
+        ),
+        AiRenderItem::ReadPage { url } => {
+            ("◉", "读取网页", url.clone(), color_f(0.40, 0.82, 0.78, 1.0))
+        }
         AiRenderItem::Incomplete { path } => (
             "!",
             "生成中断",

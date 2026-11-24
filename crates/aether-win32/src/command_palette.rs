@@ -229,6 +229,29 @@ impl CommandPalette {
                 icon: Some(IconKind::FileMarkdown),
             },
             CommandPaletteItem {
+                label: "工具: 桌面截图".to_string(),
+                description: Some("捕获整个桌面并打开图片预览".to_string()),
+                shortcut: None,
+                command_id: CommandId::ToolsDesktopShot,
+                icon: Some(IconKind::Image),
+            },
+            CommandPaletteItem {
+                label: "工具: 截取本窗口".to_string(),
+                description: Some(
+                    "仅捕获本窗口内容（无需切前台、不抓其它窗口）并打开预览".to_string(),
+                ),
+                shortcut: None,
+                command_id: CommandId::ToolsWindowShot,
+                icon: Some(IconKind::Image),
+            },
+            CommandPaletteItem {
+                label: "工具: 安全检查".to_string(),
+                description: Some("扫描工作区中的密钥/口令泄漏（离线）".to_string()),
+                shortcut: None,
+                command_id: CommandId::ToolsSecurityScan,
+                icon: Some(IconKind::Warning),
+            },
+            CommandPaletteItem {
                 label: "文件: 退出".to_string(),
                 description: Some("退出编辑器".to_string()),
                 shortcut: Some("Alt+F4".to_string()),

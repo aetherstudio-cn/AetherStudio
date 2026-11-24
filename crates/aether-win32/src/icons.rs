@@ -25,7 +25,6 @@ pub enum IconKind {
     OpenFolder,
     NewFile,
     Clone,
-    Ssh,
     /// 关闭的文件夹
     Folder,
     /// 普通文件
@@ -140,11 +139,10 @@ pub enum IconKind {
 
 impl IconKind {
     /// 所有图标变体索引（与 SVG_DEFS 数组下标对应）
-    pub const ALL: [IconKind; 88] = [
+    pub const ALL: [IconKind; 87] = [
         IconKind::OpenFolder,
         IconKind::NewFile,
         IconKind::Clone,
-        IconKind::Ssh,
         IconKind::Folder,
         IconKind::File,
         IconKind::Save,

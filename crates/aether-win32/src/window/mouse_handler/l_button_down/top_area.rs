@@ -11,56 +11,19 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::editor::EditorState;
 
-use super::super::super::{
-    invalidate_window, LP_THRESHOLD_MS, LP_TIMER_ID, TERM_REFRESH_MS, TERM_TIMER_ID,
-};
+use super::super::super::{invalidate_window, LP_THRESHOLD_MS, LP_TIMER_ID};
 
-/// 对话框优先拦截点击（SSH / 克隆 / 新建项目 / 设置弹窗）。
+/// 对话框优先拦截点击（克隆 / 新建项目 / 设置弹窗）。
 pub(super) unsafe fn lbd_dialogs(
     hwnd: HWND,
     state: &Rc<RefCell<EditorState>>,
     mouse_x: f32,
     mouse_y: f32,
 ) -> Option<LRESULT> {
-    if let Some(r) = lbd_ssh_dialog(hwnd, state, mouse_x, mouse_y) {
-        return Some(r);
-    }
     if let Some(r) = lbd_clone_dialog(hwnd, state, mouse_x, mouse_y) {
         return Some(r);
     }
     lbd_new_project_dialog(hwnd, state, mouse_x, mouse_y)
-}
-
-/// SSH 连接对话框点击处理。
-unsafe fn lbd_ssh_dialog(
-    hwnd: HWND,
-    state: &Rc<RefCell<EditorState>>,
-    mouse_x: f32,
-    mouse_y: f32,
-) -> Option<LRESULT> {
-    let mut st = state.borrow_mut();
-    if !st.remote.ssh_dialog.visible {
-        return None;
-    }
-    if let Some(action) = st.handle_ssh_dialog_click(mouse_x, mouse_y) {
-        match action {
-            crate::ssh::DialogAction::Connect => {
-                if st.remote.ssh_connecting {
-                    // 正在连接中，忽略重复点击
-                } else if let Some(config) = st.remote.ssh_dialog.to_config() {
-                    st.start_ssh_connect(config);
-                } else {
-                    st.remote.ssh_dialog.error_message = Some("请填写主机和用户名".to_string());
-                }
-            }
-            crate::ssh::DialogAction::Cancel => {
-                st.remote.ssh_dialog.visible = false;
-            }
-            crate::ssh::DialogAction::None => {}
-        }
-    }
-    invalidate_window(hwnd);
-    Some(LRESULT(0))
 }
 
 /// 克隆对话框点击处理。
@@ -180,10 +143,7 @@ unsafe fn lbd_titlebar_controls(
     let user_btn_x = tb.user_btn_x;
     let settings_btn_x = tb.settings_btn_x;
     let right_panel_btn_x = tb.right_panel_btn_x;
-    let bottom_panel_btn_x = tb.bottom_panel_btn_x;
     let left_sidebar_btn_x = tb.left_sidebar_btn_x;
-    let mode_btn_x = tb.mode_btn_x;
-    let mode_btn_width = tb.mode_btn_width;
 
     let mut st = state.borrow_mut();
     // 左侧箭头按钮（动态位置，从渲染帧缓存读取）
@@ -223,51 +183,8 @@ unsafe fn lbd_titlebar_controls(
         st.ui.layout.toggle_right_panel();
         invalidate_window(hwnd);
         return Some(LRESULT(0));
-    } else if mouse_x >= bottom_panel_btn_x {
-        // 智能体模式下：终端注册为标签页；开发者模式下：切换底部面板
-        if st.editor_mode.is_agent() {
-            st.open_terminal_tab();
-        } else {
-            st.ui.layout.toggle_terminal_panel();
-            if st.ui.layout.bottom_panel_visible {
-                st.terminal.terminal_panel.focused = true;
-                if !st.terminal.terminal_panel.running {
-                    let _ = st.terminal.terminal_panel.start();
-                }
-                let _ = SetTimer(hwnd, TERM_TIMER_ID, TERM_REFRESH_MS, None);
-            } else {
-                st.terminal.terminal_panel.focused = false;
-                let _ = KillTimer(hwnd, TERM_TIMER_ID);
-            }
-        }
-        invalidate_window(hwnd);
-        return Some(LRESULT(0));
     } else if mouse_x >= left_sidebar_btn_x {
         st.ui.layout.toggle_sidebar();
-        invalidate_window(hwnd);
-        return Some(LRESULT(0));
-    } else if mouse_x >= mode_btn_x && mouse_x < mode_btn_x + mode_btn_width {
-        // 模式切换：开发者 ↔ 智能体
-        st.editor_mode = match st.editor_mode {
-            crate::layout::EditorMode::Developer => crate::layout::EditorMode::Agent,
-            crate::layout::EditorMode::Agent => crate::layout::EditorMode::Developer,
-        };
-        // 持久化到设置
-        st.ui.app_settings.ui.editor_mode = st.editor_mode;
-        st.ui.status_message = if st.editor_mode.is_agent() {
-            "已切换到智能体模式".to_string()
-        } else {
-            "已切换到开发者模式".to_string()
-        };
-        // 智能体模式：自动显示右侧面板（文件编辑区）；设置标签页双模式共用，切换时保留
-        if st.editor_mode.is_agent() {
-            if !st.ui.layout.right_panel_visible {
-                st.ui.layout.right_panel_visible = true;
-                if st.ui.layout.right_panel_width < 1.0 {
-                    st.ui.layout.right_panel_width = 400.0;
-                }
-            }
-        }
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     } else if mouse_x >= fwd_x && mouse_x < fwd_x + arrow_size {
@@ -623,14 +540,8 @@ pub(super) unsafe fn lbd_activity_bar_context_menu(
             C::SwitchToExplorer => {
                 st.switch_activity_view(ActivityBarView::Explorer);
             }
-            C::SwitchToSourceControl => {
-                st.switch_activity_view(ActivityBarView::SourceControl);
-            }
             C::SwitchToTerminal => {
                 st.switch_activity_view(ActivityBarView::Terminal);
-            }
-            C::SwitchToRemoteManager => {
-                st.switch_activity_view(ActivityBarView::RemoteManager);
             }
             C::SwitchToAiAssistant => {
                 // AI 助手使用右侧面板，强制显示

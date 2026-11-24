@@ -53,6 +53,91 @@ pub struct ChatMessage {
     pub created_at: u64,
 }
 
+/// 记忆作用域：全局（跨工作区共享） / 项目（绑定单个工作区）
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryScope {
+    /// 全局记忆：与具体项目无关的通用经验
+    #[default]
+    Global,
+    /// 项目记忆：只对某个工作区有价值的经验
+    Project,
+}
+
+impl MemoryScope {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Global => "全局",
+            Self::Project => "项目",
+        }
+    }
+}
+
+/// 记忆可见性过滤
+#[derive(Clone, Debug, Default)]
+pub enum BulletFilter {
+    /// 全部记忆（管理列表 / 剪枝）
+    #[default]
+    All,
+    /// 注入视角：全局记忆 +（可选的）当前项目记忆，由记忆开关控制
+    Visible {
+        include_global: bool,
+        project_workspace: Option<String>,
+    },
+    /// 精确作用域（去重 / 单份记忆管理）
+    Exact {
+        scope: MemoryScope,
+        workspace_hash: String,
+    },
+}
+
+impl BulletFilter {
+    /// 注入视角过滤（记忆行为开关 + 当前工作区）
+    pub fn visible(include_global: bool, project_workspace: Option<String>) -> Self {
+        Self::Visible {
+            include_global,
+            project_workspace: project_workspace.filter(|h| !h.is_empty()),
+        }
+    }
+
+    /// 精确到某一份记忆（全局记忆或某个工作区的项目记忆）
+    pub fn exact(scope: MemoryScope, workspace_hash: impl Into<String>) -> Self {
+        Self::Exact {
+            scope,
+            workspace_hash: workspace_hash.into(),
+        }
+    }
+
+    pub fn matches(&self, bullet: &PlaybookBullet) -> bool {
+        // 无工作区归属的项目条目按全局处理（避免旧数据/异常数据在记忆页“消失”）
+        let effective_scope =
+            if bullet.scope == MemoryScope::Project && bullet.workspace_hash.is_empty() {
+                MemoryScope::Global
+            } else {
+                bullet.scope
+            };
+        match self {
+            Self::All => true,
+            Self::Visible {
+                include_global,
+                project_workspace,
+            } => match effective_scope {
+                MemoryScope::Global => *include_global,
+                MemoryScope::Project => project_workspace
+                    .as_deref()
+                    .is_some_and(|ws| !ws.is_empty() && ws == bullet.workspace_hash),
+            },
+            Self::Exact {
+                scope,
+                workspace_hash,
+            } => {
+                effective_scope == *scope
+                    && (*scope == MemoryScope::Global || &bullet.workspace_hash == workspace_hash)
+            }
+        }
+    }
+}
+
 /// ACE playbook 条目（权重沉淀的最小单元）
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlaybookBullet {
@@ -64,6 +149,15 @@ pub struct PlaybookBullet {
     pub helpful_count: u32,
     /// 被引用但产生负效果的次数
     pub harmful_count: u32,
+    /// 记忆作用域（旧数据缺省为全局）
+    #[serde(default)]
+    pub scope: MemoryScope,
+    /// 项目记忆所属工作区哈希（全局记忆为空）
+    #[serde(default)]
+    pub workspace_hash: String,
+    /// 项目记忆所属工作区名称（展示用，全局记忆为空）
+    #[serde(default)]
+    pub workspace_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
     pub created_at: u64,
@@ -123,7 +217,31 @@ pub trait MemoryStore: Send + Sync {
     fn upsert_bullet(&self, bullet: &PlaybookBullet) -> Result<(), String>;
     /// 条目反馈计数（helpful=true 则 helpful_count+1，否则 harmful_count+1）
     fn bullet_feedback(&self, bullet_id: &str, helpful: bool) -> Result<(), String>;
+    /// 列出全部条目（可按 section 过滤；管理/剪枝用途）
     fn list_bullets(&self, section: Option<&str>) -> Result<Vec<PlaybookBullet>, String>;
+    /// 按作用域过滤列出条目（默认实现：内存过滤）
+    fn list_bullets_filtered(
+        &self,
+        section: Option<&str>,
+        filter: &BulletFilter,
+    ) -> Result<Vec<PlaybookBullet>, String> {
+        Ok(self
+            .list_bullets(section)?
+            .into_iter()
+            .filter(|b| filter.matches(b))
+            .collect())
+    }
+    /// 清空指定作用域的全部条目（含向量索引）；返回删除条数
+    fn clear_bullets(&self, filter: &BulletFilter) -> Result<usize, String> {
+        let mut n = 0;
+        for b in self.list_bullets(None)? {
+            if filter.matches(&b) {
+                self.delete_bullet(&b.id)?;
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
 
     // ---- 语义检索（HNSW 向量索引；实现若无向量能力可返回空）----
     fn search_messages(
@@ -135,6 +253,7 @@ pub trait MemoryStore: Send + Sync {
     fn search_bullets(
         &self,
         query_embedding: &[f32],
+        filter: &BulletFilter,
         k: usize,
     ) -> Result<Vec<(PlaybookBullet, f32)>, String>;
 

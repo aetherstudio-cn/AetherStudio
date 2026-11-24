@@ -34,11 +34,7 @@ pub struct ActivityBar {
 
 impl ActivityBar {
     pub fn new() -> Self {
-        let items = vec![
-            ActivityItem::new(ActivityBarView::Explorer),
-            ActivityItem::new(ActivityBarView::SourceControl),
-            ActivityItem::new(ActivityBarView::RemoteManager),
-        ];
+        let items = vec![ActivityItem::new(ActivityBarView::Explorer)];
         Self {
             active_index: 0,
             hover_index: None,
@@ -200,7 +196,7 @@ mod tests {
     #[test]
     fn test_activity_bar_default_state() {
         let bar = ActivityBar::new();
-        assert_eq!(bar.items.len(), 3);
+        assert_eq!(bar.items.len(), 1);
         assert_eq!(bar.active_index, 0);
         assert_eq!(bar.active_view(), ActivityBarView::Explorer);
     }
@@ -208,24 +204,26 @@ mod tests {
     #[test]
     fn test_activity_bar_switch_to() {
         let mut bar = ActivityBar::new();
+        bar.switch_to(0);
+        assert_eq!(bar.active_index, 0);
+        assert!(bar.items[0].is_active);
+        // 越界索引不改变活动项
         bar.switch_to(2);
-        assert_eq!(bar.active_index, 2);
-        assert!(bar.items[2].is_active);
-        assert!(!bar.items[0].is_active);
+        assert_eq!(bar.active_index, 0);
     }
 
     #[test]
     fn test_activity_bar_switch_to_view() {
         let mut bar = ActivityBar::new();
-        bar.switch_to_view(ActivityBarView::SourceControl);
-        assert_eq!(bar.active_view(), ActivityBarView::SourceControl);
+        bar.switch_to_view(ActivityBarView::Explorer);
+        assert_eq!(bar.active_view(), ActivityBarView::Explorer);
     }
 
     #[test]
     fn test_activity_bar_hit_test() {
         let bar = ActivityBar::new();
-        assert_eq!(bar.hit_test(24.0, 50.0, 0.0), Some(1));
-        assert_eq!(bar.hit_test(60.0, 50.0, 0.0), None);
+        assert_eq!(bar.hit_test(24.0, 10.0, 0.0), Some(0));
+        assert_eq!(bar.hit_test(60.0, 10.0, 0.0), None);
         assert_eq!(bar.hit_test(24.0, 200.0, 0.0), None);
     }
 
@@ -237,19 +235,11 @@ mod tests {
     }
 
     #[test]
-    fn test_activity_bar_reorder() {
-        let mut bar = ActivityBar::new();
-        bar.begin_drag(0);
-        bar.drop_index = Some(2);
-        bar.reorder();
-        assert_eq!(bar.items[1].view, ActivityBarView::Explorer);
-    }
-
-    #[test]
     fn test_activity_bar_apply_order() {
         let mut bar = ActivityBar::new();
+        // 旧版开发者入口键被忽略，仅保留工作区
         bar.apply_order(&["sourceControl".to_string(), "explorer".to_string()]);
-        assert_eq!(bar.items[0].view, ActivityBarView::SourceControl);
-        assert_eq!(bar.items[1].view, ActivityBarView::Explorer);
+        assert_eq!(bar.items.len(), 1);
+        assert_eq!(bar.items[0].view, ActivityBarView::Explorer);
     }
 }

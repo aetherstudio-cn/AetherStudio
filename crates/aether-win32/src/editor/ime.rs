@@ -1,38 +1,23 @@
 use super::*;
 
-/// AI 面板区域脏标记：智能体模式下 AI 面板在中间列（编辑器内容区域），
-/// 经典模式下在右面板。标错区域会导致脏矩形裁剪时输入框所在列不重绘，
+/// AI 面板区域脏标记：AI 面板在中间列（编辑器内容区域）。
+/// 标错区域会导致脏矩形裁剪时输入框所在列不重绘，
 /// 合成串/提交文本视觉上“没有显示上去”。
 fn mark_ai_panel_dirty(state: &mut EditorState) {
-    if state.editor_mode.is_agent() {
-        let region = state.ui.layout.editor_content_region(false);
-        state.win.dirty_tracker.mark_region(
-            region.x,
-            region.y,
-            region.width,
-            region.height,
-            crate::dirty_rect::DirtyRegionType::EditorContent,
-        );
-    } else {
-        let region = state.ui.layout.right_panel_region().clone();
-        state.win.dirty_tracker.mark_region(
-            region.x,
-            region.y,
-            region.width,
-            region.height,
-            crate::dirty_rect::DirtyRegionType::RightPanel,
-        );
-    }
+    let region = state.ui.layout.editor_content_region(false);
+    state.win.dirty_tracker.mark_region(
+        region.x,
+        region.y,
+        region.width,
+        region.height,
+        crate::dirty_rect::DirtyRegionType::EditorContent,
+    );
 }
 
-/// 新标签页快捷搜索框脏区：智能体模式标右面板，经典模式标编辑器内容区
+/// 新标签页快捷搜索框脏区：标右面板
 fn mark_new_tab_page_dirty(state: &mut EditorState) {
     let region = state.new_tab_page_region(&state.ui.layout).clone();
-    let region_type = if state.editor_mode.is_agent() {
-        crate::dirty_rect::DirtyRegionType::RightPanel
-    } else {
-        crate::dirty_rect::DirtyRegionType::EditorContent
-    };
+    let region_type = crate::dirty_rect::DirtyRegionType::RightPanel;
     state.win.dirty_tracker.mark_region(
         region.x,
         region.y,
@@ -52,7 +37,7 @@ pub fn set_composition(state: &mut EditorState, text: String) {
             input.composition = Some(text);
             input.caret_visible = true;
         }
-        let region = state.ui.layout.sidebar_region().clone();
+        let region = state.file_tree_region().clone();
         state.win.dirty_tracker.mark_region(
             region.x,
             region.y,
@@ -141,7 +126,7 @@ pub fn commit_composition(state: &mut EditorState, text: String) {
             input.composition = None;
             input.caret_visible = true;
         }
-        let region = state.ui.layout.sidebar_region().clone();
+        let region = state.file_tree_region().clone();
         state.win.dirty_tracker.mark_region(
             region.x,
             region.y,
@@ -196,7 +181,7 @@ pub fn clear_composition(state: &mut EditorState) {
         if let Some(input) = state.fs.file_tree_input.as_mut() {
             input.composition = None;
         }
-        let region = state.ui.layout.sidebar_region().clone();
+        let region = state.file_tree_region().clone();
         state.win.dirty_tracker.mark_region(
             region.x,
             region.y,
@@ -225,10 +210,16 @@ pub fn clear_composition(state: &mut EditorState) {
 }
 
 impl EditorState {
-    /// AI 面板区域脏标记（模式感知：智能体模式中间列，经典模式右面板）。
+    /// AI 面板区域脏标记（AI 面板在中间列）。
     /// 供光标闪烁/悬停/流式生成等路径复用，避免标错区域导致输入框不重绘。
     pub(crate) fn mark_ai_panel_dirty(&mut self) {
         mark_ai_panel_dirty(self)
+    }
+
+    /// 新标签页快捷搜索框区域脏标记（右面板）。
+    /// 供 WM_CHAR/WM_KEYDOWN 等非 IME 输入路径复用，避免空脏区触发全窗口重绘。
+    pub(crate) fn mark_new_tab_page_dirty(&mut self) {
+        mark_new_tab_page_dirty(self)
     }
 
     /// P0-2: 设置 IME 合成串（pre-edit text）。

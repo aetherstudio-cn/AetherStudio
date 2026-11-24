@@ -45,8 +45,10 @@ pub const CARET_TIMER_ID: usize = 0xA004;
 pub(crate) const AI_TIMER_ID: usize = 0xA005;
 /// AI 对话温数据归档定时器 ID（周期检查空闲会话，归档进 MemoryStore）
 pub(crate) const AI_ARCHIVE_TIMER_ID: usize = 0xA007;
-/// UI 动画定时器 ID（历史记录下拉面板展开/收起动画，动画结束后自动停止）
+/// UI 动画定时器 ID（历史面板展开/收起 + 活动栏/标签栏悬停微动效，动画结束后自动停止）
 pub(crate) const UI_ANIM_TIMER_ID: usize = 0xA008;
+/// UI 动画帧间隔（毫秒，约 60fps）
+pub(crate) const UI_ANIM_INTERVAL_MS: u32 = 16;
 /// 冰冻看门狗定时器 ID（低频检查空闲时长，满足条件进入 Frozen 冰冻态，见 power.rs）
 pub(crate) const POWER_TIMER_ID: usize = 0xA009;
 /// 智能体沙盒评测定时器 ID（评测运行期间驱动流式消费/倒计时/任务推进，结束后自动停止）
@@ -55,6 +57,10 @@ pub const SANDBOX_TIMER_ID: usize = 0xA00A;
 pub const SANDBOX_REFRESH_MS: u32 = 200;
 /// Tooltip 延迟显示定时器 ID（活动栏/标题栏按钮悬停提示）
 pub(crate) const TOOLTIP_TIMER_ID: usize = 0xA00B;
+/// 模拟输入执行定时器 ID（确认放行后逐条注入动作，队列清空自动停表）
+pub(crate) const INPUT_TIMER_ID: usize = 0xA00C;
+/// 模拟输入执行间隔（毫秒）
+pub(crate) const INPUT_TIMER_MS: u32 = 30;
 /// AI 归档检查间隔（毫秒）：每 5 秒检查一次是否满足「空闲 30 秒」归档条件
 pub(crate) const AI_ARCHIVE_MS: u32 = 5000;
 /// 长按阈值（毫秒）
@@ -130,6 +136,7 @@ pub(crate) fn get_and_set_state(hwnd: HWND) -> Option<Rc<RefCell<EditorState>>> 
 // ===== 入口函数 =====
 
 pub fn run(args: LaunchArgs) {
+    let run_t = std::time::Instant::now();
     // 初始化日志系统（失败不阻塞启动）
     match crate::logging::init_logging() {
         Ok(_) => {
@@ -179,6 +186,10 @@ pub fn run(args: LaunchArgs) {
 
         // 创建第一个窗口
         let hwnd = create_editor_window(instance.into(), None);
+        tracing::info!(
+            ms = run_t.elapsed().as_millis() as u64,
+            "启动耗时：窗口创建 + 状态初始化完成"
+        );
 
         // 应用启动参数：打开传入的文件夹或文件
         if let Some(state) = get_and_set_state(hwnd) {
@@ -186,6 +197,10 @@ pub fn run(args: LaunchArgs) {
             // REQ-P1-07: 触发重绘（apply_launch_args 已标记脏区域）
             invalidate_window(hwnd);
         }
+        tracing::info!(
+            ms = run_t.elapsed().as_millis() as u64,
+            "启动耗时：启动参数应用完成"
+        );
 
         // 发布构建启动时静默检查更新（仅发现新版时才弹窗；开发构建跳过）
         if crate::updater::IS_RELEASE_BUILD {
@@ -214,11 +229,16 @@ pub(crate) unsafe fn create_editor_window(
     // P0.2b: 主窗口(无 owner)从持久化 settings 恢复窗口矩形;
     //        子窗口(有 owner)使用默认尺寸,避免多窗口相互覆盖。
     let is_main_window = owner.is_none();
+    let cfg_t = std::time::Instant::now();
     let settings = if is_main_window {
         aether_shared::settings::AppSettings::load()
     } else {
         aether_shared::settings::AppSettings::default()
     };
+    tracing::info!(
+        ms = cfg_t.elapsed().as_millis() as u64,
+        "启动耗时：AppSettings::load"
+    );
 
     // 获取主显示器 DPI 并计算缩放后的窗口大小（作为回退值）
     let (_dpi_scale, scaled_width, scaled_height) = get_dpi_scaled_size(1280, 800);
@@ -256,6 +276,11 @@ pub(crate) unsafe fn create_editor_window(
     )
     .unwrap();
 
+    tracing::info!(
+        ms = cfg_t.elapsed().as_millis() as u64,
+        "启动耗时：CreateWindowExW"
+    );
+
     // 启用 DWM Acrylic / Mica 效果
     enable_dwm_acrylic(hwnd);
 
@@ -280,7 +305,12 @@ pub(crate) unsafe fn create_editor_window(
 
 /// 初始化编辑器状态：DPI 缩放、客户区尺寸、渲染目标、GWLP_USERDATA 存储
 unsafe fn init_editor_state(hwnd: HWND, is_main_window: bool) {
+    let new_t = std::time::Instant::now();
     let state = EditorState::new(hwnd, is_main_window).unwrap();
+    tracing::info!(
+        ms = new_t.elapsed().as_millis() as u64,
+        "启动耗时：EditorState::new 总计"
+    );
     let state_rc = Rc::new(RefCell::new(state));
 
     // 获取窗口实际 DPI 并计算缩放因子
@@ -308,8 +338,18 @@ unsafe fn init_editor_state(hwnd: HWND, is_main_window: bool) {
 
     // 初始化渲染目标并首次渲染
     {
+        let rt_t = std::time::Instant::now();
         let _ = state_rc.borrow_mut().init_render_target();
+        tracing::info!(
+            ms = rt_t.elapsed().as_millis() as u64,
+            "启动耗时：init_render_target"
+        );
+        let frame_t = std::time::Instant::now();
         state_rc.borrow_mut().render();
+        tracing::info!(
+            ms = frame_t.elapsed().as_millis() as u64,
+            "启动耗时：首帧 render"
+        );
     }
 
     // 设为当前活跃状态
@@ -379,9 +419,7 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             WM_DESTROY => on_destroy(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 2 => on_wm_app_2(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 3 => on_wm_app_3(hwnd, msg, wparam, lparam),
-            msg if msg == WM_APP + 4 => on_wm_app_4(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 5 => on_wm_app_5(hwnd, msg, wparam, lparam),
-            msg if msg == WM_APP + 6 => on_wm_app_6(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 7 => on_wm_app_7(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 9 => on_wm_app_9(hwnd, msg, wparam, lparam),
             msg if msg == WM_APP + 10 => on_wm_app_10(hwnd, msg, wparam, lparam),
@@ -389,6 +427,14 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             msg if msg == WM_APP + 12 => on_wm_app_12(hwnd, msg, wparam, lparam),
             // AI 对话内文件名链接异步预读完成 → 建标签页
             msg if msg == WM_APP + 14 => on_wm_app_14(hwnd, msg, wparam, lparam),
+            // 软件自截图（无需前台）：捕获本窗口自身内容落盘 selfshot.png
+            msg if msg == WM_APP + 15 => on_wm_app_15(hwnd, msg, wparam, lparam),
+            // 程序化点击（无需前台）：读 click_cmd.json 合成点击
+            msg if msg == WM_APP + 16 => on_wm_app_16(hwnd, msg, wparam, lparam),
+            // 程序化发送 AI 消息（无需前台）：读 msg.txt 走发送链路
+            msg if msg == WM_APP + 17 => on_wm_app_17(hwnd, msg, wparam, lparam),
+            // 程序化配置 AI 模型（无需前台）：读 model_config.json 验证并保存
+            msg if msg == WM_APP + 18 => on_wm_app_18(hwnd, msg, wparam, lparam),
             // 内置浏览器：WebView2 异步回调动作排空（环境/控制器就绪、导航事件）
             msg if msg == crate::browser::WM_BROWSER_EVENT => {
                 on_browser_event(hwnd, msg, wparam, lparam)

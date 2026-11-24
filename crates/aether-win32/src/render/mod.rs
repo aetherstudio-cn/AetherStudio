@@ -9,8 +9,8 @@ pub(crate) use windows::Win32::Graphics::Direct2D::{
     D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_DRAW_TEXT_OPTIONS_NONE,
 };
 pub(crate) use windows::Win32::Graphics::DirectWrite::{
-    IDWriteTextFormat, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_NORMAL,
-    DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+    IDWriteTextFormat, DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_WEIGHT_BOLD,
+    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
     DWRITE_PARAGRAPH_ALIGNMENT_NEAR, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
     DWRITE_TEXT_ALIGNMENT_TRAILING,
 };
@@ -80,25 +80,12 @@ impl EditorState {
         // AI 流式生成中：标记 AI 面板所在区域脏，确保新 token 及时渲染。
         // 若缺少此标记，infer_from_state 返回 None（右侧面板可见性未变），
         // 依赖 on_paint 的全窗口防护导致每帧全量重绘，产生重影和性能浪费。
-        // 智能体模式下生成中 UI（流式文本/停止按钮）在中间列，需标中间区域。
+        // 生成中 UI（流式文本/停止按钮）在中间列，需标中间区域。
         // 完成/中断帧同样要标脏：此时 any_generating() 已变 false，若不标，
         // 思考块自动折叠（块高收缩、后续内容上移）那一帧不会重绘，
         // 旧的展开思考内容残留在屏幕上形成重影。
         if self.ai.ai_panel.any_generating() || ai_just_finished {
-            if self.editor_mode.is_agent() {
-                self.mark_ai_panel_dirty();
-            } else if self.ui.layout.right_panel_visible {
-                let rp = self.ui.layout.right_panel_region();
-                if rp.width > 0.0 && rp.height > 0.0 {
-                    self.win.dirty_tracker.mark_region(
-                        rp.x,
-                        rp.y,
-                        rp.width,
-                        rp.height,
-                        crate::dirty_rect::DirtyRegionType::RightPanel,
-                    );
-                }
-            }
+            self.mark_ai_panel_dirty();
         }
 
         // LSP: 轮询诊断事件，更新 diagnostics 字段
@@ -140,6 +127,13 @@ impl EditorState {
         let agent_results = self.terminal.terminal_panel.poll_agent_results();
         if !agent_results.is_empty() {
             self.handle_agent_command_results(agent_results);
+        }
+        // 内置浏览器网页正文采集回环：提取完成（或超时）后回喂 AI 继续推理
+        let page_reads = self
+            .browser
+            .poll_pending_reads(std::time::Duration::from_secs(20));
+        if !page_reads.is_empty() {
+            self.handle_agent_page_read_results(page_reads);
         }
     }
 
@@ -337,54 +331,18 @@ impl EditorState {
             self.ui.layout.bottom_panel_visible != self.input.prev.bottom_panel_visible;
         let status_changed = self.ui.status_message != self.input.prev.status_message;
         let active_tab_changed = self.editor.tab_bar.active_tab != self.input.prev.active_tab;
-        let dialog_visible = self.remote.ssh_dialog.visible
-            || self.remote.clone_dialog.visible
-            || self.ui.command_palette.visible;
+        // 标签数量变化也要重绘标签栏（active_tab 索引可能不变：
+        // 例如只剩默认新标签页时点击"+"，移除占位页后索引仍是 0）
+        let tab_count_changed = self.editor.tab_bar.tabs.len() != self.input.prev.tab_count;
+        let dialog_visible = self.remote.clone_dialog.visible || self.ui.command_palette.visible;
 
-        // P5-2: 标签页切换只影响标签栏高亮、编辑器内容、状态栏三个区域，
-        // 侧边栏/活动栏/AI 面板与活动标签无关，改为精确标记省去 ~60% 绘制面积。
-        // 仅当新旧标签涉及 Welcome/Settings 等特殊页类型时保留全窗口重绘
-        //（欢迎页跳过侧边栏等面板渲染，局部裁剪会留下残影）
-        if active_tab_changed {
-            let is_special = |idx: usize| -> bool {
-                self.editor
-                    .tab_bar
-                    .tabs
-                    .get(idx)
-                    .map(|t| !t.is_file())
-                    .unwrap_or(true)
-            };
-            if is_special(self.input.prev.active_tab)
-                || is_special(self.editor.tab_bar.active_tab)
-                || self.show_welcome()
-            {
-                self.win.dirty_tracker.mark_full_window();
-            } else {
-                let show_tab_bar = self.show_tab_bar();
-                let tab_region = self.ui.layout.tab_bar_region(show_tab_bar);
-                self.win.dirty_tracker.mark_region(
-                    tab_region.x,
-                    tab_region.y,
-                    tab_region.width,
-                    tab_region.height,
-                    crate::dirty_rect::DirtyRegionType::TabBar,
-                );
-                let editor_region = self.ui.layout.editor_region();
-                self.win.dirty_tracker.mark_region(
-                    editor_region.x,
-                    editor_region.y,
-                    editor_region.width,
-                    editor_region.height,
-                    crate::dirty_rect::DirtyRegionType::EditorContent,
-                );
-                let status_region = self.ui.layout.status_bar_region();
-                self.win.dirty_tracker.mark_status_bar(
-                    status_region.x,
-                    status_region.y,
-                    status_region.width,
-                    status_region.height,
-                );
-            }
+        // P5-2: 标签页切换只影响标签栏高亮、标签内容与状态栏。
+        // 标签栏与标签内容都渲染在右侧面板（智能体模式布局），中间列是
+        // AI 对话面板，与活动标签无关。此处统一按右面板标记脏区：
+        // 此前对设置/终端/浏览器/新标签页等"特殊标签"直接全窗口重绘，
+        // 是新建/切换新标签页卡顿的直接原因。
+        if active_tab_changed || tab_count_changed {
+            self.mark_tab_switch_dirty();
         }
 
         // 底部面板可见性变化属于重大布局变更，强制全量重绘以保证编辑器区域正确刷新
@@ -449,6 +407,23 @@ impl EditorState {
                 editor_region.height,
                 crate::dirty_rect::DirtyRegionType::EditorContent,
             );
+        }
+
+        // 右面板卡片页↔文件树切换：内容整体替换，标脏右面板防重影
+        if self.right_panel_tree_open != self.input.prev.right_panel_tree_open {
+            let rp = self.ui.layout.right_panel_region();
+            self.win.dirty_tracker.mark_region(
+                rp.x,
+                rp.y,
+                rp.width,
+                rp.height,
+                crate::dirty_rect::DirtyRegionType::RightPanel,
+            );
+        }
+        // 设置整页覆盖层占满全窗：激活期间任何重绘都标全窗，
+        // 否则局部脏区（悬停/光标）会漏掉覆盖层其余部分导致重影。
+        if self.active_tab_is_settings() {
+            self.win.dirty_tracker.mark_full_window();
         }
 
         // 根据状态变化推断最优渲染命令
@@ -664,86 +639,13 @@ impl EditorState {
             }
         }
 
-        // 全窗口清除只在全窗口重绘时执行
         if self.win.dirty_tracker.is_full_window() || !use_clip {
-            // 欢迎页状态下使用深色背景（而非透明），避免面板区域出现黑色空洞
-            // 透明色虽能让 DWM Mica/Acrylic 透出，但会导致未覆盖区域显示为黑色
-            if self.show_welcome() {
-                self.win.render_ctx.clear(
-                    &windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F {
-                        r: 0.09,
-                        g: 0.09,
-                        b: 0.09,
-                        a: 1.0,
-                    },
-                );
-            } else {
-                self.win.render_ctx.clear(&self.win.theme.editor_bg);
-            }
-        }
-
-        // 欢迎页 + 脏矩形裁剪时，侧边栏/活动栏/右侧面板/底部面板区域不会被全窗口 clear 覆盖，
-        // 且欢迎页逻辑跳过这些面板的渲染，导致这些区域显示为黑色。
-        // 手动填充这些区域以保证背景色正确。
-        if self.show_welcome() && use_clip {
-            if self.ui.layout.activity_bar_visible && activity_region.width > 0.0 {
-                self.win.render_ctx.fill_rect(
-                    activity_region.x,
-                    activity_region.y,
-                    activity_region.width,
-                    activity_region.height,
-                    &self.win.theme.activity_bar_bg,
-                );
-            }
-            if self.ui.layout.sidebar_visible && sidebar_region.width > 0.0 {
-                self.win.render_ctx.fill_rect(
-                    sidebar_region.x,
-                    sidebar_region.y,
-                    sidebar_region.width,
-                    sidebar_region.height,
-                    &self.win.theme.sidebar_bg,
-                );
-            }
-            if self.ui.layout.right_panel_visible && right_panel_region.width > 0.0 {
-                self.win.render_ctx.fill_rect(
-                    right_panel_region.x,
-                    right_panel_region.y,
-                    right_panel_region.width,
-                    right_panel_region.height,
-                    &self.win.theme.sidebar_bg,
-                );
-            }
-            if self.ui.layout.bottom_panel_visible {
-                let bottom_region = self.ui.layout.bottom_panel_region();
-                if bottom_region.height > 0.0 {
-                    // 欢迎页状态下，底部面板需要覆盖整个窗口宽度（包括右侧面板下方），
-                    // 避免右侧面板下方出现黑色空洞
-                    let full_width = self.win.window_width as f32;
-                    self.win.render_ctx.fill_rect(
-                        0.0,
-                        bottom_region.y,
-                        full_width,
-                        bottom_region.height,
-                        &self.win.theme.statusbar_bg,
-                    );
-                }
-            }
+            self.win.render_ctx.clear(&app_theme::page_bg_top());
         }
 
         // 预提取菜单栏数据，避免借用冲突
         let item_x_positions = self.ui.menu_bar.item_x_positions.clone();
         let item_widths = self.ui.menu_bar.item_widths.clone();
-
-        let showing_welcome = self.show_welcome();
-
-        // 欢迎页左栏同步（不修改 visible 用户状态）：进入欢迎页瞬间重置
-        // welcome_left_opened（侧边栏面板默认收起）；欢迎页期间用户可经
-        // 活动栏图标/Ctrl+B/标题栏按钮调起面板；活动栏在欢迎页固定常驻。
-        if showing_welcome && !self.ui.layout.welcome_active {
-            self.ui.layout.welcome_left_opened = false;
-        }
-        self.ui.layout.welcome_active = showing_welcome;
-        let suppress_sidebar = self.ui.layout.welcome_sidebar_suppressed();
 
         // 0. 标题栏（最先渲染，作为背景）
         if self.ui.layout.title_bar_visible {
@@ -755,159 +657,63 @@ impl EditorState {
             self.render_menu_bar(&item_x_positions, &item_widths, &target, &menu_region);
         }
 
-        // 2. 活动栏（欢迎页固定常驻：侧边栏功能按钮入口）
+        // 2. 活动栏
         if self.ui.layout.activity_bar_shown() {
+            let activity_rect = D2D_RECT_F {
+                left: activity_region.x,
+                top: activity_region.y,
+                right: activity_region.x + activity_region.width,
+                bottom: activity_region.y + activity_region.height,
+            };
+            unsafe {
+                app_theme::fill_app_gradient(
+                    &target,
+                    &activity_rect,
+                    self.win.window_height as f32,
+                );
+            }
             self.render_activity_bar(&target, &activity_region);
         }
 
-        // 3. 侧边栏（欢迎页面板默认收起，用户可手动调起）
-        // 智能体模式下：左侧渲染对话历史+工作区复合面板
-        if self.ui.layout.sidebar_visible && !suppress_sidebar {
-            if self.editor_mode.is_agent() {
-                self.render_agent_sidebar(
-                    &target,
-                    sidebar_region.x,
-                    sidebar_region.y,
-                    sidebar_region.width,
-                    sidebar_region.height,
-                );
-            } else {
-                self.render_sidebar(&target, &sidebar_region);
-            }
-        }
-
-        // 4. 标签栏（智能体模式下标签栏在右侧区域渲染，此处跳过）
-        if show_tab_bar && !showing_welcome && !self.editor_mode.is_agent() {
-            self.render_tab_bar(
+        // 3. 侧边栏（左侧渲染对话历史+工作区复合面板）
+        if self.ui.layout.sidebar_visible {
+            self.render_agent_sidebar(
                 &target,
-                tab_region.x,
-                tab_region.y,
-                tab_region.width,
-                tab_region.height,
+                sidebar_region.x,
+                sidebar_region.y,
+                sidebar_region.width,
+                sidebar_region.height,
             );
         }
 
-        // 5. 编辑器内容/欢迎页/图片预览/设置页
-        // 智能体模式下：中间区域渲染 AI 对话面板，右侧区域渲染文件编辑区
-        if showing_welcome && !self.editor_mode.is_agent() {
-            tracing::trace!("render: before welcome_page");
-            // 欢迎页在编辑器区域内居中：默认无左栏时即全屏宽，
-            // 用户调起活动栏/侧边栏后自动避让（editor_region 已扣除左侧与右面板）
-            let editor = self.ui.layout.editor_region();
-            let welcome_x = editor.x;
-            let welcome_width = editor.width;
-            let welcome_y = self.ui.layout.top_offset();
-            let mut welcome_height = self.win.window_height as f32 - welcome_y;
-            if self.ui.layout.status_bar_visible {
-                welcome_height -= self.ui.layout.status_bar_height;
-            }
-            if self.ui.layout.bottom_panel_visible {
-                welcome_height -= self.ui.layout.bottom_panel_height;
-            }
-            welcome_height = welcome_height.max(200.0);
-            self.render_welcome_page(&target, welcome_x, welcome_y, welcome_width, welcome_height);
-            tracing::trace!("render: after welcome_page");
-        } else if self.editor_mode.is_agent() {
-            // 智能体模式：中间区域渲染 AI 对话面板（占据编辑器内容区域，包括欢迎页/空占位页场景）
-            // 智能体模式标签栏在右侧面板渲染，中间区域不预留标签栏高度
-            // 检测 AI 面板超时（与右侧面板路径一致，避免思考模式长等待请求永不收尾）
-            if self.ai.ai_panel.check_timeout() {
-                self.ai.ai_panel.handle_timeout();
-            }
-            let agent_center = self.ui.layout.editor_content_region(false);
-            let text_brush = match self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(&target, &self.win.theme.text_default)
-            {
-                Ok(b) => b,
-                Err(_) => return,
-            };
-            self.render_ai_assistant_sidebar(
-                &target,
-                agent_center.x,
-                agent_center.y,
-                agent_center.width,
-                agent_center.height,
-                &text_brush,
-            );
-        } else if self.active_tab_is_new_tab() {
-            // 新标签页（NTP）：编辑器内容区域渲染快捷搜索框 + 快捷操作按钮
-            self.render_new_tab_page(
-                &target,
-                editor_content_region.x,
-                editor_content_region.y,
-                editor_content_region.width,
-                editor_content_region.height,
-            );
-        } else if self.active_tab_is_browser() {
-            // 浏览器标签：D2D 只画顶部工具栏，网页正文由 WebView2 子窗口覆盖
-            self.render_browser_toolbar(
-                &target,
-                editor_content_region.x,
-                editor_content_region.y,
-                editor_content_region.width,
-                editor_content_region.height,
-            );
-        } else if self.active_tab_is_settings() {
-            // 设置页面：在编辑器内容区域渲染左侧导航+右侧内容
-            let text_brush = match self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(&target, &self.win.theme.text_default)
-            {
-                Ok(b) => b,
-                Err(_) => return,
-            };
-            self.render_settings_sidebar(
-                &target,
-                editor_content_region.x,
-                editor_content_region.y,
-                editor_content_region.width,
-                editor_content_region.height,
-                &text_brush,
-            );
-        } else if self.active_tab_is_sandbox_eval() {
-            // 智能体沙盒评测页：在编辑器内容区域整页渲染
-            unsafe {
-                self.render_sandbox_eval_page(
-                    &target,
-                    editor_content_region.x,
-                    editor_content_region.y,
-                    editor_content_region.width,
-                    editor_content_region.height,
-                );
-            }
-        } else if self.editor.content.language == Language::Image {
-            self.render_image_preview(
-                &target,
-                editor_content_region.x,
-                editor_content_region.y,
-                editor_content_region.width,
-                editor_content_region.height,
-            );
-        } else if self.editor.markdown_preview && self.editor.content.language == Language::Markdown
+        // 5. 编辑器内容：中间区域渲染 AI 对话面板（占据编辑器内容区域，包括空占位页场景）；
+        // 右侧区域渲染文件编辑区（见第 6 步）
+        // 标签栏在右侧面板渲染，中间区域不预留标签栏高度
+        // 检测 AI 面板超时，避免思考模式长等待请求永不收尾
+        if self.ai.ai_panel.check_timeout() {
+            self.ai.ai_panel.handle_timeout();
+        }
+        let agent_center = self.ui.layout.editor_content_region(false);
+        let text_brush = match self
+            .win
+            .render_ctx
+            .brush_cache
+            .get_brush(&target, &self.win.theme.text_default)
         {
-            self.render_markdown_preview(
-                &target,
-                editor_content_region.x,
-                editor_content_region.y,
-                editor_content_region.width,
-                editor_content_region.height,
-            );
-        } else {
-            self.render_editor(
-                &target,
-                editor_content_region.x,
-                editor_content_region.y,
-                editor_content_region.width,
-                editor_content_region.height,
-            );
-        }
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        self.render_ai_assistant_sidebar(
+            &target,
+            agent_center.x,
+            agent_center.y,
+            agent_center.width,
+            agent_center.height,
+            &text_brush,
+        );
+
         // 5.4 Markdown 预览切换按钮（编辑区右上角，仅 .md 文件显示）
-        if self.editor.content.language == Language::Markdown && !showing_welcome {
+        if self.editor.content.language == Language::Markdown {
             self.render_markdown_toggle_btn(
                 &target,
                 editor_content_region.x,
@@ -928,23 +734,18 @@ impl EditorState {
             );
         }
 
-        // 6. 右侧面板（AI面板等）
-        // 智能体模式下：右侧区域渲染浏览器风格标签页容器（而非 AI 面板）
+        // 6. 右侧面板：渲染浏览器风格标签页容器（文件编辑区/设置/终端等）
         {
-            if self.editor_mode.is_agent() {
-                let editor_x = right_panel_region.x;
-                let editor_y = right_panel_region.y;
-                let editor_w = right_panel_region.width;
-                let editor_h = right_panel_region.height;
-                self.render_agent_right_panel(&target, editor_x, editor_y, editor_w, editor_h);
-            } else if self.ui.layout.right_panel_visible
-                && right_panel_region.width > 1.0
-                && right_panel_region.height > 1.0
-            {
-                tracing::trace!(region = ?right_panel_region, "render: before right_panel");
-                self.render_right_panel(&target, &right_panel_region);
-                tracing::trace!("render: after right_panel");
-            }
+            let editor_x = right_panel_region.x;
+            let editor_y = right_panel_region.y;
+            let editor_w = right_panel_region.width;
+            let editor_h = right_panel_region.height;
+            self.render_agent_right_panel(&target, editor_x, editor_y, editor_w, editor_h);
+        }
+
+        // 6.5 设置独立整页：覆盖全窗（标题栏下方），含「← 回到应用」返回条
+        if self.active_tab_is_settings() {
+            self.render_settings_fullpage(&target);
         }
 
         // 7. 底部面板（终端、输出等）
@@ -1001,17 +802,12 @@ impl EditorState {
             self.render_command_palette(&target, palette_x, palette_y, palette_width);
         }
 
-        // 9. SSH 连接对话框
-        if self.remote.ssh_dialog.visible {
-            self.render_ssh_dialog(&target);
-        }
-
-        // 10. 克隆仓库对话框
+        // 9. 克隆仓库对话框
         if self.remote.clone_dialog.visible {
             self.render_clone_dialog(&target);
         }
 
-        // 11. 新建项目对话框
+        // 10. 新建项目对话框
         if self.ui.new_project_dialog.visible {
             self.render_new_project_dialog(&target);
         }
@@ -1180,6 +976,8 @@ impl EditorState {
             .status_message
             .clone_from(&self.ui.status_message);
         self.input.prev.active_tab = self.editor.tab_bar.active_tab;
+        self.input.prev.tab_count = self.editor.tab_bar.tabs.len();
+        self.input.prev.right_panel_tree_open = self.right_panel_tree_open;
     }
 
     /// EndDraw 失败后的恢复：标记全窗口并立即请求重绘。
@@ -1210,7 +1008,7 @@ impl EditorState {
     fn sync_ime_position(&mut self) {
         let weight = DWRITE_FONT_WEIGHT_NORMAL.0 as u32;
 
-        // 终端聚焦：锚到终端光标（智能体模式终端在右面板标签，经典模式在底部面板）
+        // 终端聚焦：锚到终端光标（终端在右面板标签）
         if self.terminal.terminal_panel.focused {
             let term_region = self.terminal_view_region(&self.ui.layout);
             let (t_row, t_col) = self.terminal.terminal_panel.cursor_position();
@@ -1334,13 +1132,9 @@ impl EditorState {
             return;
         }
 
-        // AI 面板输入框聚焦：锚到输入框光标（智能体模式中间列，经典模式右面板）
+        // AI 面板输入框聚焦：锚到输入框光标（中间列）
         if self.ai.ai_panel.input_focused {
-            let region = if self.editor_mode.is_agent() {
-                self.ui.layout.editor_content_region(false)
-            } else {
-                self.ui.layout.right_panel_region()
-            };
+            let region = self.ui.layout.editor_content_region(false);
             // 几何与 render/ai.rs 输入框渲染保持一致
             let margin = 10.0f32;
             let input_margin = 8.0f32;
@@ -1384,22 +1178,17 @@ impl EditorState {
             return;
         }
 
-        // 默认：编辑器光标（区域按模式区分：智能体模式编辑器在右面板内容区）
+        // 默认：编辑器光标（编辑器在右面板内容区）
         let line_height = self.win.text_renderer.line_height();
         let char_width = self.win.text_renderer.char_width();
         let line_number_width = 40.0;
-        let (ex, ey) = if self.editor_mode.is_agent() {
-            let rp = self.ui.layout.right_panel_region();
-            let tab_h = if self.editor.tab_bar.tabs.is_empty() {
-                0.0
-            } else {
-                crate::layout::TAB_BAR_HEIGHT
-            };
-            (rp.x, rp.y + tab_h)
+        let rp = self.ui.layout.right_panel_region();
+        let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+            0.0
         } else {
-            let r = self.ui.layout.editor_content_region(self.show_tab_bar());
-            (r.x, r.y)
+            crate::layout::TAB_BAR_HEIGHT
         };
+        let (ex, ey) = (rp.x, rp.y + tab_h);
         let (start_line, _) = self.visible_line_range();
         let cursor_char_col = if let Some(text) = self
             .editor
@@ -1429,27 +1218,25 @@ impl EditorState {
 mod account;
 mod agent_right_panel;
 pub(crate) use agent_right_panel::{
-    new_tab_page_geom_in, NEW_TAB_BTN_COUNT, NEW_TAB_BTN_GAP, NEW_TAB_BTN_HEIGHT, NEW_TAB_BTN_WIDTH,
+    new_tab_page_geom_in, NEW_TAB_BTN_COUNT, NEW_TAB_BTN_GAP, NEW_TAB_BTN_HEIGHT,
 };
 mod agent_sidebar;
 mod ai;
 mod ai_history_window;
+mod app_theme;
 mod chrome;
 mod dialogs;
 mod editor_view;
 mod find;
 mod markdown_preview;
 mod menus;
-mod remote;
 mod remote_dialogs;
 mod sandbox_eval;
 mod settings_ai;
 mod settings_general;
 mod settings_models;
 mod settings_update;
-mod sidebar;
 mod sidebar_files;
-mod sidebar_scm;
 mod tabs;
 mod terminal;
 pub(crate) use terminal::{TERMINAL_CONTENT_TOP, TERMINAL_LINE_H, TERMINAL_TEXT_LEFT};

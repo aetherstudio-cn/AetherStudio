@@ -1,0 +1,6 @@
+[package]
+name = "aether-symbol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

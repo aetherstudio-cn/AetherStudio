@@ -12,7 +12,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::{
     compute_cursor_for_pos, create_editor_window, get_and_set_state, invalidate_window,
-    AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HOVER_TIMER_ID,
+    AI_ARCHIVE_TIMER_ID, AI_TIMER_ID, CARET_TIMER_ID, EDITOR_STATE, HOVER_TIMER_ID, INPUT_TIMER_ID,
     LP_THRESHOLD_MS, LP_TIMER_ID, POWER_TIMER_ID, SANDBOX_TIMER_ID, TERM_TIMER_ID,
     TOOLTIP_TIMER_ID, UI_ANIM_TIMER_ID,
 };
@@ -49,6 +49,9 @@ pub(crate) unsafe fn on_timer(hwnd: HWND, _msg: u32, wparam: WPARAM, _lparam: LP
     }
     if wparam.0 == UI_ANIM_TIMER_ID {
         return on_timer_ui_anim(hwnd);
+    }
+    if wparam.0 == INPUT_TIMER_ID {
+        return on_timer_input_sim(hwnd);
     }
     if wparam.0 == POWER_TIMER_ID {
         return on_timer_power(hwnd);
@@ -98,12 +101,55 @@ unsafe fn on_timer_power(hwnd: HWND) -> LRESULT {
     LRESULT(0)
 }
 
-/// UI 动画：驱动历史记录下拉面板展开/收起动画，动画结束后自动停止定时器
+/// UI 动画：驱动历史记录下拉面板展开/收起 + 活动栏/标签栏悬停微动效，
+/// 全部动画结束后自动停止定时器
 unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
     let animating = EDITOR_STATE.with(|s| {
         s.borrow()
             .as_ref()
-            .map(|state| state.borrow_mut().ai.ai_panel.tick_history_anim())
+            .map(|state| {
+                let mut st = state.borrow_mut();
+                let hist = st.ai.ai_panel.tick_history_anim();
+                let activity_hover = st.ui.activity_bar.hover_index;
+                let activity_len = st.ui.activity_bar.items.len();
+                let tab_hover = st.editor.tab_bar.hover_tab;
+                let tab_len = st.editor.tab_bar.tabs.len();
+                let hover = st
+                    .ui
+                    .hover_anim
+                    .tick(activity_hover, activity_len, tab_hover, tab_len);
+                // AI 面板微动效通道：欢迎 chips / 侧栏对话项 / 按钮 / 输入聚焦环
+                let chip_hover = st.ai.ai_panel.hover_welcome_chip;
+                let chip_len = st.ai.ai_panel.welcome_chip_regions.len();
+                let ai_tab_hover = if st.ai.ai_panel.history_open {
+                    None
+                } else {
+                    st.ai.ai_panel.hover_tab
+                };
+                let ai_tab_len = st.ai.ai_panel.conversations.len();
+                let btn_hover = if st.ai.ai_panel.hover_new_chat {
+                    Some(0)
+                } else if st.ai.ai_panel.hover_model_btn {
+                    Some(1)
+                } else if st.ai.ai_panel.hover_send_btn {
+                    Some(2)
+                } else {
+                    None
+                };
+                let input_focused = st.ai.ai_panel.input_focused;
+                let ai = st.ui.hover_anim.tick_ai(
+                    chip_hover,
+                    chip_len,
+                    ai_tab_hover,
+                    ai_tab_len,
+                    btn_hover,
+                    input_focused,
+                );
+                // 标记动画涉及的区域（活动栏/标签栏/AI 面板/侧栏），
+                // 避免空脏区兜底全窗口重绘（悬停动画期间每帧整窗重绘 = 卡顿）
+                st.mark_ui_anim_dirty();
+                hist || hover || ai
+            })
             .unwrap_or(false)
     });
     if !animating {
@@ -114,10 +160,46 @@ unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
     LRESULT(0)
 }
 
+/// 模拟输入执行：逐条取出就绪动作经 SendInput 注入；Sleep 转为等待截止，
+/// 不阻塞消息泵；队列清空后自动停表并在状态栏提示完成。
+unsafe fn on_timer_input_sim(hwnd: HWND) -> LRESULT {
+    let mut done = false;
+    let mut was_active = false;
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            if let Ok(mut st) = state.try_borrow_mut() {
+                was_active = st.ui.input_sim.is_active();
+                let now = std::time::Instant::now();
+                while let Some(action) = st.ui.input_sim.next_ready(now) {
+                    if let Err(e) = crate::input_sim::execute_action(&action, hwnd) {
+                        st.ui.status_message = format!("模拟输入失败：{}", e);
+                        st.ui.input_sim.clear();
+                        break;
+                    }
+                }
+                done = !st.ui.input_sim.is_active();
+                if done && was_active {
+                    st.ui.status_message = "模拟输入执行完成".to_string();
+                }
+            }
+        }
+    });
+    if done {
+        let _ = KillTimer(hwnd, INPUT_TIMER_ID);
+    }
+    invalidate_window(hwnd);
+    LRESULT(0)
+}
+
 /// AI 温数据归档：周期检查空闲会话并异步归档进 MemoryStore（AetherDB）
 unsafe fn on_timer_ai_archive(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
-        state.borrow_mut().ai.ai_panel.trigger_warm_archive();
+        let mut st = state.borrow_mut();
+        let processed = st.ai.ai_panel.trigger_warm_archive();
+        // 归档完成后记忆库可能已沉淀新条目：标记记忆页缓存过期
+        if processed > 0 {
+            st.ui.settings_panel.memory_dirty = true;
+        }
     }
     LRESULT(0)
 }
@@ -128,7 +210,7 @@ unsafe fn on_timer_hover(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
         let mut st = state.borrow_mut();
         // 仅在仍有悬停目标时计算 tooltip
-        if st.fs.hover_file_node.is_some() || st.remote.hover_node.is_some() {
+        if st.fs.hover_file_node.is_some() {
             if let Some(text) = st.compute_hover_tooltip_text() {
                 // tooltip 定位：鼠标右下方，预留 16px 间距
                 let tx = st.input.hover.last_mouse_x + 16.0;
@@ -223,6 +305,14 @@ unsafe fn on_timer_term_refresh(hwnd: HWND) -> LRESULT {
         }
         // 懒加载预扫描
         st.preload_expanded_dirs();
+        // 平滑滚动动画更新（编辑器内容区）
+        if crate::editor::cursor::update_smooth_scroll(&mut st, 0.016) {
+            dirty = true;
+        }
+        // 标签页平滑滚动动画更新
+        if st.tick_tab_scroll() {
+            dirty = true;
+        }
         dirty || st.win.dirty_tracker.has_dirty()
     } else {
         false
@@ -292,22 +382,18 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             need_invalidate = true;
             any_active = true;
         }
-        // AI 助手输入框光标闪烁（智能体模式中间列 / 经典模式右面板）
+        // AI 助手输入框光标闪烁（中间列）
         if st.ai.ai_panel.input_focused {
             st.ai.ai_panel.caret_visible = !st.ai.ai_panel.caret_visible;
             st.mark_ai_panel_dirty();
             need_invalidate = true;
             any_active = true;
         }
-        // 新标签页快捷搜索框光标闪烁（智能体模式右面板 / 经典模式编辑器内容区）
+        // 新标签页快捷搜索框光标闪烁（右面板）
         if st.browser.empty_search_focused {
             st.browser.empty_search_caret_visible = !st.browser.empty_search_caret_visible;
             let ntp_region = st.new_tab_page_region(&st.ui.layout).clone();
-            let region_type = if st.editor_mode.is_agent() {
-                crate::dirty_rect::DirtyRegionType::RightPanel
-            } else {
-                crate::dirty_rect::DirtyRegionType::EditorContent
-            };
+            let region_type = crate::dirty_rect::DirtyRegionType::RightPanel;
             st.win.dirty_tracker.mark_region(
                 ntp_region.x,
                 ntp_region.y,
@@ -332,15 +418,11 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             need_invalidate = true;
             any_active = true;
         }
-        // 设置页输入框光标闪烁（智能体模式右面板 / 经典模式编辑器内容区）
+        // 设置页输入框光标闪烁（右面板）
         if st.active_tab_is_settings() && st.ui.settings_panel.active_field.is_some() {
             st.ui.settings_panel.caret_visible = !st.ui.settings_panel.caret_visible;
             let region = st.full_page_region(&st.ui.layout).clone();
-            let region_type = if st.editor_mode.is_agent() {
-                crate::dirty_rect::DirtyRegionType::RightPanel
-            } else {
-                crate::dirty_rect::DirtyRegionType::EditorContent
-            };
+            let region_type = crate::dirty_rect::DirtyRegionType::RightPanel;
             st.win.dirty_tracker.mark_region(
                 region.x,
                 region.y,
@@ -361,13 +443,23 @@ unsafe fn on_timer_caret(hwnd: HWND) -> LRESULT {
             .unwrap_or(false)
         {
             st.editor.content.caret_visible = !st.editor.content.caret_visible;
-            let er = st.ui.layout.editor_region().clone();
+            // 文件编辑区在右侧面板
+            let rp = st.ui.layout.right_panel_region();
+            let tab_h = if st.editor.tab_bar.tabs.is_empty() {
+                0.0
+            } else {
+                crate::layout::TAB_BAR_HEIGHT
+            };
+            let (region, region_type) = (
+                crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h),
+                crate::dirty_rect::DirtyRegionType::RightPanel,
+            );
             st.win.dirty_tracker.mark_region(
-                er.x,
-                er.y,
-                er.width,
-                er.height,
-                crate::dirty_rect::DirtyRegionType::EditorContent,
+                region.x,
+                region.y,
+                region.width,
+                region.height,
+                region_type,
             );
             need_invalidate = true;
             any_active = true;
@@ -554,6 +646,235 @@ pub(crate) unsafe fn on_wm_app_14(
     LRESULT(0)
 }
 
+/// msg if msg == WM_APP + 15 —— 软件自截图（无需前台）
+///
+/// 捕获本窗口自身渲染内容落盘到固定路径 `selfshot.png`，供后台验收/外部程序触发：
+/// 不切换前台、不抓取其它窗口（仅 PrintWindow，无屏幕拷贝回退）。
+pub(crate) unsafe fn on_wm_app_15(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    let path = crate::screen_capture::selfshot_path();
+    let result = crate::screen_capture::capture_own_window_to_path(hwnd, &path);
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            let mut st = state.borrow_mut();
+            st.ui.status_message = match &result {
+                Ok(p) => format!("本窗口截图已保存：{}", p.display()),
+                Err(e) => format!("本窗口截图失败：{}", e),
+            };
+            st.win.dirty_tracker.mark_full_window();
+        }
+    });
+    invalidate_window(hwnd);
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 16 —— 程序化点击（无需前台/物理鼠标）
+///
+/// 读取 `click_cmd.json`（`{"x":..,"y":..}` 逻辑坐标，或 `{"action":"命中区名"}`），
+/// 换算为物理像素后合成 WM_LBUTTONDOWN/UP，走与真实点击完全相同的分发逻辑。
+pub(crate) unsafe fn on_wm_app_16(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_LBUTTONDOWN, WM_LBUTTONUP};
+
+    let set_status = |msg: String| {
+        EDITOR_STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                state.borrow_mut().ui.status_message = msg.clone();
+            }
+        });
+        // 结果回写文件，供外部调用方读取点击是否生效（接口反馈）
+        let result_path = crate::hit_test::click_cmd_path()
+            .parent()
+            .map(|p| p.join("click_result.txt"))
+            .unwrap_or_else(|| std::path::PathBuf::from("click_result.txt"));
+        let _ = std::fs::write(result_path, msg);
+    };
+
+    let raw = match std::fs::read_to_string(crate::hit_test::click_cmd_path()) {
+        Ok(s) => s,
+        Err(_) => {
+            set_status("程序化点击：未找到 click_cmd.json".to_string());
+            return LRESULT(0);
+        }
+    };
+    // 容错 UTF-8 BOM（部分编辑器/PowerShell 写文件会带 BOM）
+    let cmd: serde_json::Value = match serde_json::from_str(raw.trim_start_matches('\u{feff}')) {
+        Ok(v) => v,
+        Err(e) => {
+            set_status(format!("程序化点击：JSON 解析失败 {}", e));
+            return LRESULT(0);
+        }
+    };
+
+    // 解析目标逻辑坐标：优先命中区名，其次显式 x/y
+    let logical = if let Some(action) = cmd.get("action").and_then(|v| v.as_str()) {
+        crate::hit_test::find_region_center(action)
+    } else {
+        match (
+            cmd.get("x").and_then(|v| v.as_f64()),
+            cmd.get("y").and_then(|v| v.as_f64()),
+        ) {
+            (Some(x), Some(y)) => Some((x as f32, y as f32)),
+            _ => None,
+        }
+    };
+    let Some((lx, ly)) = logical else {
+        set_status("程序化点击：无法解析坐标或命中区名".to_string());
+        return LRESULT(0);
+    };
+
+    let dpi = EDITOR_STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|st| st.borrow().win.dpi_scale)
+            .unwrap_or(1.0)
+    });
+    let px = (lx * dpi).round() as i16;
+    let py = (ly * dpi).round() as i16;
+    let lp = LPARAM((((py as u16 as u32) << 16) | (px as u16 as u32)) as isize);
+    // MK_LBUTTON = 1：按下时标记左键 held，与真实点击一致
+    SendMessageW(hwnd, WM_LBUTTONDOWN, WPARAM(1), lp);
+    SendMessageW(hwnd, WM_LBUTTONUP, WPARAM(0), lp);
+    set_status(format!("程序化点击：({}, {})", lx, ly));
+    invalidate_window(hwnd);
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 17 —— 程序化发送 AI 消息（无需前台）
+///
+/// 读取 `%TEMP%\Aether\msg.txt` 作为用户输入，走与发送按钮完全相同的链路
+/// （gather_context + send_message_with_prepared_context），用于程序化驱动对话。
+pub(crate) unsafe fn on_wm_app_17(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    let msg_path = std::env::temp_dir().join("Aether").join("msg.txt");
+    let text = match std::fs::read_to_string(&msg_path) {
+        Ok(s) => s.trim_start_matches('\u{feff}').trim().to_string(),
+        Err(_) => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().ui.status_message =
+                        "程序化发消息：未找到 msg.txt".to_string();
+                }
+            });
+            return LRESULT(0);
+        }
+    };
+    if text.is_empty() {
+        return LRESULT(0);
+    }
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            let mut st = state.borrow_mut();
+            st.ai.ai_panel.input = text;
+            st.ai.ai_panel.input_focused = true;
+            let settings = st.ui.app_settings.active_ai_settings();
+            let mode = st.ai.ai_panel.mode;
+            let attachments = st.ai.ai_panel.attachments.clone();
+            let context = st.gather_context(&attachments);
+            match st
+                .ai
+                .ai_panel
+                .send_message_with_prepared_context(&settings, context, mode)
+            {
+                Ok(_) => {
+                    st.ui.status_message = "AI 请求已发送（程序化）".to_string();
+                    let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                        hwnd,
+                        AI_TIMER_ID,
+                        crate::window::AI_REFRESH_MS,
+                        None,
+                    );
+                }
+                Err(e) => st.ui.status_message = e,
+            }
+            st.ai.ai_panel.input_focused = false;
+            st.win.dirty_tracker.mark_full_window();
+        }
+    });
+    invalidate_window(hwnd);
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 18 —— 程序化配置 AI 模型（无需前台）
+///
+/// 读取 `%TEMP%\Aether\model_config.json`（api_key/provider/base_url/model/display_name），
+/// 进入新建模型草稿、填入字段并触发「验证密钥后保存」（DPAPI 加密持久化）。
+pub(crate) unsafe fn on_wm_app_18(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    let cfg_path = std::env::temp_dir()
+        .join("Aether")
+        .join("model_config.json");
+    let cfg = std::fs::read_to_string(&cfg_path).ok().and_then(|s| {
+        serde_json::from_str::<serde_json::Value>(s.trim_start_matches('\u{feff}')).ok()
+    });
+    let Some(cfg) = cfg else {
+        EDITOR_STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                state.borrow_mut().ui.status_message =
+                    "配置模型：未找到或无法解析 model_config.json".to_string();
+            }
+        });
+        return LRESULT(0);
+    };
+    let get = |k: &str| {
+        cfg.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let api_key = get("api_key");
+    let provider = get("provider");
+    let base_url = get("base_url");
+    let model = get("model");
+    let display_name = get("display_name");
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            let mut st = state.borrow_mut();
+            st.ui.settings_panel.begin_new_model_draft();
+            st.ui.settings_panel.model_editing = true;
+            st.ui.settings_panel.active_tab = crate::settings::SettingsTab::Models;
+            if !api_key.is_empty() {
+                st.ui.settings_panel.api_key = api_key;
+            }
+            if !provider.is_empty() {
+                st.ui.settings_panel.provider = provider;
+            }
+            if !base_url.is_empty() {
+                st.ui.settings_panel.base_url = base_url;
+            }
+            st.ui.settings_panel.model = if model.is_empty() {
+                "deepseek-chat".to_string()
+            } else {
+                model
+            };
+            if !display_name.is_empty() {
+                st.ui.settings_panel.display_name = display_name;
+            }
+            st.save_ai_settings_with_test();
+            st.ui.status_message = "正在验证并保存模型配置…".to_string();
+            st.win.dirty_tracker.mark_full_window();
+        }
+    });
+    invalidate_window(hwnd);
+    LRESULT(0)
+}
+
 /// msg if msg == crate::browser::WM_BROWSER_EVENT
 ///
 /// 内置浏览器：WebView2 回调在 UI 线程把动作压入挂起队列并 PostMessage 到这里，
@@ -571,24 +892,6 @@ pub(crate) unsafe fn on_browser_event(
     LRESULT(0)
 }
 
-/// msg if msg == WM_APP + 4
-pub(crate) unsafe fn on_wm_app_4(
-    hwnd: HWND,
-    _msg: u32,
-    wparam: WPARAM,
-    _lparam: LPARAM,
-) -> LRESULT {
-    // C-09: SSH 异步连接完成
-    let raw = wparam.0;
-    EDITOR_STATE.with(|s| {
-        if let Some(state) = s.borrow().as_ref() {
-            state.borrow_mut().on_ssh_connect_complete(raw);
-            invalidate_window(hwnd);
-        }
-    });
-    LRESULT(0)
-}
-
 /// msg if msg == WM_APP + 5
 pub(crate) unsafe fn on_wm_app_5(
     hwnd: HWND,
@@ -601,24 +904,6 @@ pub(crate) unsafe fn on_wm_app_5(
     EDITOR_STATE.with(|s| {
         if let Some(state) = s.borrow().as_ref() {
             state.borrow_mut().on_git_clone_complete(raw);
-            invalidate_window(hwnd);
-        }
-    });
-    LRESULT(0)
-}
-
-/// msg if msg == WM_APP + 6
-pub(crate) unsafe fn on_wm_app_6(
-    hwnd: HWND,
-    _msg: u32,
-    wparam: WPARAM,
-    _lparam: LPARAM,
-) -> LRESULT {
-    // P0-1: 远程子目录异步列目录完成
-    let raw = wparam.0;
-    EDITOR_STATE.with(|s| {
-        if let Some(state) = s.borrow().as_ref() {
-            state.borrow_mut().on_ssh_list_dir_complete(raw);
             invalidate_window(hwnd);
         }
     });

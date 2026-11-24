@@ -14,6 +14,19 @@ impl EditorState {
         let handle_x = sidebar.x + sidebar.width;
         mouse_x >= handle_x - SIDEBAR_RESIZE_GRAB && mouse_x <= handle_x + SIDEBAR_RESIZE_GRAB
     }
+    /// 文件树几何区域：常驻右面板内容区（标签栏下方）。
+    /// 文件树的渲染/点击/悬停/IME/拖拽/滚动统一以此为几何来源，
+    /// 与左侧会话侧栏（sidebar_region）解耦。
+    pub fn file_tree_region(&self) -> crate::layout::Region {
+        let rp = self.ui.layout.right_panel_region();
+        let tab_h = if self.editor.tab_bar.tabs.is_empty() {
+            0.0
+        } else {
+            crate::layout::TAB_BAR_HEIGHT
+        };
+        crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+    }
+
     /// 文件树根目录行（工作区文件夹名）的起始 Y 坐标（相对侧边栏顶部），
     /// 与 render_tree_nodes 中的 `y + header_h + 6.0 - sidebar_scroll_y` 严格一致。
     ///
@@ -108,10 +121,10 @@ impl EditorState {
             );
         }
         self.win.dirty_tracker.mark_region(
-            self.ui.layout.sidebar_region().x,
-            self.ui.layout.sidebar_region().y,
-            self.ui.layout.sidebar_region().width,
-            self.ui.layout.sidebar_region().height,
+            self.file_tree_region().x,
+            self.file_tree_region().y,
+            self.file_tree_region().width,
+            self.file_tree_region().height,
             crate::dirty_rect::DirtyRegionType::Sidebar,
         );
     }
@@ -123,10 +136,10 @@ impl EditorState {
         let Some(base_path) = self.fs.current_folder.clone() else {
             self.ui.status_message = "请先打开文件夹".to_string();
             self.win.dirty_tracker.mark_region(
-                self.ui.layout.sidebar_region().x,
-                self.ui.layout.sidebar_region().y,
-                self.ui.layout.sidebar_region().width,
-                self.ui.layout.sidebar_region().height,
+                self.file_tree_region().x,
+                self.file_tree_region().y,
+                self.file_tree_region().width,
+                self.file_tree_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
             return;
@@ -136,10 +149,10 @@ impl EditorState {
         if name.is_empty() {
             // VS Code 行为：空名提交视为取消，不提示错误
             self.win.dirty_tracker.mark_region(
-                self.ui.layout.sidebar_region().x,
-                self.ui.layout.sidebar_region().y,
-                self.ui.layout.sidebar_region().width,
-                self.ui.layout.sidebar_region().height,
+                self.file_tree_region().x,
+                self.file_tree_region().y,
+                self.file_tree_region().width,
+                self.file_tree_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
             return;
@@ -153,10 +166,10 @@ impl EditorState {
             // 验证失败时保留输入框，让用户修改后重试
             self.fs.file_tree_input = Some(input);
             self.win.dirty_tracker.mark_region(
-                self.ui.layout.sidebar_region().x,
-                self.ui.layout.sidebar_region().y,
-                self.ui.layout.sidebar_region().width,
-                self.ui.layout.sidebar_region().height,
+                self.file_tree_region().x,
+                self.file_tree_region().y,
+                self.file_tree_region().width,
+                self.file_tree_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
             return;
@@ -178,10 +191,10 @@ impl EditorState {
         if !matches!(input.kind, FileTreeInputKind::Rename) && target.exists() {
             self.ui.status_message = format!("{} 已存在", name);
             self.win.dirty_tracker.mark_region(
-                self.ui.layout.sidebar_region().x,
-                self.ui.layout.sidebar_region().y,
-                self.ui.layout.sidebar_region().width,
-                self.ui.layout.sidebar_region().height,
+                self.file_tree_region().x,
+                self.file_tree_region().y,
+                self.file_tree_region().width,
+                self.file_tree_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
             return;
@@ -221,10 +234,10 @@ impl EditorState {
                             self.ui.status_message = format!("{} 已存在", name);
                             self.fs.file_tree_input = Some(input);
                             self.win.dirty_tracker.mark_region(
-                                self.ui.layout.sidebar_region().x,
-                                self.ui.layout.sidebar_region().y,
-                                self.ui.layout.sidebar_region().width,
-                                self.ui.layout.sidebar_region().height,
+                                self.file_tree_region().x,
+                                self.file_tree_region().y,
+                                self.file_tree_region().width,
+                                self.file_tree_region().height,
                                 crate::dirty_rect::DirtyRegionType::Sidebar,
                             );
                             return;
@@ -260,10 +273,10 @@ impl EditorState {
     pub fn cancel_file_tree_input(&mut self) {
         if self.fs.file_tree_input.take().is_some() {
             self.win.dirty_tracker.mark_region(
-                self.ui.layout.sidebar_region().x,
-                self.ui.layout.sidebar_region().y,
-                self.ui.layout.sidebar_region().width,
-                self.ui.layout.sidebar_region().height,
+                self.file_tree_region().x,
+                self.file_tree_region().y,
+                self.file_tree_region().width,
+                self.file_tree_region().height,
                 crate::dirty_rect::DirtyRegionType::Sidebar,
             );
         }
@@ -821,12 +834,6 @@ impl EditorState {
             crate::layout::SidebarContent::FileTree => {
                 self.handle_file_tree_click(mouse_x, mouse_y)
             }
-            crate::layout::SidebarContent::SourceControlPanel => {
-                self.handle_git_panel_click(mouse_x, mouse_y)
-            }
-            crate::layout::SidebarContent::RemoteFileTree => {
-                self.handle_remote_tree_click(mouse_x, mouse_y)
-            }
             _ => false,
         }
     }
@@ -834,7 +841,7 @@ impl EditorState {
         // 优先检测标题栏按钮点击。按钮区域存的是窗口绝对坐标，
         // 而本函数收到的是侧边栏相对坐标，需先换算（此前直接比较
         // 导致左键点击新建按钮永远未命中，按钮形同虚设）。
-        let sidebar = self.ui.layout.sidebar_region();
+        let sidebar = self.file_tree_region();
         let abs_x = mouse_x + sidebar.x;
         let abs_y = mouse_y + sidebar.y;
         if let Some(rect) = self.fs.file_tree_new_file_btn.clone() {
@@ -970,7 +977,6 @@ impl EditorState {
             crate::layout::SidebarContent::FileTree => {
                 self.update_local_tree_hover(mouse_x, mouse_y)
             }
-            crate::layout::SidebarContent::RemoteFileTree => self.update_remote_tree_hover(mouse_y),
             _ => {
                 let old = self.fs.hover_file_node.take();
                 let old_root = std::mem::take(&mut self.fs.hover_file_tree_root);
