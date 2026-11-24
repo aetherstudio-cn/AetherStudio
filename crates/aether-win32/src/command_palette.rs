@@ -236,6 +236,15 @@ impl CommandPalette {
                 icon: Some(IconKind::Image),
             },
             CommandPaletteItem {
+                label: "工具: 截取本窗口".to_string(),
+                description: Some(
+                    "仅捕获本窗口内容（无需切前台、不抓其它窗口）并打开预览".to_string(),
+                ),
+                shortcut: None,
+                command_id: CommandId::ToolsWindowShot,
+                icon: Some(IconKind::Image),
+            },
+            CommandPaletteItem {
                 label: "工具: 安全检查".to_string(),
                 description: Some("扫描工作区中的密钥/口令泄漏（离线）".to_string()),
                 shortcut: None,

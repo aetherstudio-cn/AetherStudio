@@ -58,6 +58,18 @@ impl RecentProjectsManager {
     pub fn add(&mut self, path: &Path) {
         let path_str = path.to_string_lossy().to_string();
 
+        // 已在首位：顺序与内容均无变化，跳过重排与写盘。
+        // 启动恢复上次工作区时命中此快路径，避免每次启动都重写
+        // recent_projects.json（磁盘 IO 拖慢"打开软件卡顿一瞬间"）。
+        if self
+            .projects
+            .front()
+            .map(|p| p.path == path_str)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
         // 如果已存在，先移除旧记录
         self.projects.retain(|p| p.path != path_str);
 

@@ -172,39 +172,27 @@ impl Theme {
         }
     }
 
-    /// 毛玻璃主题（Apple-level Acrylic）
-    /// 半透明面板 + 柔和边框 + 光晕选择效果
-    ///
-    /// 层级设计：由外向内、由深到浅，色彩天然划分区域：
-    ///   活动栏 #141414 (0.078) → 侧边栏/标题栏/状态栏 #1B1B1C (0.106)
-    ///   → 编辑区 #1F1F1F (0.122)，视觉重心自然落在中央内容区
+    /// 浅色薄荷绿主题：半透明表面叠加到全窗口渐变上，保持统一的浅色层次。
     pub fn glass() -> Self {
         Self {
-            // 编辑器区域：最浅层（视觉重心）
-            editor_bg: color_f(0.122, 0.122, 0.122, 0.95), // #1F1F1F @95%
-            line_highlight_bg: color_f(0.145, 0.145, 0.145, 0.90), // 当前行高亮
-            line_number_fg: color_f(0.52, 0.52, 0.52, 1.0), // 行号保持完全不透明
-            line_number_bg: color_f(0.122, 0.122, 0.122, 0.95), // 行号背景与编辑区一致
-            // 选择高亮：统一为 #0078D4 强调色体系
-            selection_bg: color_f(0.0, 0.47, 0.83, 0.50), // #0078D4 @50%
-            cursor_color: color_f(0.85, 0.85, 0.85, 1.0), // 光标不透明
-            // 侧边栏：中间层（导航区）
-            sidebar_bg: color_f(0.106, 0.106, 0.110, 0.80), // #1B1B1C @80%
-            // 状态栏：与侧边栏同层的深色表面（现代扁平风格，信息靠文字层次区分）
-            statusbar_bg: color_f(0.106, 0.106, 0.110, 0.85), // #1B1B1C @85%
-            // 标签栏
-            tab_active_bg: color_f(0.122, 0.122, 0.122, 0.90), // 活跃标签与编辑区同层
-            tab_inactive_bg: color_f(0.106, 0.106, 0.110, 0.70), // 非活跃标签与侧边栏同层
-            // 文本始终不透明
-            text_default: color_f(0.83, 0.83, 0.83, 1.0), // #D4D4D4
-            // Glass-specific
-            titlebar_bg: color_f(0.106, 0.106, 0.110, 0.85), // 标题栏与侧边栏同层
-            activity_bar_bg: color_f(0.078, 0.078, 0.078, 0.85), // #141414 @85% — 最深层
-            panel_border: color_f(1.0, 1.0, 1.0, 0.10),      // 白 10%，增强区块边界感
-            shadow: color_f(0.0, 0.0, 0.0, 0.25),            // 柔和阴影
-            glow_selection: color_f(0.0, 0.47, 0.83, 0.45),  // #0078D4 @45%
-            command_palette_bg: color_f(0.14, 0.14, 0.14, 0.92), // 命令面板
-            submenu_bg: color_f(0.14, 0.14, 0.14, 0.92),     // 子菜单
+            editor_bg: color_f(0.985, 0.998, 0.992, 0.92),
+            line_highlight_bg: color_f(0.845, 0.940, 0.895, 0.80),
+            line_number_fg: color_f(0.36, 0.44, 0.40, 1.0),
+            line_number_bg: color_f(0.965, 0.988, 0.977, 0.90),
+            selection_bg: color_f(0.60, 0.83, 0.72, 0.55),
+            cursor_color: color_f(0.07, 0.45, 0.33, 1.0),
+            sidebar_bg: color_f(0.965, 0.988, 0.977, 0.82),
+            statusbar_bg: color_f(0.870, 0.958, 0.920, 0.88),
+            tab_active_bg: color_f(1.0, 1.0, 1.0, 0.96),
+            tab_inactive_bg: color_f(0.965, 0.988, 0.977, 0.72),
+            text_default: color_f(0.10, 0.16, 0.13, 1.0),
+            titlebar_bg: color_f(0.895, 0.963, 0.930, 0.88),
+            activity_bar_bg: color_f(0.965, 0.988, 0.977, 0.88),
+            panel_border: color_f(0.60, 0.83, 0.72, 0.75),
+            shadow: color_f(0.05, 0.20, 0.15, 0.12),
+            glow_selection: color_f(0.60, 0.83, 0.72, 0.45),
+            command_palette_bg: color_f(1.0, 1.0, 1.0, 0.97),
+            submenu_bg: color_f(1.0, 1.0, 1.0, 0.97),
             glass_enabled: true,
             syntax: SyntaxColors::shared(),
         }

@@ -63,6 +63,15 @@ pub const INPUT_FOOTER: &str = ">>>>>>> AETHER_END_INPUT";
 /// 网络安全检查标记（单行指令，范围参数）：`<<<<<<< AETHER_SECCHECK [all|secrets|deps|tls|plugins]`
 /// 生成离线优先的安全体检报告（密钥扫描/依赖漏洞/端点 TLS/插件权限）。
 pub const SECCHECK_PREFIX: &str = "<<<<<<< AETHER_SECCHECK";
+/// 验证门标记（单行指令，校验命令为参数）：`<<<<<<< AETHER_VERIFY <command>`
+/// 运行校验命令（测试/构建/类型检查等），结果异步回喂模型据此判定成败并恢复。
+pub const VERIFY_PREFIX: &str = "<<<<<<< AETHER_VERIFY";
+/// 记忆检索标记（单行指令，查询为参数）：`<<<<<<< AETHER_RECALL <query>`
+/// 按语义检索跨会话长期记忆（playbook 经验/项目决策/约束），结果回喂模型。
+pub const RECALL_PREFIX: &str = "<<<<<<< AETHER_RECALL";
+/// 浏览器交互标记（单行指令，交互命令为参数）：`<<<<<<< AETHER_BROWSER_ACT <command>`
+/// 在当前活动浏览器页面执行 click/type/scroll/eval/back/forward/reload，结果回喂模型。
+pub const BROWSER_ACT_PREFIX: &str = "<<<<<<< AETHER_BROWSER_ACT";
 
 /// 快速判断回复是否包含需要工作区的 Agent 工具标记（用于"未打开工作区"前置校验）。
 ///
@@ -107,6 +116,13 @@ pub enum ToolRequest {
     /// 网络安全检查（参数为范围：all/secrets/deps/tls/plugins），
     /// 生成报告文本回喂模型
     SecCheck(String),
+    /// 验证门（参数为校验命令，如测试/构建）：异步执行，结果回喂模型判定成败
+    Verify(String),
+    /// 记忆检索（参数为查询）：语义检索跨会话长期记忆，结果回喂模型
+    Recall(String),
+    /// 浏览器交互（参数为命令 click/type/scroll/eval/back/forward/reload）：
+    /// 在当前活动浏览器页面注入 JS 执行，结果异步回喂模型
+    BrowserAct(String),
 }
 
 /// 解析单行指令标记，返回其后的参数（前缀后须紧跟空白或行尾）。
@@ -972,6 +988,30 @@ pub fn parse_tool_requests(response: &str) -> Vec<ToolRequest> {
             i += 1;
             continue;
         }
+        // 验证门：校验命令非空才有效
+        if let Some(p) = parse_directive(t, VERIFY_PREFIX) {
+            if !p.is_empty() {
+                reqs.push(ToolRequest::Verify(p));
+            }
+            i += 1;
+            continue;
+        }
+        // 记忆检索：查询非空才有效
+        if let Some(p) = parse_directive(t, RECALL_PREFIX) {
+            if !p.is_empty() {
+                reqs.push(ToolRequest::Recall(p));
+            }
+            i += 1;
+            continue;
+        }
+        // 浏览器交互：命令非空才有效
+        if let Some(p) = parse_directive(t, BROWSER_ACT_PREFIX) {
+            if !p.is_empty() {
+                reqs.push(ToolRequest::BrowserAct(p));
+            }
+            i += 1;
+            continue;
+        }
         i += 1
     }
     reqs
@@ -1829,6 +1869,32 @@ cargo test\n\
                 ToolRequest::ReadPage("https://example.com".to_string()),
                 ToolRequest::ReadPage("".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_requests_verify() {
+        let text = "验证一下：\n\
+<<<<<<< AETHER_VERIFY cargo test -p aether-core\n\
+<<<<<<< AETHER_VERIFY\n";
+        let reqs = parse_tool_requests(text);
+        assert_eq!(
+            reqs,
+            vec![ToolRequest::Verify("cargo test -p aether-core".to_string())],
+            "空命令应被忽略，非空命令解析为 Verify"
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_requests_recall() {
+        let text = "查一下经验：\n\
+<<<<<<< AETHER_RECALL 终端闪窗修复\n\
+<<<<<<< AETHER_RECALL\n";
+        let reqs = parse_tool_requests(text);
+        assert_eq!(
+            reqs,
+            vec![ToolRequest::Recall("终端闪窗修复".to_string())],
+            "空查询应被忽略，非空查询解析为 Recall"
         );
     }
 

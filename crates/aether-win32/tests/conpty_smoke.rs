@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 //! ConPTY 集成烟雾测试
 //!
 //! 验证 `aether_win32::conpty::ConPtySession` 在真实 Windows 环境下：
@@ -165,4 +167,33 @@ fn conpty_smoke_round_trip_echo() {
         marker,
         bytes.len()
     );
+}
+
+/// 烟雾测试 4：无控制台环境下 ConPTY 仍应工作（回归：打开终端闪窗修复）。
+///
+/// 本测试可执行文件使用 GUI 子系统，进程从启动起就没有控制台。直接 spawn
+/// 并断言后端为 ConPTY（而非管道回退），覆盖生产程序的实际运行环境。
+#[test]
+fn conpty_smoke_works_without_console() {
+    let _lock = CONPTY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (session, read_handle) =
+        ConPtySession::spawn(&cmd_path(), None, 80, 24).expect("spawn 失败");
+    assert!(
+        !session.is_pipe(),
+        "无控制台环境下 ConPTY 应成功，却回退到管道——CreatePseudoConsole 可能需要控制台"
+    );
+    assert!(session.is_alive(), "cmd.exe 未能保持运行");
+
+    let marker = "AETHER_CONPTY_NO_CONSOLE_4C9D2B";
+    session
+        .write_input(format!("echo {}\r\n", marker).as_bytes())
+        .expect("write_input 失败");
+    let bytes = drain_until(PipeReader::new(read_handle), Duration::from_secs(5), |c| {
+        String::from_utf8_lossy(c).contains(marker)
+    });
+    assert!(
+        String::from_utf8_lossy(&bytes).contains(marker),
+        "无控制台环境下 ConPTY 应能回显输入"
+    );
+    println!("✓ conpty_smoke[4]: 无控制台环境下 ConPTY 正常工作（无闪窗、未回退管道）");
 }

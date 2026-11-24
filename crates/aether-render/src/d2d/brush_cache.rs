@@ -10,6 +10,7 @@ use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_HIT_TEST_METRICS,
     DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_NEAR,
     DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING,
+    DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP,
 };
 
 /// 预存画笔槽位数量（覆盖最常用的主题颜色）
@@ -123,6 +124,8 @@ struct TextFormatKey {
     font_weight: u32,
     alignment: u8,
     paragraph_alignment: u8,
+    /// true = 单行不换行 + 尾部省略号（长文本以 "…" 截断）
+    single_line: bool,
 }
 
 impl TextFormatCache {
@@ -155,6 +158,7 @@ impl TextFormatCache {
                 font_weight: DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                 alignment: DWRITE_TEXT_ALIGNMENT_LEADING.0 as u8,
                 paragraph_alignment: DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u8,
+                single_line: false,
             };
             self.precomputed.push((key, fmt));
         }
@@ -171,6 +175,7 @@ impl TextFormatCache {
                 font_weight: DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                 alignment: DWRITE_TEXT_ALIGNMENT_TRAILING.0 as u8,
                 paragraph_alignment: DWRITE_PARAGRAPH_ALIGNMENT_NEAR.0 as u8,
+                single_line: false,
             };
             self.precomputed.push((key, fmt));
         }
@@ -187,6 +192,7 @@ impl TextFormatCache {
                 font_weight: DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                 alignment: DWRITE_TEXT_ALIGNMENT_CENTER.0 as u8,
                 paragraph_alignment: DWRITE_PARAGRAPH_ALIGNMENT_CENTER.0 as u8,
+                single_line: false,
             };
             self.precomputed.push((key, fmt));
         }
@@ -237,6 +243,7 @@ impl TextFormatCache {
             font_weight,
             alignment: text_alignment as u8,
             paragraph_alignment: paragraph_alignment as u8,
+            single_line: false,
         };
 
         // 1. 先查预存数组（通常 ≤ 3 项，线性扫描极快）
@@ -265,6 +272,71 @@ impl TextFormatCache {
         let result = format.clone();
         self.formats.insert(key, format);
         Ok(result)
+    }
+
+    /// 获取单行文本格式（不换行 + 尾部省略号 "…"）
+    ///
+    /// 用于标签页标题等「固定宽度、长文本必须单行显示」的场景。
+    /// 由 DirectWrite 在布局宽度不足时自动以省略号截断，避免长文件名
+    /// 折成两三行撑破标签栏；每帧无额外测量开销（裁剪在 DWrite 内部完成）。
+    pub fn get_single_line_format(
+        &mut self,
+        font_size: f32,
+        font_weight: u32,
+        text_alignment: u32,
+        paragraph_alignment: u32,
+    ) -> Result<IDWriteTextFormat> {
+        let key = TextFormatKey {
+            font_size: (font_size * 10.0) as u32,
+            font_weight,
+            alignment: text_alignment as u8,
+            paragraph_alignment: paragraph_alignment as u8,
+            single_line: true,
+        };
+        if let Some(format) = self.formats.get(&key) {
+            return Ok(format.clone());
+        }
+        if self.formats.len() >= MAX_TEXT_FORMAT_CACHE_ENTRIES {
+            self.formats.clear();
+        }
+        let format = self.create_single_line_format_internal(
+            font_size,
+            font_weight,
+            text_alignment,
+            paragraph_alignment,
+        )?;
+        let result = format.clone();
+        self.formats.insert(key, format);
+        Ok(result)
+    }
+
+    /// 创建单行 + 尾部省略号的文本格式（不缓存）
+    fn create_single_line_format_internal(
+        &self,
+        font_size: f32,
+        font_weight: u32,
+        text_alignment: u32,
+        paragraph_alignment: u32,
+    ) -> Result<IDWriteTextFormat> {
+        let format = self.create_format_internal(
+            font_size,
+            font_weight,
+            text_alignment,
+            paragraph_alignment,
+        )?;
+        unsafe {
+            let _ = format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            let trimming = DWRITE_TRIMMING {
+                granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+                delimiter: 0,
+                delimiterCount: 0,
+            };
+            // 省略号符号由 DWrite 创建并由 format 持有引用
+            if let Ok(sign) = self.dwrite_factory.CreateEllipsisTrimmingSign(&format) {
+                let _ = format.SetTrimming(&trimming, &sign);
+            }
+        }
+        Ok(format)
     }
 
     /// 获取代码文本格式（左对齐，顶部）

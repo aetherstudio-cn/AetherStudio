@@ -3,24 +3,81 @@
 //! 脚本行格式（每行一个动作，`#` 开头为注释）：
 //! - `type <文本>`：以 KEYEVENTF_UNICODE 逐 UTF-16 单元输入文本（支持中文）
 //! - `key <ctrl+shift+a>`：组合键/单键（修饰键 ctrl/shift/alt/win + 主键名）
-//! - `click <x,y>`：屏幕物理坐标左键单击（绝对坐标归一化 65535，DPI 感知）
+//! - `move <坐标>`：移动鼠标
+//! - `click <坐标> [left|right|middle]`：单击（默认左键）
+//! - `dblclick <坐标> [left|right|middle]`：双击
+//! - `down [<坐标>] [left|right|middle]`：按下鼠标（可先移动；拖拽起点）
+//! - `up [left|right|middle]`：释放鼠标（拖拽终点）
+//! - `drag <起点> <终点> [left|right|middle]`：按下并拖拽到终点后释放
+//! - `scroll <格数>` / `scroll <坐标> <格数>`：滚轮（正数向上、负数向下，一格 = WHEEL_DELTA）
 //! - `sleep <ms>`：等待指定毫秒（由 UI 线程定时器调度，不阻塞消息泵）
+//!
+//! 坐标：`x,y` 为屏幕物理像素；`win:x,y` 为相对应用窗口左上角（与 AETHER_SHOT
+//! window 截图像素一一对应，操作本应用时推荐使用）。
 //!
 //! 安全边界：Agent 发起的输入默认必须经确认卡片 + 确认对话框人工放行；
 //! 设置项 `agent.input_enabled` 可整体关闭 Agent 输入能力。
 //! 本模块注入的按键带 LLKHF_INJECTED 标志，keyboard_hook 已跳过，不会误吞。
 
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MOVE, MOUSEINPUT, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
-    VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8,
-    VK_F9, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT,
-    VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+    MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
+    MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_BACK,
+    VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3,
+    VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU,
+    VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    GetSystemMetrics, GetWindowRect, IsIconic, SetForegroundWindow, ShowWindow, SM_CXVIRTUALSCREEN,
+    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE,
 };
+
+/// 鼠标按键
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl MouseButton {
+    pub fn label(self) -> &'static str {
+        match self {
+            MouseButton::Left => "左键",
+            MouseButton::Right => "右键",
+            MouseButton::Middle => "中键",
+        }
+    }
+
+    fn flags(self) -> (MOUSE_EVENT_FLAGS, MOUSE_EVENT_FLAGS) {
+        match self {
+            MouseButton::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+            MouseButton::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+            MouseButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+        }
+    }
+}
+
+/// 目标坐标：屏幕物理像素，或相对应用窗口左上角（与窗口截图像素一致）
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AimPoint {
+    pub x: i32,
+    pub y: i32,
+    /// true = 相对应用窗口左上角；false = 屏幕物理像素
+    pub window: bool,
+}
+
+impl AimPoint {
+    pub fn describe(&self) -> String {
+        if self.window {
+            format!("窗口内 ({}, {})", self.x, self.y)
+        } else {
+            format!("屏幕 ({}, {})", self.x, self.y)
+        }
+    }
+}
 
 /// 单个输入动作（解析器产物，纯数据、可单测）
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,14 +86,68 @@ pub enum InputAction {
     Type(String),
     /// 按键：修饰键列表 + 主键名（均已小写规范化）
     Key { modifiers: Vec<String>, key: String },
-    /// 屏幕物理坐标左键单击
-    Click { x: i32, y: i32 },
+    /// 移动鼠标
+    Move(AimPoint),
+    /// 单击
+    Click { at: AimPoint, button: MouseButton },
+    /// 双击
+    DoubleClick { at: AimPoint, button: MouseButton },
+    /// 按下鼠标（可选先移动到指定坐标）
+    ButtonDown {
+        at: Option<AimPoint>,
+        button: MouseButton,
+    },
+    /// 释放鼠标
+    ButtonUp { button: MouseButton },
+    /// 从起点按下并拖拽到终点后释放
+    Drag {
+        from: AimPoint,
+        to: AimPoint,
+        button: MouseButton,
+    },
+    /// 滚轮：正数向上、负数向下（一格 = WHEEL_DELTA = 120）
+    Scroll { at: Option<AimPoint>, notches: i32 },
     /// 等待毫秒（上限 30 秒，防止脚本长时间挂起）
     Sleep(u64),
 }
 
 /// sleep 动作上限（毫秒）
 pub const MAX_SLEEP_MS: u64 = 30_000;
+
+/// 单次滚动上限（格），防止一次事件滚动量过大
+const MAX_SCROLL_NOTCHES: i32 = 100;
+
+/// 拖拽过程中的中间移动步数（让目标窗口收到连续 WM_MOUSEMOVE）
+const DRAG_STEPS: i32 = 8;
+
+/// 解析坐标：`x,y`（屏幕）或 `win:x,y`（应用窗口内）
+fn parse_point(tok: &str, no: usize) -> Result<AimPoint, String> {
+    let (window, body) = match tok.strip_prefix("win:") {
+        Some(rest) => (true, rest),
+        None => (false, tok),
+    };
+    let (xs, ys) = body
+        .split_once(',')
+        .ok_or_else(|| format!("第 {} 行：坐标需要 `x,y` 或 `win:x,y`", no))?;
+    let x: i32 = xs
+        .trim()
+        .parse()
+        .map_err(|_| format!("第 {} 行：x 坐标非法", no))?;
+    let y: i32 = ys
+        .trim()
+        .parse()
+        .map_err(|_| format!("第 {} 行：y 坐标非法", no))?;
+    Ok(AimPoint { x, y, window })
+}
+
+fn parse_button(tok: &str, no: usize) -> Result<MouseButton, String> {
+    match tok.to_ascii_lowercase().as_str() {
+        "left" | "l" => Ok(MouseButton::Left),
+        "right" | "r" => Ok(MouseButton::Right),
+        "middle" | "m" => Ok(MouseButton::Middle),
+        other => Err(format!("第 {} 行：未知鼠标按键 `{}`", no, other)),
+    }
+}
 
 /// 解析输入脚本为动作序列；任一行非法即整体报错（附行号），避免半截执行。
 pub fn parse_input_script(text: &str) -> Result<Vec<InputAction>, String> {
@@ -51,6 +162,7 @@ pub fn parse_input_script(text: &str) -> Result<Vec<InputAction>, String> {
             Some((v, r)) => (v.to_ascii_lowercase(), r.trim()),
             None => (line.to_ascii_lowercase(), ""),
         };
+        let toks: Vec<&str> = rest.split_whitespace().collect();
         match verb.as_str() {
             "type" => {
                 if rest.is_empty() {
@@ -84,19 +196,104 @@ pub fn parse_input_script(text: &str) -> Result<Vec<InputAction>, String> {
                     key,
                 });
             }
-            "click" => {
-                let (xs, ys) = rest
-                    .split_once(',')
-                    .ok_or_else(|| format!("第 {} 行：click 需要 `x,y` 坐标", no))?;
-                let x: i32 = xs
-                    .trim()
+            "move" => {
+                if toks.len() != 1 {
+                    return Err(format!("第 {} 行：move 需要 1 个坐标", no));
+                }
+                actions.push(InputAction::Move(parse_point(toks[0], no)?));
+            }
+            "click" | "dblclick" => {
+                if toks.is_empty() || toks.len() > 2 {
+                    return Err(format!(
+                        "第 {} 行：{} 需要 `<坐标> [left|right|middle]`",
+                        no, verb
+                    ));
+                }
+                let at = parse_point(toks[0], no)?;
+                let button = match toks.get(1) {
+                    Some(b) => parse_button(b, no)?,
+                    None => MouseButton::Left,
+                };
+                if verb == "click" {
+                    actions.push(InputAction::Click { at, button });
+                } else {
+                    actions.push(InputAction::DoubleClick { at, button });
+                }
+            }
+            "down" => {
+                if toks.len() > 2 {
+                    return Err(format!("第 {} 行：down 参数过多", no));
+                }
+                let (at, button) = match toks.first() {
+                    None => (None, MouseButton::Left),
+                    Some(first)
+                        if matches!(
+                            first.to_ascii_lowercase().as_str(),
+                            "left" | "l" | "right" | "r" | "middle" | "m"
+                        ) =>
+                    {
+                        (None, parse_button(first, no)?)
+                    }
+                    Some(first) => {
+                        let at = parse_point(first, no)?;
+                        let button = match toks.get(1) {
+                            Some(b) => parse_button(b, no)?,
+                            None => MouseButton::Left,
+                        };
+                        (Some(at), button)
+                    }
+                };
+                actions.push(InputAction::ButtonDown { at, button });
+            }
+            "up" => {
+                if toks.len() > 1 {
+                    return Err(format!("第 {} 行：up 参数过多", no));
+                }
+                let button = match toks.first() {
+                    Some(b) => parse_button(b, no)?,
+                    None => MouseButton::Left,
+                };
+                actions.push(InputAction::ButtonUp { button });
+            }
+            "drag" => {
+                if !(2..=3).contains(&toks.len()) {
+                    return Err(format!(
+                        "第 {} 行：drag 需要 `<起点> <终点> [left|right|middle]`",
+                        no
+                    ));
+                }
+                let from = parse_point(toks[0], no)?;
+                let to = parse_point(toks[1], no)?;
+                let button = match toks.get(2) {
+                    Some(b) => parse_button(b, no)?,
+                    None => MouseButton::Left,
+                };
+                actions.push(InputAction::Drag { from, to, button });
+            }
+            "scroll" => {
+                let (at, notches_tok) = match toks.len() {
+                    1 => (None, toks[0]),
+                    2 => (Some(parse_point(toks[0], no)?), toks[1]),
+                    _ => {
+                        return Err(format!(
+                            "第 {} 行：scroll 需要 `<格数>` 或 `<坐标> <格数>`",
+                            no
+                        ))
+                    }
+                };
+                let notches: i32 = notches_tok
                     .parse()
-                    .map_err(|_| format!("第 {} 行：click x 坐标非法", no))?;
-                let y: i32 = ys
-                    .trim()
-                    .parse()
-                    .map_err(|_| format!("第 {} 行：click y 坐标非法", no))?;
-                actions.push(InputAction::Click { x, y });
+                    .map_err(|_| format!("第 {} 行：滚动格数非法", no))?;
+                if notches == 0 {
+                    return Err(format!("第 {} 行：滚动格数不能为 0", no));
+                }
+                if notches.abs() > MAX_SCROLL_NOTCHES {
+                    return Err(format!(
+                        "第 {} 行：滚动格数超过上限 {}",
+                        no, MAX_SCROLL_NOTCHES
+                    ));
+                }
+                actions.push(InputAction::Scroll { at, notches });
             }
             "sleep" => {
                 let ms: u64 = rest
@@ -187,7 +384,29 @@ pub fn action_summary(actions: &[InputAction]) -> String {
                 combo.push_str(key);
                 format!("按键 {}", combo)
             }
-            InputAction::Click { x, y } => format!("左键点击 ({}, {})", x, y),
+            InputAction::Move(p) => format!("移动鼠标到{}", p.describe()),
+            InputAction::Click { at, button } => format!("{}单击{}", button.label(), at.describe()),
+            InputAction::DoubleClick { at, button } => {
+                format!("{}双击{}", button.label(), at.describe())
+            }
+            InputAction::ButtonDown { at, button } => match at {
+                Some(p) => format!("{}按下{}", button.label(), p.describe()),
+                None => format!("{}按下", button.label()),
+            },
+            InputAction::ButtonUp { button } => format!("{}释放", button.label()),
+            InputAction::Drag { from, to, button } => format!(
+                "{}拖拽{} → {}",
+                button.label(),
+                from.describe(),
+                to.describe()
+            ),
+            InputAction::Scroll { at, notches } => {
+                let dir = if *notches > 0 { "向上" } else { "向下" };
+                match at {
+                    Some(p) => format!("在{}滚动 {} 格（{}）", p.describe(), notches.abs(), dir),
+                    None => format!("滚动滚轮 {} 格（{}）", notches.abs(), dir),
+                }
+            }
             InputAction::Sleep(ms) => format!("等待 {}ms", ms),
         };
         out.push_str(&format!("{}. {}\n", i + 1, desc));
@@ -197,7 +416,8 @@ pub fn action_summary(actions: &[InputAction]) -> String {
 
 /// 执行单个动作（Sleep 由调度器处理，此处直接返回成功）。
 /// 所有按键/鼠标事件经 SendInput 注入，带注入标志不被自家键盘钩子拦截。
-pub fn execute_action(action: &InputAction) -> Result<(), String> {
+/// `win:` 坐标以应用窗口为锚点，执行前会尽力激活并还原窗口。
+pub fn execute_action(action: &InputAction, app_hwnd: HWND) -> Result<(), String> {
     match action {
         InputAction::Sleep(_) => Ok(()),
         InputAction::Type(text) => {
@@ -224,49 +444,129 @@ pub fn execute_action(action: &InputAction) -> Result<(), String> {
             }
             send(&inputs)
         }
-        InputAction::Click { x, y } => {
-            // 绝对坐标归一化到 0..65535（覆盖整个虚拟屏幕，物理像素）
-            let (vx, vy, vw, vh) = unsafe {
-                (
-                    GetSystemMetrics(SM_XVIRTUALSCREEN),
-                    GetSystemMetrics(SM_YVIRTUALSCREEN),
-                    GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1),
-                    GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
-                )
-            };
-            let nx = ((*x - vx) as i64 * 65535 / (vw as i64 - 1).max(1)) as i32;
-            let ny = ((*y - vy) as i64 * 65535 / (vh as i64 - 1).max(1)) as i32;
-            let move_input = INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dx: nx,
-                        dy: ny,
-                        dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
-                        ..Default::default()
-                    },
-                },
-            };
-            let down = INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dwFlags: MOUSEEVENTF_LEFTDOWN,
-                        ..Default::default()
-                    },
-                },
-            };
-            let up = INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dwFlags: MOUSEEVENTF_LEFTUP,
-                        ..Default::default()
-                    },
-                },
-            };
-            send(&[move_input, down, up])
+        InputAction::Move(p) => {
+            let (x, y) = resolve_point(p, app_hwnd)?;
+            send(&[mouse_move_input(x, y)])
         }
+        InputAction::Click { at, button } => {
+            let (x, y) = resolve_point(at, app_hwnd)?;
+            let (down, up) = button.flags();
+            send(&[
+                mouse_move_input(x, y),
+                mouse_button_input(down),
+                mouse_button_input(up),
+            ])
+        }
+        InputAction::DoubleClick { at, button } => {
+            let (x, y) = resolve_point(at, app_hwnd)?;
+            let (down, up) = button.flags();
+            send(&[
+                mouse_move_input(x, y),
+                mouse_button_input(down),
+                mouse_button_input(up),
+                mouse_button_input(down),
+                mouse_button_input(up),
+            ])
+        }
+        InputAction::ButtonDown { at, button } => {
+            let mut inputs: Vec<INPUT> = Vec::new();
+            if let Some(p) = at {
+                let (x, y) = resolve_point(p, app_hwnd)?;
+                inputs.push(mouse_move_input(x, y));
+            }
+            inputs.push(mouse_button_input(button.flags().0));
+            send(&inputs)
+        }
+        InputAction::ButtonUp { button } => send(&[mouse_button_input(button.flags().1)]),
+        InputAction::Drag { from, to, button } => {
+            let (x1, y1) = resolve_point(from, app_hwnd)?;
+            let (x2, y2) = resolve_point(to, app_hwnd)?;
+            let (down, up) = button.flags();
+            let mut inputs = vec![mouse_move_input(x1, y1), mouse_button_input(down)];
+            for step in 1..=DRAG_STEPS {
+                let x = x1 + (x2 - x1) * step / DRAG_STEPS;
+                let y = y1 + (y2 - y1) * step / DRAG_STEPS;
+                inputs.push(mouse_move_input(x, y));
+            }
+            inputs.push(mouse_button_input(up));
+            send(&inputs)
+        }
+        InputAction::Scroll { at, notches } => {
+            let mut inputs: Vec<INPUT> = Vec::new();
+            if let Some(p) = at {
+                let (x, y) = resolve_point(p, app_hwnd)?;
+                inputs.push(mouse_move_input(x, y));
+            }
+            inputs.push(wheel_input(*notches));
+            send(&inputs)
+        }
+    }
+}
+
+/// 解析目标坐标：`win:` 相对窗口左上角（与窗口截图一致），并尽力激活窗口。
+fn resolve_point(p: &AimPoint, app_hwnd: HWND) -> Result<(i32, i32), String> {
+    if !p.window {
+        return Ok((p.x, p.y));
+    }
+    unsafe {
+        if IsIconic(app_hwnd).as_bool() {
+            let _ = ShowWindow(app_hwnd, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(app_hwnd);
+        let mut rect = RECT::default();
+        GetWindowRect(app_hwnd, &mut rect).map_err(|e| format!("读取应用窗口位置失败: {}", e))?;
+        Ok((rect.left + p.x, rect.top + p.y))
+    }
+}
+
+/// 屏幕物理坐标 → 绝对移动事件（归一化 0..65535，覆盖整个虚拟屏幕）
+fn mouse_move_input(x: i32, y: i32) -> INPUT {
+    let (vx, vy, vw, vh) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
+        )
+    };
+    let nx = ((x - vx) as i64 * 65535 / (vw as i64 - 1).max(1)) as i32;
+    let ny = ((y - vy) as i64 * 65535 / (vh as i64 - 1).max(1)) as i32;
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: nx,
+                dy: ny,
+                dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                ..Default::default()
+            },
+        },
+    }
+}
+
+fn mouse_button_input(flag: MOUSE_EVENT_FLAGS) -> INPUT {
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dwFlags: flag,
+                ..Default::default()
+            },
+        },
+    }
+}
+
+/// 滚轮事件：一格 = WHEEL_DELTA (120)，正数向上、负数向下
+fn wheel_input(notches: i32) -> INPUT {
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                mouseData: (notches * 120) as u32,
+                dwFlags: MOUSEEVENTF_WHEEL,
+                ..Default::default()
+            },
+        },
     }
 }
 
@@ -345,6 +645,18 @@ impl InputSimRunner {
 mod tests {
     use super::*;
 
+    fn pt(x: i32, y: i32) -> AimPoint {
+        AimPoint {
+            x,
+            y,
+            window: false,
+        }
+    }
+
+    fn wpt(x: i32, y: i32) -> AimPoint {
+        AimPoint { x, y, window: true }
+    }
+
     #[test]
     fn test_parse_full_script() {
         let script = "# 注释\n\ntype 你好 world\nkey ctrl+shift+a\nclick 100,200\nsleep 500\n";
@@ -357,8 +669,60 @@ mod tests {
                     modifiers: vec!["ctrl".into(), "shift".into()],
                     key: "a".into()
                 },
-                InputAction::Click { x: 100, y: 200 },
+                InputAction::Click {
+                    at: pt(100, 200),
+                    button: MouseButton::Left
+                },
                 InputAction::Sleep(500),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_mouse_actions() {
+        let script = "\
+move win:10,20
+click 5,6 right
+dblclick win:1,2
+down win:3,4
+up
+drag win:1,1 win:9,9 middle
+scroll -3
+scroll win:7,8 2
+";
+        let actions = parse_input_script(script).unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                InputAction::Move(wpt(10, 20)),
+                InputAction::Click {
+                    at: pt(5, 6),
+                    button: MouseButton::Right
+                },
+                InputAction::DoubleClick {
+                    at: wpt(1, 2),
+                    button: MouseButton::Left
+                },
+                InputAction::ButtonDown {
+                    at: Some(wpt(3, 4)),
+                    button: MouseButton::Left
+                },
+                InputAction::ButtonUp {
+                    button: MouseButton::Left
+                },
+                InputAction::Drag {
+                    from: wpt(1, 1),
+                    to: wpt(9, 9),
+                    button: MouseButton::Middle
+                },
+                InputAction::Scroll {
+                    at: None,
+                    notches: -3
+                },
+                InputAction::Scroll {
+                    at: Some(wpt(7, 8)),
+                    notches: 2
+                },
             ]
         );
     }
@@ -386,6 +750,16 @@ mod tests {
         assert!(parse_input_script("key ctrl+nosuchkey").is_err());
         assert!(parse_input_script("click 100").is_err());
         assert!(parse_input_script("click a,b").is_err());
+        assert!(parse_input_script("click win:1").is_err());
+        assert!(parse_input_script("click 1,2 nosuchbutton").is_err());
+        assert!(parse_input_script("move").is_err());
+        assert!(parse_input_script("move 1,2 3,4").is_err());
+        assert!(parse_input_script("drag 1,2").is_err());
+        assert!(parse_input_script("down 1,2 left extra").is_err());
+        assert!(parse_input_script("up left extra").is_err());
+        assert!(parse_input_script("scroll 0").is_err());
+        assert!(parse_input_script("scroll 101").is_err());
+        assert!(parse_input_script("scroll 1,2").is_err());
         assert!(parse_input_script("sleep abc").is_err());
         assert!(parse_input_script("sleep 99999999").is_err());
         assert!(parse_input_script("dance now").is_err());
@@ -409,12 +783,22 @@ mod tests {
 
     #[test]
     fn test_action_summary() {
-        let actions = parse_input_script("type hi\nkey ctrl+s\nclick 1,2\nsleep 50").unwrap();
+        let actions = parse_input_script(
+            "type hi\nkey ctrl+s\nclick 1,2\ndblclick win:3,4 right\ndrag win:1,1 win:2,2\nscroll -2\nsleep 50",
+        )
+        .unwrap();
         let s = action_summary(&actions);
         assert!(s.contains("1. 输入文本 \"hi\"（2 字符）"), "{}", s);
         assert!(s.contains("2. 按键 ctrl+s"), "{}", s);
-        assert!(s.contains("3. 左键点击 (1, 2)"), "{}", s);
-        assert!(s.contains("4. 等待 50ms"), "{}", s);
+        assert!(s.contains("3. 左键单击屏幕 (1, 2)"), "{}", s);
+        assert!(s.contains("4. 右键双击窗口内 (3, 4)"), "{}", s);
+        assert!(
+            s.contains("5. 左键拖拽窗口内 (1, 1) → 窗口内 (2, 2)"),
+            "{}",
+            s
+        );
+        assert!(s.contains("6. 滚动滚轮 2 格（向下）"), "{}", s);
+        assert!(s.contains("7. 等待 50ms"), "{}", s);
     }
 
     #[test]

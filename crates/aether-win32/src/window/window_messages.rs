@@ -145,6 +145,9 @@ unsafe fn on_timer_ui_anim(hwnd: HWND) -> LRESULT {
                     btn_hover,
                     input_focused,
                 );
+                // 标记动画涉及的区域（活动栏/标签栏/AI 面板/侧栏），
+                // 避免空脏区兜底全窗口重绘（悬停动画期间每帧整窗重绘 = 卡顿）
+                st.mark_ui_anim_dirty();
                 hist || hover || ai
             })
             .unwrap_or(false)
@@ -168,7 +171,7 @@ unsafe fn on_timer_input_sim(hwnd: HWND) -> LRESULT {
                 was_active = st.ui.input_sim.is_active();
                 let now = std::time::Instant::now();
                 while let Some(action) = st.ui.input_sim.next_ready(now) {
-                    if let Err(e) = crate::input_sim::execute_action(&action) {
+                    if let Err(e) = crate::input_sim::execute_action(&action, hwnd) {
                         st.ui.status_message = format!("模拟输入失败：{}", e);
                         st.ui.input_sim.clear();
                         break;
@@ -191,7 +194,12 @@ unsafe fn on_timer_input_sim(hwnd: HWND) -> LRESULT {
 /// AI 温数据归档：周期检查空闲会话并异步归档进 MemoryStore（AetherDB）
 unsafe fn on_timer_ai_archive(hwnd: HWND) -> LRESULT {
     if let Some(state) = get_and_set_state(hwnd) {
-        state.borrow_mut().ai.ai_panel.trigger_warm_archive();
+        let mut st = state.borrow_mut();
+        let processed = st.ai.ai_panel.trigger_warm_archive();
+        // 归档完成后记忆库可能已沉淀新条目：标记记忆页缓存过期
+        if processed > 0 {
+            st.ui.settings_panel.memory_dirty = true;
+        }
     }
     LRESULT(0)
 }
@@ -635,6 +643,235 @@ pub(crate) unsafe fn on_wm_app_14(
     });
     // REQ-P1-07: 触发 WM_PAINT 统一渲染，避免双重渲染
     invalidate_window(_hwnd);
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 15 —— 软件自截图（无需前台）
+///
+/// 捕获本窗口自身渲染内容落盘到固定路径 `selfshot.png`，供后台验收/外部程序触发：
+/// 不切换前台、不抓取其它窗口（仅 PrintWindow，无屏幕拷贝回退）。
+pub(crate) unsafe fn on_wm_app_15(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    let path = crate::screen_capture::selfshot_path();
+    let result = crate::screen_capture::capture_own_window_to_path(hwnd, &path);
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            let mut st = state.borrow_mut();
+            st.ui.status_message = match &result {
+                Ok(p) => format!("本窗口截图已保存：{}", p.display()),
+                Err(e) => format!("本窗口截图失败：{}", e),
+            };
+            st.win.dirty_tracker.mark_full_window();
+        }
+    });
+    invalidate_window(hwnd);
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 16 —— 程序化点击（无需前台/物理鼠标）
+///
+/// 读取 `click_cmd.json`（`{"x":..,"y":..}` 逻辑坐标，或 `{"action":"命中区名"}`），
+/// 换算为物理像素后合成 WM_LBUTTONDOWN/UP，走与真实点击完全相同的分发逻辑。
+pub(crate) unsafe fn on_wm_app_16(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_LBUTTONDOWN, WM_LBUTTONUP};
+
+    let set_status = |msg: String| {
+        EDITOR_STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                state.borrow_mut().ui.status_message = msg.clone();
+            }
+        });
+        // 结果回写文件，供外部调用方读取点击是否生效（接口反馈）
+        let result_path = crate::hit_test::click_cmd_path()
+            .parent()
+            .map(|p| p.join("click_result.txt"))
+            .unwrap_or_else(|| std::path::PathBuf::from("click_result.txt"));
+        let _ = std::fs::write(result_path, msg);
+    };
+
+    let raw = match std::fs::read_to_string(crate::hit_test::click_cmd_path()) {
+        Ok(s) => s,
+        Err(_) => {
+            set_status("程序化点击：未找到 click_cmd.json".to_string());
+            return LRESULT(0);
+        }
+    };
+    // 容错 UTF-8 BOM（部分编辑器/PowerShell 写文件会带 BOM）
+    let cmd: serde_json::Value = match serde_json::from_str(raw.trim_start_matches('\u{feff}')) {
+        Ok(v) => v,
+        Err(e) => {
+            set_status(format!("程序化点击：JSON 解析失败 {}", e));
+            return LRESULT(0);
+        }
+    };
+
+    // 解析目标逻辑坐标：优先命中区名，其次显式 x/y
+    let logical = if let Some(action) = cmd.get("action").and_then(|v| v.as_str()) {
+        crate::hit_test::find_region_center(action)
+    } else {
+        match (
+            cmd.get("x").and_then(|v| v.as_f64()),
+            cmd.get("y").and_then(|v| v.as_f64()),
+        ) {
+            (Some(x), Some(y)) => Some((x as f32, y as f32)),
+            _ => None,
+        }
+    };
+    let Some((lx, ly)) = logical else {
+        set_status("程序化点击：无法解析坐标或命中区名".to_string());
+        return LRESULT(0);
+    };
+
+    let dpi = EDITOR_STATE.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|st| st.borrow().win.dpi_scale)
+            .unwrap_or(1.0)
+    });
+    let px = (lx * dpi).round() as i16;
+    let py = (ly * dpi).round() as i16;
+    let lp = LPARAM((((py as u16 as u32) << 16) | (px as u16 as u32)) as isize);
+    // MK_LBUTTON = 1：按下时标记左键 held，与真实点击一致
+    SendMessageW(hwnd, WM_LBUTTONDOWN, WPARAM(1), lp);
+    SendMessageW(hwnd, WM_LBUTTONUP, WPARAM(0), lp);
+    set_status(format!("程序化点击：({}, {})", lx, ly));
+    invalidate_window(hwnd);
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 17 —— 程序化发送 AI 消息（无需前台）
+///
+/// 读取 `%TEMP%\Aether\msg.txt` 作为用户输入，走与发送按钮完全相同的链路
+/// （gather_context + send_message_with_prepared_context），用于程序化驱动对话。
+pub(crate) unsafe fn on_wm_app_17(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    let msg_path = std::env::temp_dir().join("Aether").join("msg.txt");
+    let text = match std::fs::read_to_string(&msg_path) {
+        Ok(s) => s.trim_start_matches('\u{feff}').trim().to_string(),
+        Err(_) => {
+            EDITOR_STATE.with(|s| {
+                if let Some(state) = s.borrow().as_ref() {
+                    state.borrow_mut().ui.status_message =
+                        "程序化发消息：未找到 msg.txt".to_string();
+                }
+            });
+            return LRESULT(0);
+        }
+    };
+    if text.is_empty() {
+        return LRESULT(0);
+    }
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            let mut st = state.borrow_mut();
+            st.ai.ai_panel.input = text;
+            st.ai.ai_panel.input_focused = true;
+            let settings = st.ui.app_settings.active_ai_settings();
+            let mode = st.ai.ai_panel.mode;
+            let attachments = st.ai.ai_panel.attachments.clone();
+            let context = st.gather_context(&attachments);
+            match st
+                .ai
+                .ai_panel
+                .send_message_with_prepared_context(&settings, context, mode)
+            {
+                Ok(_) => {
+                    st.ui.status_message = "AI 请求已发送（程序化）".to_string();
+                    let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(
+                        hwnd,
+                        AI_TIMER_ID,
+                        crate::window::AI_REFRESH_MS,
+                        None,
+                    );
+                }
+                Err(e) => st.ui.status_message = e,
+            }
+            st.ai.ai_panel.input_focused = false;
+            st.win.dirty_tracker.mark_full_window();
+        }
+    });
+    invalidate_window(hwnd);
+    LRESULT(0)
+}
+
+/// msg if msg == WM_APP + 18 —— 程序化配置 AI 模型（无需前台）
+///
+/// 读取 `%TEMP%\Aether\model_config.json`（api_key/provider/base_url/model/display_name），
+/// 进入新建模型草稿、填入字段并触发「验证密钥后保存」（DPAPI 加密持久化）。
+pub(crate) unsafe fn on_wm_app_18(
+    hwnd: HWND,
+    _msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    let cfg_path = std::env::temp_dir()
+        .join("Aether")
+        .join("model_config.json");
+    let cfg = std::fs::read_to_string(&cfg_path).ok().and_then(|s| {
+        serde_json::from_str::<serde_json::Value>(s.trim_start_matches('\u{feff}')).ok()
+    });
+    let Some(cfg) = cfg else {
+        EDITOR_STATE.with(|s| {
+            if let Some(state) = s.borrow().as_ref() {
+                state.borrow_mut().ui.status_message =
+                    "配置模型：未找到或无法解析 model_config.json".to_string();
+            }
+        });
+        return LRESULT(0);
+    };
+    let get = |k: &str| {
+        cfg.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let api_key = get("api_key");
+    let provider = get("provider");
+    let base_url = get("base_url");
+    let model = get("model");
+    let display_name = get("display_name");
+    EDITOR_STATE.with(|s| {
+        if let Some(state) = s.borrow().as_ref() {
+            let mut st = state.borrow_mut();
+            st.ui.settings_panel.begin_new_model_draft();
+            st.ui.settings_panel.model_editing = true;
+            st.ui.settings_panel.active_tab = crate::settings::SettingsTab::Models;
+            if !api_key.is_empty() {
+                st.ui.settings_panel.api_key = api_key;
+            }
+            if !provider.is_empty() {
+                st.ui.settings_panel.provider = provider;
+            }
+            if !base_url.is_empty() {
+                st.ui.settings_panel.base_url = base_url;
+            }
+            st.ui.settings_panel.model = if model.is_empty() {
+                "deepseek-chat".to_string()
+            } else {
+                model
+            };
+            if !display_name.is_empty() {
+                st.ui.settings_panel.display_name = display_name;
+            }
+            st.save_ai_settings_with_test();
+            st.ui.status_message = "正在验证并保存模型配置…".to_string();
+            st.win.dirty_tracker.mark_full_window();
+        }
+    });
+    invalidate_window(hwnd);
     LRESULT(0)
 }
 

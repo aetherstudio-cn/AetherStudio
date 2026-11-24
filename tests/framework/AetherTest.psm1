@@ -48,6 +48,7 @@ public class AetherWin32 {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool SendMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
     [DllImport("user32.dll")] public static extern short GetKeyState(int nVirtKey);
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
     [DllImport("user32.dll")] public static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
@@ -606,7 +607,8 @@ function Save-AetherScreenshot {
     <# 截取窗口区域，保存到 tests/screenshots/<用例名>/<Name>.png，返回路径 #>
     param(
         [Parameter(Mandatory)]$Window,
-        [Parameter(Mandatory)][string]$Name
+        [Parameter(Mandatory)][string]$Name,
+        [switch]$Direct
     )
     $sub = if ($script:Case) { Join-Path $script:ScreenshotDir $script:Case.Name } else { $script:ScreenshotDir }
     New-Item -ItemType Directory -Force -Path $sub | Out-Null
@@ -616,8 +618,22 @@ function Save-AetherScreenshot {
     if ($w -le 0 -or $h -le 0) { throw "窗口尺寸无效 ${w}x${h}" }
     $bmp = New-Object System.Drawing.Bitmap($w, $h)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.CopyFromScreen($r.Left, $r.Top, 0, 0, $bmp.Size)
-    $g.Dispose()
+    try {
+        if ($Direct) {
+            $hdc = $g.GetHdc()
+            try {
+                if (-not [AetherWin32]::PrintWindow($Window.Hwnd, $hdc, 2)) {
+                    throw "PrintWindow 截图失败"
+                }
+            } finally {
+                $g.ReleaseHdc($hdc) | Out-Null
+            }
+        } else {
+            $g.CopyFromScreen($r.Left, $r.Top, 0, 0, $bmp.Size)
+        }
+    } finally {
+        $g.Dispose()
+    }
     $path = Join-Path $sub "$Name.png"
     $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()

@@ -19,7 +19,8 @@ use aether_db::kind;
 use aether_db::AetherDb;
 
 use crate::memory_store::{
-    ChatMessage, Conversation, MemoryStore, PlaybookBullet, PruneConfig, PruneLogEntry, PruneReport,
+    BulletFilter, ChatMessage, Conversation, MemoryStore, PlaybookBullet, PruneConfig,
+    PruneLogEntry, PruneReport,
 };
 
 /// 基于 AetherDB 的记忆存储（纯 Rust 嵌入式）
@@ -88,9 +89,7 @@ impl MemoryStore for AetherDbMemoryStore {
 
     fn upsert_conversation(&self, conv: &Conversation) -> Result<(), String> {
         let payload = to_payload(conv)?;
-        self.db
-            .lock()
-            .unwrap()
+        self.db()
             .put(
                 kind::CONVERSATION,
                 &conv.id,
@@ -214,6 +213,11 @@ impl MemoryStore for AetherDbMemoryStore {
         } else {
             bullet.harmful_count += 1;
         }
+        // 反馈即“最近被使用”：刷新更新时间，管理页排序随之变化
+        bullet.updated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(bullet.updated_at);
         let payload = to_payload(&bullet)?;
         db.put(
             kind::BULLET,
@@ -226,6 +230,14 @@ impl MemoryStore for AetherDbMemoryStore {
     }
 
     fn list_bullets(&self, section: Option<&str>) -> Result<Vec<PlaybookBullet>, String> {
+        self.list_bullets_filtered(section, &BulletFilter::All)
+    }
+
+    fn list_bullets_filtered(
+        &self,
+        section: Option<&str>,
+        filter: &BulletFilter,
+    ) -> Result<Vec<PlaybookBullet>, String> {
         let db = self.db();
         let recs = match section {
             Some(s) => db.scan_by_tag(kind::BULLET, s),
@@ -234,9 +246,35 @@ impl MemoryStore for AetherDbMemoryStore {
         let mut bullets: Vec<PlaybookBullet> = recs
             .into_iter()
             .filter_map(|r| from_payload(&r.payload).ok())
+            .filter(|b| filter.matches(b))
             .collect();
         bullets.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         Ok(bullets)
+    }
+
+    fn clear_bullets(&self, filter: &BulletFilter) -> Result<usize, String> {
+        let mut db = self.db();
+        // 先收集命中 key（scan 借用 db），再逐条删除（含向量墓碑）
+        let ids: Vec<String> = db
+            .scan(kind::BULLET)
+            .into_iter()
+            .filter(|r| {
+                from_payload::<PlaybookBullet>(&r.payload)
+                    .map(|b| filter.matches(&b))
+                    .unwrap_or(false)
+            })
+            .map(|r| r.key.clone())
+            .collect();
+        let mut n = 0;
+        for id in ids {
+            if db
+                .delete(kind::BULLET, &id)
+                .map_err(|e| format!("删除条目失败: {}", e))?
+            {
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     fn delete_bullet(&self, bullet_id: &str) -> Result<(), String> {
@@ -275,20 +313,59 @@ impl MemoryStore for AetherDbMemoryStore {
     fn search_bullets(
         &self,
         query_embedding: &[f32],
+        filter: &BulletFilter,
         k: usize,
     ) -> Result<Vec<(PlaybookBullet, f32)>, String> {
         self.check_dim(query_embedding)?;
+        if k == 0 {
+            return Ok(Vec::new());
+        }
         let db = self.db();
-        let hits = db.knn(kind::BULLET, query_embedding, k, None);
-        let mut results = Vec::with_capacity(hits.len());
+        let total = db.scan(kind::BULLET).len();
+        if total == 0 {
+            return Ok(Vec::new());
+        }
+
+        // 先取放大候选再按作用域过滤；过滤损耗过大时回退全量余弦扫描
+        let fetch = (k * 8).max(32).min(total);
+        let hits = db.knn(kind::BULLET, query_embedding, fetch, None);
+        let mut results = Vec::with_capacity(k.min(hits.len()));
         for hit in hits {
             if let Some(rec) = db.get(kind::BULLET, &hit.key) {
                 if let Ok(b) = from_payload::<PlaybookBullet>(&rec.payload) {
-                    results.push((b, hit.distance));
+                    if filter.matches(&b) {
+                        results.push((b, hit.distance));
+                        if results.len() >= k {
+                            break;
+                        }
+                    }
                 }
             }
         }
-        Ok(results)
+        if results.len() >= k || total <= fetch {
+            return Ok(results);
+        }
+
+        let mut all: Vec<(PlaybookBullet, f32)> = db
+            .scan(kind::BULLET)
+            .into_iter()
+            .filter_map(|rec| {
+                let b: PlaybookBullet = from_payload(&rec.payload).ok()?;
+                if !filter.matches(&b) {
+                    return None;
+                }
+                let v = rec.vector.as_ref()?;
+                let dot: f32 = query_embedding
+                    .iter()
+                    .zip(v.iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
+                Some((b, 1.0 - dot))
+            })
+            .collect();
+        all.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        all.truncate(k);
+        Ok(all)
     }
 
     fn flush(&self) -> Result<(), String> {
@@ -491,6 +568,9 @@ mod tests {
             content: format!("内容-{}", id),
             helpful_count: helpful,
             harmful_count: harmful,
+            scope: crate::memory_store::MemoryScope::Global,
+            workspace_hash: String::new(),
+            workspace_name: String::new(),
             embedding: emb,
             created_at: 1,
             updated_at: 1,
@@ -578,6 +658,9 @@ mod tests {
                 content: "git 操作前先检查工作区是否干净".into(),
                 helpful_count: 0,
                 harmful_count: 0,
+                scope: crate::memory_store::MemoryScope::Global,
+                workspace_hash: String::new(),
+                workspace_name: String::new(),
                 embedding: Some(vec![1.0, 0.0, 0.0, 0.0]),
                 created_at: 1,
                 updated_at: 1,
@@ -597,7 +680,9 @@ mod tests {
         assert_eq!(bullets[0].harmful_count, 1);
 
         // 向量已更新
-        let hits = store.search_bullets(&[0.0, 1.0, 0.0, 0.0], 5).unwrap();
+        let hits = store
+            .search_bullets(&[0.0, 1.0, 0.0, 0.0], &BulletFilter::All, 5)
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0.id, "b1");
 
@@ -605,9 +690,78 @@ mod tests {
         store.delete_bullet("b1").unwrap();
         assert!(store.delete_bullet("b1").is_err());
         assert!(store
-            .search_bullets(&[0.0, 1.0, 0.0, 0.0], 5)
+            .search_bullets(&[0.0, 1.0, 0.0, 0.0], &BulletFilter::All, 5)
             .unwrap()
             .is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_bullet_scope_isolation() {
+        let (dir, store) = temp_store();
+        let mut global = sample_bullet("g", 0, 0, Some(vec![1.0, 0.0, 0.0, 0.0]));
+        global.scope = crate::memory_store::MemoryScope::Global;
+        let mut proj_a = sample_bullet("pa", 0, 0, Some(vec![1.0, 0.0, 0.0, 0.0]));
+        proj_a.scope = crate::memory_store::MemoryScope::Project;
+        proj_a.workspace_hash = "ws-a".into();
+        proj_a.workspace_name = "项目A".into();
+        let mut proj_b = sample_bullet("pb", 0, 0, Some(vec![1.0, 0.0, 0.0, 0.0]));
+        proj_b.scope = crate::memory_store::MemoryScope::Project;
+        proj_b.workspace_hash = "ws-b".into();
+        proj_b.workspace_name = "项目B".into();
+        store.upsert_bullet(&global).unwrap();
+        store.upsert_bullet(&proj_a).unwrap();
+        store.upsert_bullet(&proj_b).unwrap();
+
+        // 工作区 A：全局 + A 的项目记忆可见，B 不可见
+        let filter = BulletFilter::visible(true, Some("ws-a".into()));
+        let ids: Vec<String> = store
+            .list_bullets_filtered(None, &filter)
+            .unwrap()
+            .into_iter()
+            .map(|b| b.id)
+            .collect();
+        assert!(ids.contains(&"g".to_string()));
+        assert!(ids.contains(&"pa".to_string()));
+        assert!(!ids.contains(&"pb".to_string()));
+
+        // 向量检索同样隔离
+        let hits = store
+            .search_bullets(&[1.0, 0.0, 0.0, 0.0], &filter, 3)
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().all(|(b, _)| b.id != "pb"));
+
+        // 关闭全局开关 → 只剩项目记忆
+        let only_proj = BulletFilter::visible(false, Some("ws-a".into()));
+        let hits = store
+            .search_bullets(&[1.0, 0.0, 0.0, 0.0], &only_proj, 3)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.id, "pa");
+
+        // 精确作用域去重视角
+        let exact = BulletFilter::exact(crate::memory_store::MemoryScope::Global, "");
+        let hits = store
+            .search_bullets(&[1.0, 0.0, 0.0, 0.0], &exact, 3)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.id, "g");
+
+        // 按作用域清空
+        let n = store
+            .clear_bullets(&BulletFilter::visible(true, Some("ws-a".into())))
+            .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(
+            store
+                .list_bullets(None)
+                .unwrap()
+                .into_iter()
+                .map(|b| b.id)
+                .collect::<Vec<_>>(),
+            vec!["pb".to_string()]
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

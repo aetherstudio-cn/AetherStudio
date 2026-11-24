@@ -327,7 +327,7 @@ pub fn scroll_sidebar(state: &mut EditorState, delta_y: f32) {
                 _ => 0.0,
             };
             let total_height = (estimated_nodes + 1.0 + input_extra) * node_height + 20.0;
-            let sidebar_region = state.ui.layout.sidebar_region();
+            let sidebar_region = state.file_tree_region();
             let visible_height = sidebar_region.height;
             let max_scroll = (total_height - visible_height).max(0.0);
             state.fs.sidebar_scroll_y =

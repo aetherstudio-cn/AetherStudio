@@ -39,24 +39,9 @@ pub(super) fn open_in_new_tab(state: &mut EditorState, tab: Tab) {
     state.dismiss_default_new_tab();
     // 打开标签需保证右侧编辑区可见（智能体模式面板默认收起，否则新标签无视觉反馈）
     state.ui.layout.ensure_right_panel_visible();
+    // emit_event(TabChanged) 内部已标记右面板（标签栏+内容）与状态栏脏区，
+    // 无需再标中间列（AI 面板与活动标签无关）
     state.emit_event(crate::events::EditorEvent::TabChanged);
-    // 标记标签栏和编辑器区域脏区，避免新标签打开时触发全窗口重绘
-    let editor_region = state.ui.layout.editor_region();
-    let tab_region = state.ui.layout.tab_bar_region(state.show_tab_bar());
-    state.win.dirty_tracker.mark_region(
-        editor_region.x,
-        editor_region.y,
-        editor_region.width,
-        editor_region.height,
-        crate::dirty_rect::DirtyRegionType::EditorContent,
-    );
-    state.win.dirty_tracker.mark_region(
-        tab_region.x,
-        tab_region.y,
-        tab_region.width,
-        tab_region.height,
-        crate::dirty_rect::DirtyRegionType::TabBar,
-    );
 }
 
 pub fn load_file(state: &mut EditorState, path: PathBuf) {
@@ -304,6 +289,7 @@ pub fn save_as(state: &mut EditorState, path: PathBuf) -> bool {
 }
 
 pub fn open_folder(state: &mut EditorState, path: PathBuf) {
+    let t_open = std::time::Instant::now();
     // 异步扫描：先快速同步验证路径可读，再启动后台线程扫描根层
     // 同步预检避免无效路径白白启动线程
     if let Err(e) = std::fs::read_dir(&path) {
@@ -331,13 +317,25 @@ pub fn open_folder(state: &mut EditorState, path: PathBuf) {
     if let Some(warm) = state.ai.ai_panel.warm_data_store.as_ref() {
         warm.set_workspace(&path);
     }
+    // 项目记忆按工作区隔离：切换后记忆页缓存需重建
+    state.ui.settings_panel.memory_dirty = true;
+    // 侧栏「其它工作区会话」缓存失效：切换后需要按新归属重建
+    state.ai.sidebar_ws_cache_at = None;
     // 同步终端工作目录到新工作区
     state.terminal.terminal_panel.cwd = path.to_string_lossy().to_string();
-    // 立即持久化 last_workspace（读盘改写，避免其它窗口的陈旧副本覆写）
-    state.ui.app_settings.ui.last_workspace = state.fs.current_folder.clone();
-    if let Err(e) = aether_shared::settings::AppSettings::persist_last_workspace(Some(&path)) {
-        eprintln!("警告: 保存 last_workspace 失败: {}", e);
+    // 立即持久化 last_workspace（读盘改写，避免其它窗口的陈旧副本覆写）。
+    // 启动恢复上次工作区时磁盘值与目标一致，跳过整份 settings.json 的
+    // 读改写（原子写 + fsync），消除启动路径上的一次磁盘往返。
+    if state.ui.app_settings.ui.last_workspace.as_deref() != Some(path.as_path()) {
+        state.ui.app_settings.ui.last_workspace = state.fs.current_folder.clone();
+        if let Err(e) = aether_shared::settings::AppSettings::persist_last_workspace(Some(&path)) {
+            eprintln!("警告: 保存 last_workspace 失败: {}", e);
+        }
     }
+    tracing::info!(
+        ms = t_open.elapsed().as_millis() as u64,
+        "启动耗时：open_folder 持久化 last_workspace"
+    );
     state.ui.status_message = format!("正在扫描: {}...", path.display());
     state.ui.recent_projects.add(&path);
 
@@ -345,6 +343,10 @@ pub fn open_folder(state: &mut EditorState, path: PathBuf) {
     // （保存已在上面完成，此处仅加载）
     let workspace_hash = workspace_path_hash(&path);
     load_workspace_ai_session(state, &workspace_hash);
+    tracing::info!(
+        ms = t_open.elapsed().as_millis() as u64,
+        "启动耗时：open_folder 加载工作区 AI 会话"
+    );
 
     state.fs.file_tree = Some(FileTree::new());
     // 重置文件树缓存与交互状态，防止旧索引在新树中越界/错位
@@ -368,6 +370,10 @@ pub fn open_folder(state: &mut EditorState, path: PathBuf) {
     state.lsp.lsp.completion_items.clear();
     state.lsp.lsp.completion_visible = false;
     state.lsp.lsp.init(&path);
+    tracing::info!(
+        ms = t_open.elapsed().as_millis() as u64,
+        "启动耗时：open_folder 初始化 LSP"
+    );
 
     let hwnd = state.win.hwnd;
     let path_clone = path.clone();
@@ -508,6 +514,7 @@ pub fn close_workspace(state: &mut EditorState) {
     if let Some(warm) = state.ai.ai_panel.warm_data_store.as_ref() {
         warm.set_workspace(std::path::Path::new(""));
     }
+    state.ui.settings_panel.memory_dirty = true;
 
     state.fs.file_tree = None;
     state.fs.current_folder = None;

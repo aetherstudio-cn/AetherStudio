@@ -143,7 +143,6 @@ unsafe fn lbd_titlebar_controls(
     let user_btn_x = tb.user_btn_x;
     let settings_btn_x = tb.settings_btn_x;
     let right_panel_btn_x = tb.right_panel_btn_x;
-    let bottom_panel_btn_x = tb.bottom_panel_btn_x;
     let left_sidebar_btn_x = tb.left_sidebar_btn_x;
 
     let mut st = state.borrow_mut();
@@ -182,11 +181,6 @@ unsafe fn lbd_titlebar_controls(
         return Some(LRESULT(0));
     } else if mouse_x >= right_panel_btn_x {
         st.ui.layout.toggle_right_panel();
-        invalidate_window(hwnd);
-        return Some(LRESULT(0));
-    } else if mouse_x >= bottom_panel_btn_x {
-        // 终端注册为标签页
-        st.open_terminal_tab();
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     } else if mouse_x >= left_sidebar_btn_x {

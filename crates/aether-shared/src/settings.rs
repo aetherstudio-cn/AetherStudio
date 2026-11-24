@@ -23,6 +23,28 @@ pub struct AppSettings {
     /// Agent 能力开关（模拟输入等高风险能力默认需人工确认，可整体关闭）
     #[serde(default)]
     pub agent: AgentSettings,
+    /// 长期记忆行为开关（全局记忆 / 项目记忆）
+    #[serde(default)]
+    pub memory: MemorySettings,
+}
+
+/// 长期记忆行为配置
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct MemorySettings {
+    /// 允许读写全局记忆（跨工作区共享的通用经验）
+    pub global_enabled: bool,
+    /// 允许读写项目记忆（绑定当前工作区的经验）
+    pub project_enabled: bool,
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            global_enabled: true,
+            project_enabled: true,
+        }
+    }
 }
 
 impl std::fmt::Debug for AppSettings {
@@ -36,6 +58,7 @@ impl std::fmt::Debug for AppSettings {
             .field("active_model_id", &self.active_model_id)
             .field("update", &self.update)
             .field("agent", &self.agent)
+            .field("memory", &self.memory)
             .finish()
     }
 }
@@ -672,6 +695,7 @@ impl Default for AppSettings {
             active_model_id: None,
             update: UpdateSettings::default(),
             agent: AgentSettings::default(),
+            memory: MemorySettings::default(),
         }
     }
 }

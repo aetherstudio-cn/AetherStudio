@@ -56,28 +56,20 @@ impl EditorState {
                 windows::Win32::Graphics::Direct2D::D2D1_ANTIALIAS_MODE_ALIASED,
             );
 
-            let bg_color = if self.win.theme.glass_enabled {
-                self.win.theme.tab_inactive_bg
-            } else {
-                color_f(0.145, 0.145, 0.149, 1.0)
-            };
+            let bg_color = self.win.theme.tab_inactive_bg;
             let bg_brush = self
                 .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &bg_color)
                 .unwrap();
-            let _active_bg_brush = self
+            let active_bg_brush = self
                 .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &self.win.theme.tab_active_bg)
                 .unwrap();
-            let hover_color = if self.win.theme.glass_enabled {
-                color_f(0.25, 0.25, 0.27, 0.85)
-            } else {
-                color_f(0.22, 0.22, 0.24, 1.0)
-            };
+            let hover_color = app_theme::accent_soft();
             let hover_bg_brush = self
                 .win
                 .render_ctx
@@ -90,38 +82,22 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &self.win.theme.text_default)
                 .unwrap();
-            let active_text_color = color_f(1.0, 1.0, 1.0, 1.0);
+            let active_text_color = app_theme::accent_text();
             let active_text_brush = self
                 .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &active_text_color)
                 .unwrap();
-            let border_color = if self.win.theme.glass_enabled {
-                self.win.theme.panel_border
-            } else {
-                color_f(0.2, 0.2, 0.2, 1.0)
-            };
+            let border_color = app_theme::border();
             let border_brush = self
                 .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &border_color)
                 .unwrap();
-            // 活动标签发光颜色（玻璃模式下 brighter glow）
-            let glow_color = if self.win.theme.glass_enabled {
-                color_f(0.35, 0.35, 0.38, 0.90)
-            } else {
-                color_f(0.22, 0.22, 0.24, 1.0)
-            };
-            let glow_brush = self
-                .win
-                .render_ctx
-                .brush_cache
-                .get_brush(target, &glow_color)
-                .unwrap();
             // 活动标签顶部强调色高亮线（现代 accent，替代纯白）
-            let accent_color = color_f(0.30, 0.76, 1.0, 1.0); // #4CC2FF
+            let accent_color = app_theme::accent();
             let accent_brush = self
                 .win
                 .render_ctx
@@ -130,14 +106,14 @@ impl EditorState {
                 .unwrap();
 
             // SubTask 7.3: 关闭按钮矢量图标颜色 — 默认灰，hover 白
-            let close_default_color = color_f(180.0 / 255.0, 180.0 / 255.0, 180.0 / 255.0, 1.0);
+            let close_default_color = app_theme::text_secondary();
             let close_default_brush = self
                 .win
                 .render_ctx
                 .brush_cache
                 .get_brush(target, &close_default_color)
                 .unwrap();
-            let close_hover_icon_color = color_f(1.0, 1.0, 1.0, 1.0);
+            let close_hover_icon_color = app_theme::accent_text();
             let close_hover_icon_brush = self
                 .win
                 .render_ctx
@@ -145,7 +121,7 @@ impl EditorState {
                 .get_brush(target, &close_hover_icon_color)
                 .unwrap();
             // 关闭按钮 hover 时的圆角矩形背景
-            let close_hover_bg_color = color_f(0.4, 0.4, 0.4, 1.0);
+            let close_hover_bg_color = app_theme::accent_soft_hover();
             let close_hover_bg_brush = self
                 .win
                 .render_ctx
@@ -178,7 +154,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .text_format_cache
-                .get_format(
+                .get_single_line_format(
                     12.0,
                     DWRITE_FONT_WEIGHT_NORMAL.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -190,7 +166,7 @@ impl EditorState {
                 .win
                 .render_ctx
                 .text_format_cache
-                .get_format(
+                .get_single_line_format(
                     12.0,
                     windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT_SEMI_BOLD.0 as u32,
                     DWRITE_TEXT_ALIGNMENT_LEADING.0 as u32,
@@ -239,7 +215,7 @@ impl EditorState {
                     radiusY: 8.0,
                 };
                 if is_active {
-                    target.FillRoundedRectangle(&tab_rounded, &glow_brush);
+                    target.FillRoundedRectangle(&tab_rounded, &active_bg_brush);
 
                     // 活动标签顶部强调色高亮线（圆角细线）
                     let top_line = D2D_RECT_F {
@@ -257,12 +233,9 @@ impl EditorState {
                 } else {
                     let p = crate::ui_anim::quantize(self.ui.hover_anim.tab_progress(i));
                     if p > 0.0 {
-                        let hover_alpha = if self.win.theme.glass_enabled {
-                            0.85 * p
-                        } else {
-                            p
-                        };
-                        let anim_hover_color = color_f(0.25, 0.25, 0.27, hover_alpha);
+                        let hover_alpha = 0.85 * p;
+                        let mut anim_hover_color = app_theme::accent_soft_hover();
+                        anim_hover_color.a = hover_alpha;
                         let anim_hover_brush = self
                             .win
                             .render_ctx
@@ -304,13 +277,18 @@ impl EditorState {
                         y + height - 2.0
                     },
                 };
-                // 视觉层次：活动标签纯白半粗体；非活动标签随悬停进度提亮（0.72 → 1.0）
                 let (tab_text_brush, tab_text_format) = if is_active {
                     (active_text_brush.clone(), &tab_format_active)
                 } else {
                     let p = crate::ui_anim::quantize(self.ui.hover_anim.tab_progress(i));
-                    let v = 0.72 + 0.28 * p;
-                    let c = color_f(v, v, v, 1.0);
+                    let base = app_theme::text_secondary();
+                    let hover = app_theme::text_primary();
+                    let c = color_f(
+                        base.r + (hover.r - base.r) * p,
+                        base.g + (hover.g - base.g) * p,
+                        base.b + (hover.b - base.b) * p,
+                        1.0,
+                    );
                     (
                         self.win
                             .render_ctx
@@ -428,7 +406,7 @@ impl EditorState {
                 if drag_idx < self.editor.tab_bar.tabs.len()
                     && drop_idx <= self.editor.tab_bar.tabs.len()
                 {
-                    let drop_line_color = color_f(100.0 / 255.0, 150.0 / 255.0, 1.0, 1.0);
+                    let drop_line_color = app_theme::accent();
                     let drop_line_brush = self
                         .win
                         .render_ctx
@@ -473,9 +451,9 @@ impl EditorState {
                     target.FillRoundedRectangle(&rounded_rect, &hover_bg_brush);
                 }
                 let plus_icon_color = if self.editor.tab_bar.plus_button_hover {
-                    color_f(1.0, 1.0, 1.0, 1.0)
+                    app_theme::accent()
                 } else {
-                    color_f(0.7, 0.7, 0.7, 1.0)
+                    app_theme::text_secondary()
                 };
                 let plus_icon_brush = self
                     .win

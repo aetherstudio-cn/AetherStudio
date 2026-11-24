@@ -1087,6 +1087,8 @@ unsafe fn okd_empty_search(
             }
         }
     }
+    // 搜索框状态变化（清空/退格）：标记 NTP 区域脏区，避免空脏区触发全窗口重绘
+    st.mark_new_tab_page_dirty();
     drop(st);
     if let Some(url) = external_url {
         crate::browser::open_external_url(&url);

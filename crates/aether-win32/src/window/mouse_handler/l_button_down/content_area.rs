@@ -187,18 +187,43 @@ pub(super) unsafe fn lbd_sidebar(
             return Some(LRESULT(0));
         }
     }
-    // 4. 对话历史折叠/展开
-    // TODO: 添加对话历史折叠/展开的命中检测
-
-    // 5. 工作区文件列表点击（复用现有逻辑）
-    // 文件树区域被下移（上面有新会话按钮和对话标签页），
-    // 使用渲染时记录的偏移量调整坐标
-    let sidebar_rel_x = mouse_x - sidebar_region.x;
-    let sidebar_rel_y = mouse_y - sidebar_region.y - st.ai.ai_panel.agent_file_tree_offset_y;
-    if st.handle_sidebar_click(sidebar_rel_x, sidebar_rel_y) {
+    // 4. 其它工作区的会话行：先切换到该工作区，再打开目标会话
+    let mut target_conv: Option<(String, String)> = None;
+    for (path, conv_id, rx, ry, rw, rh) in &st.ai.ai_panel.agent_ws_conv_regions {
+        if mouse_x >= *rx && mouse_x < rx + rw && mouse_y >= *ry && mouse_y < ry + rh {
+            target_conv = Some((path.clone(), conv_id.clone()));
+            break;
+        }
+    }
+    if let Some((path, conv_id)) = target_conv {
+        let is_current = st
+            .fs
+            .current_folder
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .as_deref()
+            == Some(path.as_str());
+        if !is_current {
+            st.open_folder(std::path::PathBuf::from(path));
+        }
+        st.ai.ai_panel.open_conversation_by_id(&conv_id);
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     }
+    // 5. 工作区分组头：点击切换到该工作区（加载其对话）
+    let mut target_ws: Option<String> = None;
+    for (path, rx, ry, rw, rh) in &st.ai.ai_panel.agent_workspace_regions {
+        if mouse_x >= *rx && mouse_x < rx + rw && mouse_y >= *ry && mouse_y < ry + rh {
+            target_ws = Some(path.clone());
+            break;
+        }
+    }
+    if let Some(path) = target_ws {
+        st.open_folder(std::path::PathBuf::from(path));
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
     // 点击已确认在侧边栏区域内，即使未命中任何交互元素也应消费事件
     invalidate_window(hwnd);
     Some(LRESULT(0))
@@ -215,6 +240,44 @@ pub(super) unsafe fn lbd_right_panel(
     let right_panel_region = layout.right_panel_region();
     if !(layout.right_panel_visible && right_panel_region.contains(mouse_x, mouse_y)) {
         return None;
+    }
+
+    // 常驻右面板默认页：Qoder 卡片页 / 展开的工作区文件树
+    {
+        let st = state.borrow();
+        let ntp = (st.editor.tab_bar.tabs.is_empty() || st.active_tab_is_new_tab())
+            && !st.active_tab_is_settings();
+        let tree_open = st.right_panel_tree_open;
+        let ftp = st.file_tree_region();
+        drop(st);
+        if ntp && ftp.contains(mouse_x, mouse_y) {
+            if tree_open {
+                // 文件树点击（几何用 file_tree_region）
+                let rel_x = mouse_x - ftp.x;
+                let rel_y = mouse_y - ftp.y;
+                state.borrow_mut().handle_sidebar_click(rel_x, rel_y);
+                invalidate_window(hwnd);
+                return Some(LRESULT(0));
+            }
+            // Qoder 卡片页：按命中区动作分发
+            if let Some(action) = crate::hit_test::region_action_at(mouse_x, mouse_y) {
+                let mut st = state.borrow_mut();
+                match action.as_str() {
+                    "ntp:open_files" => st.right_panel_tree_open = true,
+                    "ntp:browser" => {
+                        let _ = st.open_browser_tab("");
+                    }
+                    "ntp:terminal" => st.open_terminal_tab(),
+                    "ntp:review" => st.ui.status_message = "审阅（待接入）".to_string(),
+                    "ntp:more" => st.ui.status_message = "更多工具（待接入）".to_string(),
+                    _ => {}
+                }
+                invalidate_window(hwnd);
+                return Some(LRESULT(0));
+            }
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
     }
 
     // 右侧面板是文件编辑区，处理编辑器光标设置
@@ -907,6 +970,40 @@ unsafe fn lbd_right_panel_apply_input(
 ///
 /// 设置页渲染于右面板内容区，
 /// `region` 为实际渲染区域；各命中区由 render_settings_sidebar 以绝对坐标注册，此处直接命中测试。
+/// 设置独立整页的高优先级点击拦截：覆盖标题栏以下全窗，防止点击泄漏到下层
+/// 侧栏/AI 面板。先处理「← 回到应用」返回按钮，再委托设置页交互，空白处消费事件。
+pub(super) unsafe fn lbd_settings_fullpage(
+    hwnd: HWND,
+    state: &Rc<RefCell<EditorState>>,
+    mouse_x: f32,
+    mouse_y: f32,
+    layout: &crate::layout::LayoutManager,
+) -> Option<LRESULT> {
+    {
+        let st = state.borrow();
+        if !st.active_tab_is_settings() {
+            return None;
+        }
+        // 标题栏仍交给 lbd_titlebar（齿轮/窗控等）
+        if mouse_y < layout.title_bar_region().height {
+            return None;
+        }
+    }
+    let back_btn = state.borrow().settings_back_button_region(layout);
+    if back_btn.contains(mouse_x, mouse_y) {
+        state.borrow_mut().close_settings_tab();
+        invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+    let region = state.borrow().settings_page_region(layout);
+    if let Some(r) = lbd_settings_page(hwnd, state, mouse_x, mouse_y, region) {
+        return Some(r);
+    }
+    // 整页空白区域：消费事件，避免穿透到被覆盖的面板
+    invalidate_window(hwnd);
+    Some(LRESULT(0))
+}
+
 pub(super) unsafe fn lbd_settings_page(
     hwnd: HWND,
     state: &Rc<RefCell<EditorState>>,
@@ -971,11 +1068,140 @@ pub(super) unsafe fn lbd_settings_page(
 
     // 4. 导航标签切换
     if let Some(tab) = st.ui.settings_panel.hit_test_tab(mouse_x, mouse_y) {
+        if st.ui.settings_panel.active_tab != tab {
+            // 切换标签：滚动位置与记忆页确认态属于页内状态，需重置
+            st.ui.settings_panel.scroll_offset = 0.0;
+            st.ui.settings_panel.content_height = 0.0;
+            st.ui.settings_panel.memory_confirm_clear = None;
+            st.ui.settings_panel.memory_confirm_delete = None;
+            if tab == crate::settings::SettingsTab::Memory {
+                st.ui.settings_panel.memory_dirty = true;
+            }
+        }
         st.ui.settings_panel.active_tab = tab;
         st.ui.settings_panel.active_field = None;
         // 切换导航时退出模型编辑态，返回「模型」页默认展示列表
         st.ui.settings_panel.model_editing = false;
         invalidate_window(hwnd);
+        return Some(LRESULT(0));
+    }
+
+    // 4a. 记忆页：行为开关 / 记忆卡片 / 详情操作（删除与清空需二次确认）
+    if st.ui.settings_panel.active_tab == crate::settings::SettingsTab::Memory {
+        use crate::settings::MemoryHit;
+        if let Some(hit) = st.ui.settings_panel.hit_test_memory(mouse_x, mouse_y) {
+            let mut toast: Option<String> = None;
+            match hit {
+                MemoryHit::ToggleGlobal => {
+                    let enabled = !st.ui.app_settings.memory.global_enabled;
+                    st.ui.app_settings.memory.global_enabled = enabled;
+                    match st.ui.app_settings.save() {
+                        Ok(_) => {
+                            if let Some(warm) = st.ai.ai_panel.warm_data_store.as_ref() {
+                                warm.set_memory_toggles(&st.ui.app_settings.memory);
+                            }
+                            toast = Some(if enabled {
+                                "已开启全局记忆".to_string()
+                            } else {
+                                "已关闭全局记忆：不再读取或沉淀全局经验".to_string()
+                            });
+                        }
+                        Err(e) => {
+                            st.ui.app_settings.memory.global_enabled = !enabled;
+                            toast = Some(format!("保存设置失败：{}", e));
+                        }
+                    }
+                }
+                MemoryHit::ToggleProject => {
+                    let enabled = !st.ui.app_settings.memory.project_enabled;
+                    st.ui.app_settings.memory.project_enabled = enabled;
+                    match st.ui.app_settings.save() {
+                        Ok(_) => {
+                            if let Some(warm) = st.ai.ai_panel.warm_data_store.as_ref() {
+                                warm.set_memory_toggles(&st.ui.app_settings.memory);
+                            }
+                            toast = Some(if enabled {
+                                "已开启项目记忆".to_string()
+                            } else {
+                                "已关闭项目记忆：不再读取或沉淀项目经验".to_string()
+                            });
+                        }
+                        Err(e) => {
+                            st.ui.app_settings.memory.project_enabled = !enabled;
+                            toast = Some(format!("保存设置失败：{}", e));
+                        }
+                    }
+                }
+                MemoryHit::OpenCard(target) => {
+                    st.ui.settings_panel.memory_detail = Some(target);
+                    st.ui.settings_panel.scroll_offset = 0.0;
+                    st.ui.settings_panel.memory_confirm_clear = None;
+                    st.ui.settings_panel.memory_confirm_delete = None;
+                }
+                MemoryHit::Back => {
+                    st.ui.settings_panel.memory_detail = None;
+                    st.ui.settings_panel.scroll_offset = 0.0;
+                    st.ui.settings_panel.memory_confirm_clear = None;
+                    st.ui.settings_panel.memory_confirm_delete = None;
+                }
+                MemoryHit::ClearCard(target) | MemoryHit::ClearScope(target) => {
+                    let confirmed =
+                        st.ui.settings_panel.memory_confirm_clear.as_ref() == Some(&target);
+                    if confirmed {
+                        let removed = st
+                            .ai
+                            .ai_panel
+                            .warm_data_store
+                            .as_ref()
+                            .and_then(|w| w.clear_memories(&target.to_filter()).ok())
+                            .unwrap_or(0);
+                        st.ui.settings_panel.memory_confirm_clear = None;
+                        st.reload_memory_cache();
+                        toast = Some(format!("已清空「{}」的 {} 条记忆", target.title(), removed));
+                    } else {
+                        st.ui.settings_panel.memory_confirm_clear = Some(target);
+                        st.ui.settings_panel.memory_confirm_delete = None;
+                    }
+                }
+                MemoryHit::DeleteEntry(id) => {
+                    let confirmed =
+                        st.ui.settings_panel.memory_confirm_delete.as_deref() == Some(id.as_str());
+                    if confirmed {
+                        let result = st
+                            .ai
+                            .ai_panel
+                            .warm_data_store
+                            .as_ref()
+                            .map(|w| w.delete_bullet(&id));
+                        st.ui.settings_panel.memory_confirm_delete = None;
+                        match result {
+                            Some(Ok(())) => {
+                                st.reload_memory_cache();
+                                toast = Some("已删除 1 条记忆".to_string());
+                            }
+                            Some(Err(e)) => toast = Some(format!("删除失败：{}", e)),
+                            None => toast = Some("记忆库未启用".to_string()),
+                        }
+                    } else {
+                        st.ui.settings_panel.memory_confirm_delete = Some(id);
+                        st.ui.settings_panel.memory_confirm_clear = None;
+                    }
+                }
+            }
+            if let Some(msg) = toast {
+                st.ui.status_message = msg;
+            }
+            invalidate_window(hwnd);
+            return Some(LRESULT(0));
+        }
+        // 点击记忆页空白处：取消待确认状态
+        if st.ui.settings_panel.memory_confirm_clear.is_some()
+            || st.ui.settings_panel.memory_confirm_delete.is_some()
+        {
+            st.ui.settings_panel.memory_confirm_clear = None;
+            st.ui.settings_panel.memory_confirm_delete = None;
+            invalidate_window(hwnd);
+        }
         return Some(LRESULT(0));
     }
 
@@ -1947,6 +2173,8 @@ pub(super) unsafe fn lbd_history_window(
         if let Err(e) = st.ai.ai_panel.delete_history_item(i) {
             st.ui.status_message = format!("删除历史失败: {}", e);
         }
+        // 历史库变化：侧栏其它工作区会话缓存失效
+        st.ai.sidebar_ws_cache_at = None;
         invalidate_window(hwnd);
         return Some(LRESULT(0));
     }
@@ -2016,6 +2244,8 @@ pub(super) unsafe fn lbd_history_window(
                 Ok(n) => st.ui.status_message = format!("已清空 {} 条历史记录", n),
                 Err(e) => st.ui.status_message = format!("清空历史失败: {}", e),
             }
+            // 历史库变化：侧栏其它工作区会话缓存失效
+            st.ai.sidebar_ws_cache_at = None;
         }
         invalidate_window(hwnd);
         return Some(LRESULT(0));
@@ -2087,6 +2317,9 @@ unsafe fn lbd_new_tab_page(
         let btn_y = search_box.y + i as f32 * (btn_height + btn_gap);
         let rect = crate::layout::Region::new(search_box.x, btn_y, search_box.width, btn_height);
         if rect.contains(mouse_x, mouse_y) {
+            // NTP 区域状态变化（聚焦/失焦/按钮动作）：标脏右面板，
+            // 避免空脏区触发 on_paint 兜底全窗口重绘
+            st.mark_new_tab_page_dirty();
             match i {
                 0 => {
                     // 快捷搜索框：聚焦后可直接输入，回车即搜（无需先进浏览器）
@@ -2131,6 +2364,7 @@ unsafe fn lbd_new_tab_page(
     // 点击新标签页其他区域：释放搜索框焦点
     if st.browser.empty_search_focused {
         st.browser.reset_empty_search();
+        st.mark_new_tab_page_dirty();
     }
     invalidate_window(hwnd);
     Some(LRESULT(0))

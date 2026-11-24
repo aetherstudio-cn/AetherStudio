@@ -134,7 +134,6 @@ pub struct TitlebarButtons {
     pub user_btn_x: f32,
     pub settings_btn_x: f32,
     pub right_panel_btn_x: f32,
-    pub bottom_panel_btn_x: f32,
     pub left_sidebar_btn_x: f32,
     pub divider_x: f32,
     pub forward_btn_x: f32,
@@ -155,8 +154,7 @@ impl TitlebarButtons {
         let user_btn_x = minimize_x - tool_btn_gap - user_btn_size;
         let settings_btn_x = user_btn_x - tool_btn_gap - tool_btn_size;
         let right_panel_btn_x = settings_btn_x - tool_btn_gap - tool_btn_size;
-        let bottom_panel_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
-        let left_sidebar_btn_x = bottom_panel_btn_x - tool_btn_gap - tool_btn_size;
+        let left_sidebar_btn_x = right_panel_btn_x - tool_btn_gap - tool_btn_size;
         let divider_x = left_sidebar_btn_x - tool_btn_gap - 4.0;
         let forward_btn_x = divider_x - tool_btn_gap - tool_btn_size;
         let back_btn_x = forward_btn_x - tool_btn_gap - tool_btn_size;
@@ -171,7 +169,6 @@ impl TitlebarButtons {
             user_btn_x,
             settings_btn_x,
             right_panel_btn_x,
-            bottom_panel_btn_x,
             left_sidebar_btn_x,
             divider_x,
             forward_btn_x,
