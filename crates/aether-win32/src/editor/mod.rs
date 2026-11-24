@@ -192,6 +192,10 @@ pub struct PrevFrameState {
     pub status_message: String,
     /// 上一帧的活动标签页索引（用于检测标签切换）
     pub active_tab: usize,
+    /// 上一帧的标签页数量（用于检测标签新增/关闭，active_tab 不变时也能触发重绘）
+    pub tab_count: usize,
+    /// 上一帧右面板文件树展开态（卡片页↔文件树切换需重绘右面板，防重影）
+    pub right_panel_tree_open: bool,
 }
 
 impl Default for PrevFrameState {
@@ -209,6 +213,8 @@ impl Default for PrevFrameState {
             bottom_panel_visible: false,
             status_message: "就绪".to_string(),
             active_tab: 0,
+            tab_count: 0,
+            right_panel_tree_open: false,
         }
     }
 }
@@ -523,6 +529,10 @@ pub struct AiPanelState {
     pub workspace_ai_sessions: std::collections::HashMap<String, WorkspaceAiSessionSnapshot>,
     /// 当前工作区的 AI 会话 ID（None 表示未打开工作区或新工作区）
     pub current_workspace_ai_session: Option<String>,
+    /// 智能体侧栏「其它工作区会话」缓存：工作区哈希 -> 最近会话元数据（节流查库）
+    pub sidebar_ws_cache: HashMap<String, Vec<crate::ai_panel::ConversationMeta>>,
+    /// 缓存构建时间（None = 需重建，如工作区切换后）
+    pub sidebar_ws_cache_at: Option<std::time::Instant>,
 }
 
 /// 终端面板状态
@@ -636,6 +646,8 @@ pub struct EditorState {
     pub remote: RemoteState,
     /// 空闲内存优化：Frozen 冰冻态管理（最小化/长期空闲时释放内存）
     pub power: crate::power::PowerManager,
+    /// 右面板默认页是否展开工作区文件树（false=Qoder 式快捷卡片页，true=文件树）
+    pub right_panel_tree_open: bool,
 }
 
 /// 工作区 AI 面板快照：保存切换工作区时的完整对话标签页组状态
@@ -725,11 +737,18 @@ impl EditorState {
     pub(crate) const LARGE_FILE_BYTE_THRESHOLD: usize = 2 * 1024 * 1024;
 
     pub fn new(hwnd: HWND, is_main_window: bool) -> Result<Self> {
+        // 启动阶段耗时打点：窗口已可见但尚未泵消息，此间任何同步重活都会
+        // 表现为"打开软件卡顿一瞬间"。仅启动时输出数行 info 日志。
+        let startup_t = std::time::Instant::now();
         let d2d_factory = D2DFactory::new()?;
         let text_renderer = TextRenderer::new()?;
         let theme = Theme::glass();
         let key_map = KeyMap::new();
         let app_settings = AppSettings::load();
+        tracing::info!(
+            ms = startup_t.elapsed().as_millis() as u64,
+            "启动耗时：D2D/DWrite/主题/设置"
+        );
 
         // 创建 tokio runtime 驱动 LSP 异步操作
         let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
@@ -768,6 +787,10 @@ impl EditorState {
         // Phase H: 补全/悬停状态初始化
         let completion_items = Vec::new();
         let hover_content = None;
+        tracing::info!(
+            ms = startup_t.elapsed().as_millis() as u64,
+            "启动耗时：tokio runtime/LSP 客户端"
+        );
 
         let mut state = Self {
             win: WindowRenderState {
@@ -835,6 +858,8 @@ impl EditorState {
                 ai_panel: AiPanel::new(),
                 workspace_ai_sessions: std::collections::HashMap::new(),
                 current_workspace_ai_session: None,
+                sidebar_ws_cache: HashMap::new(),
+                sidebar_ws_cache_at: None,
             },
             terminal: TerminalState {
                 terminal_panel: TerminalPanel::new(),
@@ -863,7 +888,13 @@ impl EditorState {
             ui: UiPanelState {
                 status_message: "就绪".to_string(),
                 key_map,
-                layout: LayoutManager::new(1280.0, 800.0),
+                layout: {
+                    let mut l = LayoutManager::new(1280.0, 800.0);
+                    // 常驻右侧工作区文件面板（参考 Qoder）：默认显示，聊天区居中变窄
+                    l.right_panel_visible = true;
+                    l.right_panel_width = 280.0;
+                    l
+                },
                 menu_bar: MenuBar::new(),
                 activity_bar: ActivityBar::new(),
                 status_bar: StatusBar::new(),
@@ -907,6 +938,7 @@ impl EditorState {
                 clone_dialog: CloneRepoDialog::new(),
             },
             power: crate::power::PowerManager::new(),
+            right_panel_tree_open: false,
         };
         // 应用持久化的活动栏/菜单栏顺序（空配置使用默认顺序）
         let activity_order = state.ui.app_settings.ui.activity_bar_order.clone();
@@ -940,6 +972,10 @@ impl EditorState {
                 }
             }
         }
+        tracing::info!(
+            ms = startup_t.elapsed().as_millis() as u64,
+            "启动耗时：恢复上次工作区 open_folder"
+        );
 
         // 自动保存：启动周期兜底定时器（防抖定时器由编辑事件按需调度）
         state.start_autosave_periodic();
@@ -954,16 +990,24 @@ impl EditorState {
             );
         }
 
-        // 语义检索：初始化嵌入模型（模型文件缺失时回退 n-gram，不阻塞启动）
-        crate::ai_panel::try_init_default_model();
+        // 语义检索：嵌入模型（~90MB ONNX + tokenizer）在后台线程加载。
+        // 此前在 UI 线程同步 commit_from_file，启动瞬间会卡顿数百毫秒到数秒
+        //（调试构建更明显）；模型未就绪期间 embed_text 自动回退 n-gram 哈希向量。
+        let _ = std::thread::spawn(crate::ai_panel::try_init_default_model);
 
         // ACE Reflector：用当前 AI 配置启用归档后自动反思（无 API Key 时静默禁用）
         if let Some(warm) = state.ai.ai_panel.warm_data_store.as_ref() {
             warm.enable_reflector(&state.ui.app_settings.active_ai_settings());
+            // 记忆行为开关（全局/项目）随设置同步给温数据存储
+            warm.set_memory_toggles(&state.ui.app_settings.memory);
         }
 
         // Phase 2: 启动时从磁盘加载历史索引
         state.refresh_ai_history();
+        tracing::info!(
+            ms = startup_t.elapsed().as_millis() as u64,
+            "启动耗时：AI 历史索引"
+        );
 
         Ok(state)
     }

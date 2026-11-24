@@ -33,6 +33,11 @@ impl EditorState {
     }
     /// 发射一个编辑器事件到事件队列
     pub fn emit_event(&mut self, event: crate::events::EditorEvent) {
+        // 标签事件影响右面板（标签栏 + 标签内容）与状态栏：就地标记脏区，
+        // 避免「只入队事件、无脏区」时 on_paint 兜底全窗口重绘（新标签页卡顿）。
+        if event == crate::events::EditorEvent::TabChanged {
+            self.mark_tab_switch_dirty();
+        }
         self.input.event_queue.push(event);
     }
     /// P3.1: 请求内联补全建议（占位实现）
@@ -119,6 +124,51 @@ impl EditorState {
         // 自动保存：文本变更后按防抖延迟（重）设空闲保存定时器
         self.schedule_autosave_debounce();
     }
+    /// UI 悬停动画帧的脏区标记：只标记参与动画的区域
+    /// （活动栏 / 标签栏 / 中间列 AI 面板 / 侧边栏）。
+    ///
+    /// 动画定时器此前只做裸 `invalidate_window`，脏区为空时 `on_paint`
+    /// 会兜底全窗口重绘；而动画 16ms 一帧、持续约 100ms，鼠标划过标签栏/
+    /// 新标签页时连续整窗重绘（含 AI 面板长对话），是卡顿的主要来源之一。
+    pub(crate) fn mark_ui_anim_dirty(&mut self) {
+        use crate::dirty_rect::DirtyRegionType;
+        let ab = self.ui.layout.activity_bar_region();
+        self.win.dirty_tracker.mark_region(
+            ab.x,
+            ab.y,
+            ab.width,
+            ab.height,
+            DirtyRegionType::ActivityBar,
+        );
+        let tb = self.effective_tab_bar_region();
+        self.win.dirty_tracker.mark_region(
+            tb.x,
+            tb.y,
+            tb.width,
+            tb.height,
+            DirtyRegionType::TabBar,
+        );
+        // AI 面板微动效（chips / 按钮 / 输入聚焦环）在中间列
+        let ai = self.ui.layout.editor_content_region(false);
+        self.win.dirty_tracker.mark_region(
+            ai.x,
+            ai.y,
+            ai.width,
+            ai.height,
+            DirtyRegionType::EditorContent,
+        );
+        // 侧栏对话项悬停动效
+        let sb = self.ui.layout.sidebar_region();
+        if sb.width > 0.0 {
+            self.win.dirty_tracker.mark_region(
+                sb.x,
+                sb.y,
+                sb.width,
+                sb.height,
+                DirtyRegionType::Sidebar,
+            );
+        }
+    }
     /// 将事件队列中所有事件转换为脏矩形标记
     pub fn flush_events_to_dirty_tracker(&mut self) {
         // 预取布局区域，避免闭包多次借用 self.ui.layout
@@ -170,7 +220,7 @@ impl EditorState {
                         editor_region.width,
                         editor_region.height,
                     )),
-                    EditorEvent::TabChanged => None, // 由 switch_tab 显式标记局部区域
+                    EditorEvent::TabChanged => None, // emit_event 时已就地标记右面板/状态栏
                     EditorEvent::SidebarChanged => {
                         if sidebar_region.width > 0.0 {
                             Some((
@@ -405,6 +455,18 @@ impl EditorState {
                         self.ui.status_message = format!("桌面截图已保存：{}", path.display());
                     }
                     Err(e) => self.ui.status_message = format!("桌面截图失败：{}", e),
+                }
+            }
+            crate::menu_bar::CommandId::ToolsWindowShot => {
+                match crate::screen_capture::capture_own_window_to_path(
+                    self.win.hwnd,
+                    &crate::screen_capture::selfshot_path(),
+                ) {
+                    Ok(path) => {
+                        self.load_file(path.clone());
+                        self.ui.status_message = format!("本窗口截图已保存：{}", path.display());
+                    }
+                    Err(e) => self.ui.status_message = format!("本窗口截图失败：{}", e),
                 }
             }
             crate::menu_bar::CommandId::HelpAbout => {

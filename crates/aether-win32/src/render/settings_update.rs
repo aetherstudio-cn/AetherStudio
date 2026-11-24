@@ -1,3 +1,4 @@
+use super::app_theme;
 use super::*;
 
 impl EditorState {
@@ -75,9 +76,9 @@ impl EditorState {
                 bottom: cy + btn_h,
             };
             let btn_bg = if is_checking {
-                color_f(0.35, 0.35, 0.35, 1.0)
+                app_theme::switch_off()
             } else {
-                color_f(0.0, 0.47, 0.83, 1.0)
+                app_theme::accent()
             };
             let btn_bg_brush = self
                 .win

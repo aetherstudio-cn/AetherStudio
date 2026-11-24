@@ -331,49 +331,18 @@ impl EditorState {
             self.ui.layout.bottom_panel_visible != self.input.prev.bottom_panel_visible;
         let status_changed = self.ui.status_message != self.input.prev.status_message;
         let active_tab_changed = self.editor.tab_bar.active_tab != self.input.prev.active_tab;
+        // 标签数量变化也要重绘标签栏（active_tab 索引可能不变：
+        // 例如只剩默认新标签页时点击"+"，移除占位页后索引仍是 0）
+        let tab_count_changed = self.editor.tab_bar.tabs.len() != self.input.prev.tab_count;
         let dialog_visible = self.remote.clone_dialog.visible || self.ui.command_palette.visible;
 
-        // P5-2: 标签页切换只影响标签栏高亮、编辑器内容、状态栏三个区域，
-        // 侧边栏/活动栏/AI 面板与活动标签无关，改为精确标记省去 ~60% 绘制面积。
-        // 仅当新旧标签涉及 Settings 等特殊页类型时保留全窗口重绘
-        if active_tab_changed {
-            let is_special = |idx: usize| -> bool {
-                self.editor
-                    .tab_bar
-                    .tabs
-                    .get(idx)
-                    .map(|t| !t.is_file())
-                    .unwrap_or(true)
-            };
-            if is_special(self.input.prev.active_tab) || is_special(self.editor.tab_bar.active_tab)
-            {
-                self.win.dirty_tracker.mark_full_window();
-            } else {
-                let show_tab_bar = self.show_tab_bar();
-                let tab_region = self.ui.layout.tab_bar_region(show_tab_bar);
-                self.win.dirty_tracker.mark_region(
-                    tab_region.x,
-                    tab_region.y,
-                    tab_region.width,
-                    tab_region.height,
-                    crate::dirty_rect::DirtyRegionType::TabBar,
-                );
-                let editor_region = self.ui.layout.editor_region();
-                self.win.dirty_tracker.mark_region(
-                    editor_region.x,
-                    editor_region.y,
-                    editor_region.width,
-                    editor_region.height,
-                    crate::dirty_rect::DirtyRegionType::EditorContent,
-                );
-                let status_region = self.ui.layout.status_bar_region();
-                self.win.dirty_tracker.mark_status_bar(
-                    status_region.x,
-                    status_region.y,
-                    status_region.width,
-                    status_region.height,
-                );
-            }
+        // P5-2: 标签页切换只影响标签栏高亮、标签内容与状态栏。
+        // 标签栏与标签内容都渲染在右侧面板（智能体模式布局），中间列是
+        // AI 对话面板，与活动标签无关。此处统一按右面板标记脏区：
+        // 此前对设置/终端/浏览器/新标签页等"特殊标签"直接全窗口重绘，
+        // 是新建/切换新标签页卡顿的直接原因。
+        if active_tab_changed || tab_count_changed {
+            self.mark_tab_switch_dirty();
         }
 
         // 底部面板可见性变化属于重大布局变更，强制全量重绘以保证编辑器区域正确刷新
@@ -438,6 +407,23 @@ impl EditorState {
                 editor_region.height,
                 crate::dirty_rect::DirtyRegionType::EditorContent,
             );
+        }
+
+        // 右面板卡片页↔文件树切换：内容整体替换，标脏右面板防重影
+        if self.right_panel_tree_open != self.input.prev.right_panel_tree_open {
+            let rp = self.ui.layout.right_panel_region();
+            self.win.dirty_tracker.mark_region(
+                rp.x,
+                rp.y,
+                rp.width,
+                rp.height,
+                crate::dirty_rect::DirtyRegionType::RightPanel,
+            );
+        }
+        // 设置整页覆盖层占满全窗：激活期间任何重绘都标全窗，
+        // 否则局部脏区（悬停/光标）会漏掉覆盖层其余部分导致重影。
+        if self.active_tab_is_settings() {
+            self.win.dirty_tracker.mark_full_window();
         }
 
         // 根据状态变化推断最优渲染命令
@@ -653,9 +639,8 @@ impl EditorState {
             }
         }
 
-        // 全窗口清除只在全窗口重绘时执行
         if self.win.dirty_tracker.is_full_window() || !use_clip {
-            self.win.render_ctx.clear(&self.win.theme.editor_bg);
+            self.win.render_ctx.clear(&app_theme::page_bg_top());
         }
 
         // 预提取菜单栏数据，避免借用冲突
@@ -674,6 +659,19 @@ impl EditorState {
 
         // 2. 活动栏
         if self.ui.layout.activity_bar_shown() {
+            let activity_rect = D2D_RECT_F {
+                left: activity_region.x,
+                top: activity_region.y,
+                right: activity_region.x + activity_region.width,
+                bottom: activity_region.y + activity_region.height,
+            };
+            unsafe {
+                app_theme::fill_app_gradient(
+                    &target,
+                    &activity_rect,
+                    self.win.window_height as f32,
+                );
+            }
             self.render_activity_bar(&target, &activity_region);
         }
 
@@ -743,6 +741,11 @@ impl EditorState {
             let editor_w = right_panel_region.width;
             let editor_h = right_panel_region.height;
             self.render_agent_right_panel(&target, editor_x, editor_y, editor_w, editor_h);
+        }
+
+        // 6.5 设置独立整页：覆盖全窗（标题栏下方），含「← 回到应用」返回条
+        if self.active_tab_is_settings() {
+            self.render_settings_fullpage(&target);
         }
 
         // 7. 底部面板（终端、输出等）
@@ -973,6 +976,8 @@ impl EditorState {
             .status_message
             .clone_from(&self.ui.status_message);
         self.input.prev.active_tab = self.editor.tab_bar.active_tab;
+        self.input.prev.tab_count = self.editor.tab_bar.tabs.len();
+        self.input.prev.right_panel_tree_open = self.right_panel_tree_open;
     }
 
     /// EndDraw 失败后的恢复：标记全窗口并立即请求重绘。
@@ -1213,11 +1218,12 @@ impl EditorState {
 mod account;
 mod agent_right_panel;
 pub(crate) use agent_right_panel::{
-    new_tab_page_geom_in, NEW_TAB_BTN_COUNT, NEW_TAB_BTN_GAP, NEW_TAB_BTN_HEIGHT, NEW_TAB_BTN_WIDTH,
+    new_tab_page_geom_in, NEW_TAB_BTN_COUNT, NEW_TAB_BTN_GAP, NEW_TAB_BTN_HEIGHT,
 };
 mod agent_sidebar;
 mod ai;
 mod ai_history_window;
+mod app_theme;
 mod chrome;
 mod dialogs;
 mod editor_view;

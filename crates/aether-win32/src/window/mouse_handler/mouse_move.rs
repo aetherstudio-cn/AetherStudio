@@ -643,7 +643,6 @@ unsafe fn omm_titlebar_menu_hover(
         let user_btn_x = tb.user_btn_x;
         let settings_btn_x = tb.settings_btn_x;
         let right_panel_btn_x = tb.right_panel_btn_x;
-        let bottom_panel_btn_x = tb.bottom_panel_btn_x;
         let left_sidebar_btn_x = tb.left_sidebar_btn_x;
 
         // 右侧工具按钮组悬停检测（从右往左）
@@ -661,8 +660,6 @@ unsafe fn omm_titlebar_menu_hover(
             st.win.titlebar_hover_button = Some(4);
         } else if mouse_x >= right_panel_btn_x {
             st.win.titlebar_hover_button = Some(5);
-        } else if mouse_x >= bottom_panel_btn_x {
-            st.win.titlebar_hover_button = Some(6);
         } else if mouse_x >= left_sidebar_btn_x {
             st.win.titlebar_hover_button = Some(7);
         } else {
@@ -765,16 +762,14 @@ unsafe fn omm_file_tree_hover(
     layout: &crate::layout::LayoutManager,
 ) -> bool {
     let mut st = state.borrow_mut();
-    let sidebar_region = layout.sidebar_region();
+    // 文件树常驻右面板默认页：几何用 file_tree_region（与渲染/点击一致）
+    let tree_page = (st.editor.tab_bar.tabs.is_empty() || st.active_tab_is_new_tab())
+        && !st.active_tab_is_settings()
+        && st.right_panel_tree_open;
+    let ftp = st.file_tree_region();
     let _old_tree_hover = st.fs.hover_file_node;
-    if sidebar_region.contains(mouse_x, mouse_y) {
-        // 文件树区域被下移（上面有新会话按钮和对话标签页），
-        // 使用渲染时记录的偏移量调整坐标
-        let offset_y = st.ai.ai_panel.agent_file_tree_offset_y;
-        st.update_file_tree_hover(
-            mouse_x - sidebar_region.x,
-            mouse_y - sidebar_region.y - offset_y,
-        )
+    if tree_page && layout.right_panel_visible && ftp.contains(mouse_x, mouse_y) {
+        st.update_file_tree_hover(mouse_x - ftp.x, mouse_y - ftp.y)
     } else {
         let old = st.fs.hover_file_node.take();
         let old_root = std::mem::take(&mut st.fs.hover_file_tree_root);
@@ -795,6 +790,18 @@ unsafe fn omm_settings_hover(
     if st.ui.settings_panel.hover_tab.is_some() {
         st.ui.settings_panel.hover_tab = None;
         changed = true;
+    }
+    // 记忆页悬停（开关 / 卡片 / 操作按钮）
+    if st.ui.settings_panel.active_tab == crate::settings::SettingsTab::Memory {
+        let new_hover = if st.settings_page_region(layout).contains(mouse_x, mouse_y) {
+            st.ui.settings_panel.hit_test_memory(mouse_x, mouse_y)
+        } else {
+            None
+        };
+        if st.ui.settings_panel.memory_hover != new_hover {
+            st.ui.settings_panel.memory_hover = new_hover;
+            changed = true;
+        }
     }
     // 模型管理页悬停检测（仅列表视图）
     if st.ui.settings_panel.active_tab == crate::settings::SettingsTab::Models
@@ -951,6 +958,8 @@ unsafe fn omm_ai_hover(
         st.ai.ai_panel.hover_welcome_chip = None;
         let old_new_chat = st.ai.ai_panel.hover_new_chat;
         st.ai.ai_panel.hover_new_chat = false;
+        let old_ws_conv = st.ai.ai_panel.hover_ws_conv;
+        st.ai.ai_panel.hover_ws_conv = None;
         let old_model = st.ai.ai_panel.hover_model_btn;
         st.ai.ai_panel.hover_model_btn = false;
         let old_send = st.ai.ai_panel.hover_send_btn;
@@ -959,6 +968,7 @@ unsafe fn omm_ai_hover(
             || old_apply_hover != st.ai.ai_panel.hover_apply_button
             || old_welcome.is_some()
             || old_new_chat
+            || old_ws_conv.is_some()
             || old_model
             || old_send;
     }
@@ -966,7 +976,7 @@ unsafe fn omm_ai_hover(
     // 处理左侧边栏的对话标签页悬浮 + 中间 AI 面板悬浮
     let sidebar_region = layout.sidebar_region();
 
-    // 1. 左侧边栏：对话标签页悬浮
+    // 1. 左侧边栏：对话标签页悬浮（当前工作区 / 其它工作区）
     let tab_hover_changed = if sidebar_region.contains(mouse_x, mouse_y) {
         let old_tab_hover = st.ai.ai_panel.hover_tab;
         st.ai.ai_panel.hover_tab = st
@@ -978,12 +988,23 @@ unsafe fn omm_ai_hover(
                 mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
             })
             .map(|(i, ..)| *i);
-        old_tab_hover != st.ai.ai_panel.hover_tab
+        let old_ws_conv = st.ai.ai_panel.hover_ws_conv;
+        st.ai.ai_panel.hover_ws_conv =
+            st.ai
+                .ai_panel
+                .agent_ws_conv_regions
+                .iter()
+                .position(|(_, _, rx, ry, rw, rh)| {
+                    mouse_x >= *rx && mouse_x < *rx + *rw && mouse_y >= *ry && mouse_y < *ry + *rh
+                });
+        old_tab_hover != st.ai.ai_panel.hover_tab || old_ws_conv != st.ai.ai_panel.hover_ws_conv
     } else {
         // 鼠标不在侧边栏，清除标签页悬浮状态
         let old_tab_hover = st.ai.ai_panel.hover_tab;
         st.ai.ai_panel.hover_tab = None;
-        old_tab_hover.is_some()
+        let old_ws_conv = st.ai.ai_panel.hover_ws_conv;
+        st.ai.ai_panel.hover_ws_conv = None;
+        old_tab_hover.is_some() || old_ws_conv.is_some()
     };
 
     // 2. 中间 AI 面板区域：图片 chip 悬浮
@@ -1554,18 +1575,34 @@ pub(crate) unsafe fn compute_cursor_for_pos(_hwnd: HWND, x: i32, y: i32) -> Curs
                 if in_rect(st.ai.ai_panel.agent_new_chat_region) {
                     return CursorType::Hand;
                 }
-                let hit_item = st
-                    .ai
-                    .ai_panel
-                    .agent_tab_regions
-                    .iter()
-                    .chain(st.ai.ai_panel.agent_tab_close_regions.iter())
-                    .any(|(_, bx, by, bw, bh)| {
-                        mouse_x >= *bx
-                            && mouse_x < *bx + *bw
-                            && mouse_y >= *by
-                            && mouse_y < *by + *bh
-                    });
+                let hit_item =
+                    st.ai
+                        .ai_panel
+                        .agent_tab_regions
+                        .iter()
+                        .chain(st.ai.ai_panel.agent_tab_close_regions.iter())
+                        .any(|(_, bx, by, bw, bh)| {
+                            mouse_x >= *bx
+                                && mouse_x < *bx + *bw
+                                && mouse_y >= *by
+                                && mouse_y < *by + *bh
+                        })
+                        || st.ai.ai_panel.agent_workspace_regions.iter().any(
+                            |(_, bx, by, bw, bh)| {
+                                mouse_x >= *bx
+                                    && mouse_x < *bx + *bw
+                                    && mouse_y >= *by
+                                    && mouse_y < *by + *bh
+                            },
+                        )
+                        || st.ai.ai_panel.agent_ws_conv_regions.iter().any(
+                            |(_, _, bx, by, bw, bh)| {
+                                mouse_x >= *bx
+                                    && mouse_x < *bx + *bw
+                                    && mouse_y >= *by
+                                    && mouse_y < *by + *bh
+                            },
+                        );
                 if hit_item {
                     return CursorType::Hand;
                 }

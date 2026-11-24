@@ -1,5 +1,8 @@
 use super::*;
 
+/// 设置整页顶部返回条高度（含「← 回到应用」按钮）。
+pub const SETTINGS_BACK_BAR_H: f32 = 48.0;
+
 impl EditorState {
     /// REQ-P1-09: 交换活动标签页内容（替代原 sync_to_tab/sync_from_tab 的字段逐个同步）
     ///
@@ -106,6 +109,37 @@ impl EditorState {
             self.editor.tab_bar.active_tab = 0;
             self.emit_event(crate::events::EditorEvent::TabChanged);
         }
+    }
+    /// 标签切换/增删/重排后的统一脏区标记。
+    ///
+    /// 标签栏与标签内容（编辑器/NTP/设置/终端等）都渲染在右侧面板，
+    /// 因此必须标记右面板整体 + 状态栏；Markdown 预览切换按钮渲染在
+    /// 中间列右上角，随活动文件类型出现/消失，也需一并标记。
+    /// 若不标记，`on_paint` 会在脏区为空时兜底全窗口重绘（含 AI 面板
+    /// 长对话等大区域），表现为新建/切换新标签页时卡顿。
+    pub fn mark_tab_switch_dirty(&mut self) {
+        use crate::dirty_rect::DirtyRegionType;
+        let rp = self.ui.layout.right_panel_region();
+        self.win.dirty_tracker.mark_region(
+            rp.x,
+            rp.y,
+            rp.width,
+            rp.height,
+            DirtyRegionType::RightPanel,
+        );
+        let sb = self.ui.layout.status_bar_region();
+        self.win
+            .dirty_tracker
+            .mark_status_bar(sb.x, sb.y, sb.width, sb.height);
+        // Markdown 预览切换按钮（28x28，距中间列右侧/顶部各 8px）
+        let ec = self.ui.layout.editor_content_region(false);
+        self.win.dirty_tracker.mark_region(
+            (ec.x + ec.width - 36.0).max(ec.x),
+            ec.y,
+            36.0,
+            36.0,
+            DirtyRegionType::EditorContent,
+        );
     }
     /// 当前活动文件标签页的文件路径
     pub fn active_file_path(&self) -> Option<&std::path::PathBuf> {
@@ -345,31 +379,9 @@ impl EditorState {
             self.emit_event(crate::events::EditorEvent::TabChanged);
             // 离开默认新标签页后自动关闭它（启动台占位使命完成）
             self.dismiss_default_new_tab();
-            // 显式标记局部脏区域，避免标签切换触发全窗口重绘导致卡顿
-            let editor_region = self.ui.layout.editor_region();
-            let tab_region = self.ui.layout.tab_bar_region(self.show_tab_bar());
-            let status_region = self.ui.layout.status_bar_region();
-            self.win.dirty_tracker.mark_region(
-                editor_region.x,
-                editor_region.y,
-                editor_region.width,
-                editor_region.height,
-                crate::dirty_rect::DirtyRegionType::EditorContent,
-            );
-            self.win.dirty_tracker.mark_region(
-                tab_region.x,
-                tab_region.y,
-                tab_region.width,
-                tab_region.height,
-                crate::dirty_rect::DirtyRegionType::TabBar,
-            );
-            self.win.dirty_tracker.mark_region(
-                status_region.x,
-                status_region.y,
-                status_region.width,
-                status_region.height,
-                crate::dirty_rect::DirtyRegionType::StatusBar,
-            );
+            // 显式标记局部脏区域，避免标签切换触发全窗口重绘导致卡顿。
+            // 标签栏与内容区都渲染在右侧面板（不是中间列），必须标右面板。
+            self.mark_tab_switch_dirty();
             let sidebar_region = self.ui.layout.sidebar_region();
             if sidebar_region.width > 0.0 {
                 self.win.dirty_tracker.mark_region(
@@ -406,6 +418,7 @@ impl EditorState {
             self.cleanup_browser_instances();
             self.sync_terminal_focus_with_visibility();
             self.ui.status_message = "已关闭".to_string();
+            self.mark_tab_switch_dirty();
             return true;
         }
         // 保存 self.editor.content 中的最新内容到 last_closed_tab（文件 tab 才需要）
@@ -432,6 +445,7 @@ impl EditorState {
         self.sync_terminal_focus_with_visibility();
         self.ui.status_message =
             format!("已关闭，剩余 {} 个标签页", self.editor.tab_bar.tabs.len());
+        self.mark_tab_switch_dirty();
         !self.editor.tab_bar.tabs.is_empty()
     }
     /// P2-8: 带保存确认的关闭标签页。
@@ -509,6 +523,7 @@ impl EditorState {
         self.sync_terminal_focus_with_visibility();
         self.ui.status_message =
             format!("已关闭，剩余 {} 个标签页", self.editor.tab_bar.tabs.len());
+        self.mark_tab_switch_dirty();
         true
     }
     /// SubTask 9.4: 关闭除指定索引外的所有标签页。
@@ -543,6 +558,7 @@ impl EditorState {
         self.cleanup_browser_instances();
         self.sync_terminal_focus_with_visibility();
         self.ui.status_message = "已关闭其他标签页".to_string();
+        self.mark_tab_switch_dirty();
         true
     }
     /// SubTask 9.4: 关闭指定索引右侧的所有标签页。
@@ -585,6 +601,7 @@ impl EditorState {
         );
         self.cleanup_browser_instances();
         self.sync_terminal_focus_with_visibility();
+        self.mark_tab_switch_dirty();
         true
     }
     /// SubTask 9.4: 关闭所有标签页，并创建一个新的新标签页。
@@ -611,6 +628,7 @@ impl EditorState {
         self.cleanup_browser_instances();
         self.sync_terminal_focus_with_visibility();
         self.ui.status_message = "已关闭所有标签页".to_string();
+        self.mark_tab_switch_dirty();
     }
     /// Task 13.3: 恢复最后关闭的标签页（Ctrl+Shift+T）。
     /// 如果存在 `last_closed_tab`，则将其作为新标签页恢复并切换为活动标签页。
@@ -631,18 +649,24 @@ impl EditorState {
         self.editor.is_selecting = false;
         self.dismiss_default_new_tab();
         self.ui.status_message = "已恢复最后关闭的标签".to_string();
+        self.mark_tab_switch_dirty();
         true
     }
     /// 新建标签页（新标签页/浏览器风格起始页，标签栏 + 按钮的行为）
     pub fn new_tab(&mut self) -> usize {
         // REQ-P1-09: save current state to old tab, push new (empty) tab, swap it in
         self.swap_tab_content(self.editor.tab_bar.active_tab);
+        // 新建标签回到 Qoder 卡片默认页（退出文件树展开态）
+        self.right_panel_tree_open = false;
         let tab = crate::tabs::Tab::NewTab(false);
         self.editor.tab_bar.tabs.push(tab);
         self.editor.tab_bar.active_tab = self.editor.tab_bar.tabs.len() - 1;
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         self.editor.is_selecting = false;
         self.dismiss_default_new_tab();
+        // 默认新标签页被移除后 active_tab 可能回到旧值，render 的变化检测
+        // 无法感知内容已切换，必须在此显式标记（否则退化为全窗口重绘/卡顿）
+        self.mark_tab_switch_dirty();
         self.editor.tab_bar.active_tab
     }
     /// 新建文件标签页（原 + 按钮行为：新建空白文件；现为新标签页上的"新建文件"按钮）
@@ -655,6 +679,7 @@ impl EditorState {
         self.swap_tab_content(self.editor.tab_bar.active_tab);
         self.editor.is_selecting = false;
         self.dismiss_default_new_tab();
+        self.mark_tab_switch_dirty();
         self.editor.tab_bar.active_tab
     }
     /// 切换到下一个标签页
@@ -764,14 +789,19 @@ impl EditorState {
             self.ui.layout.tab_bar_region(show)
         }
     }
-    /// 设置页渲染区域：占据右面板内容区（标签栏下方）。
-    ///
-    /// 设置页的点击/悬停命中必须以该区域为门槛，与 render_agent_right_panel 的
-    /// 内容区几何保持一致，否则设置页交互会失效。
+    /// 设置页渲染区域：设置激活时为**整页**（标题栏 + 返回条下方，覆盖全窗），
+    /// 否则回退右面板内容区。设置页的点击/悬停命中以该区域为门槛，与渲染几何一致。
     pub fn settings_page_region(
         &self,
         layout: &crate::layout::LayoutManager,
     ) -> crate::layout::Region {
+        if self.active_tab_is_settings() {
+            let title_h = layout.title_bar_region().height;
+            let status_h = layout.status_bar_region().height;
+            let top = title_h + SETTINGS_BACK_BAR_H;
+            let h = (layout.window_height - top - status_h).max(0.0);
+            return crate::layout::Region::new(0.0, top, layout.window_width, h);
+        }
         let rp = layout.right_panel_region();
         let tab_h = if self.editor.tab_bar.tabs.is_empty() {
             0.0
@@ -779,6 +809,24 @@ impl EditorState {
             TAB_BAR_HEIGHT
         };
         crate::layout::Region::new(rp.x, rp.y + tab_h, rp.width, rp.height - tab_h)
+    }
+
+    /// 设置整页顶部返回条区域（标题栏下方，全宽）。
+    pub fn settings_back_bar_region(
+        &self,
+        layout: &crate::layout::LayoutManager,
+    ) -> crate::layout::Region {
+        let title_h = layout.title_bar_region().height;
+        crate::layout::Region::new(0.0, title_h, layout.window_width, SETTINGS_BACK_BAR_H)
+    }
+
+    /// 「← 回到应用」按钮命中区（返回条左侧）。
+    pub fn settings_back_button_region(
+        &self,
+        layout: &crate::layout::LayoutManager,
+    ) -> crate::layout::Region {
+        let title_h = layout.title_bar_region().height;
+        crate::layout::Region::new(16.0, title_h + 8.0, 132.0, SETTINGS_BACK_BAR_H - 16.0)
     }
     /// 整页标签（设置/沙盒评测）的渲染区域：占据右面板内容区（标签栏下方）。
     ///
@@ -889,6 +937,8 @@ impl EditorState {
             drag_idx,
             drop_idx,
         );
+        // 重排后标签顺序/标签栏命中布局变化，需重绘右面板标签栏
+        self.mark_tab_switch_dirty();
     }
     /// SubTask 7.5: 计算标签栏最大水平滚动偏移。
     ///
@@ -945,6 +995,8 @@ impl EditorState {
             self.ui.layout.toggle_right_panel();
         }
         self.ui.settings_panel.apply_settings(&self.ui.app_settings);
+        // 记忆页数据按需重新加载（记忆库可能在后台归档中更新）
+        self.ui.settings_panel.memory_dirty = true;
         if let Some(idx) = self.find_settings_tab() {
             self.switch_tab(idx);
         } else {
@@ -976,6 +1028,7 @@ impl EditorState {
             }
         }
         self.ui.settings_panel.active_field = None;
+        self.win.dirty_tracker.mark_full_window();
     }
     /// 切换设置标签页
     pub fn toggle_settings_tab(&mut self) {

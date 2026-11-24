@@ -37,7 +37,7 @@ pub fn set_composition(state: &mut EditorState, text: String) {
             input.composition = Some(text);
             input.caret_visible = true;
         }
-        let region = state.ui.layout.sidebar_region().clone();
+        let region = state.file_tree_region().clone();
         state.win.dirty_tracker.mark_region(
             region.x,
             region.y,
@@ -126,7 +126,7 @@ pub fn commit_composition(state: &mut EditorState, text: String) {
             input.composition = None;
             input.caret_visible = true;
         }
-        let region = state.ui.layout.sidebar_region().clone();
+        let region = state.file_tree_region().clone();
         state.win.dirty_tracker.mark_region(
             region.x,
             region.y,
@@ -181,7 +181,7 @@ pub fn clear_composition(state: &mut EditorState) {
         if let Some(input) = state.fs.file_tree_input.as_mut() {
             input.composition = None;
         }
-        let region = state.ui.layout.sidebar_region().clone();
+        let region = state.file_tree_region().clone();
         state.win.dirty_tracker.mark_region(
             region.x,
             region.y,
@@ -214,6 +214,12 @@ impl EditorState {
     /// 供光标闪烁/悬停/流式生成等路径复用，避免标错区域导致输入框不重绘。
     pub(crate) fn mark_ai_panel_dirty(&mut self) {
         mark_ai_panel_dirty(self)
+    }
+
+    /// 新标签页快捷搜索框区域脏标记（右面板）。
+    /// 供 WM_CHAR/WM_KEYDOWN 等非 IME 输入路径复用，避免空脏区触发全窗口重绘。
+    pub(crate) fn mark_new_tab_page_dirty(&mut self) {
+        mark_new_tab_page_dirty(self)
     }
 
     /// P0-2: 设置 IME 合成串（pre-edit text）。

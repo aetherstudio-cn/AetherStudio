@@ -55,6 +55,10 @@ pub(crate) unsafe fn on_l_button_down(
     if let Some(r) = lbd_titlebar(hwnd, &state, mouse_x, mouse_y, &layout) {
         return r;
     }
+    // 设置独立整页：高优先级拦截标题栏以下全窗点击（含返回按钮），防止穿透下层面板
+    if let Some(r) = lbd_settings_fullpage(hwnd, &state, mouse_x, mouse_y, &layout) {
+        return r;
+    }
     if let Some(r) = lbd_user_menu(hwnd, &state, mouse_x, mouse_y) {
         return r;
     }

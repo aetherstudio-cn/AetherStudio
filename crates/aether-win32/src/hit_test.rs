@@ -54,6 +54,15 @@ impl HitTestFrame {
     }
 }
 
+/// 程序化点击命令文件路径：`%TEMP%\Aether\click_cmd.json`。
+///
+/// 内容为 JSON：`{"x":..,"y":..}`（逻辑坐标）或 `{"action":"命中区名"}`
+/// （按名称取命中区中心）。写入后向主窗口发送 `WM_APP+16` 即触发一次点击，
+/// 无需前台/物理鼠标，走与真实点击相同的分发逻辑。
+pub fn click_cmd_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("Aether").join("click_cmd.json")
+}
+
 // ============================================================================
 // REQ-P2-10: debug 构建保留全局 Mutex + 文件 I/O，release 构建完全移除
 // ============================================================================
@@ -64,6 +73,29 @@ mod debug_impl {
 
     /// 全局帧记录（简化：每帧覆盖）
     static HIT_TEST_FRAME: Mutex<Option<HitTestFrame>> = Mutex::new(None);
+
+    /// 最近一帧命中区快照（供程序化点击按名称查询中心坐标）
+    static HIT_SNAPSHOT: Mutex<Vec<HitRegion>> = Mutex::new(Vec::new());
+
+    /// 按名称查询命中区中心坐标（逻辑坐标）。取最近一帧中最后一个同名区域。
+    pub fn find_region_center(name: &str) -> Option<(f32, f32)> {
+        let guard = HIT_SNAPSHOT.lock().ok()?;
+        guard
+            .iter()
+            .rev()
+            .find(|r| r.action == name)
+            .map(|r| (r.x + r.width / 2.0, r.y + r.height / 2.0))
+    }
+
+    /// 按坐标查询命中区动作名（逻辑坐标）。取最近一帧中最后一个包含该点的区域。
+    pub fn region_action_at(x: f32, y: f32) -> Option<String> {
+        let guard = HIT_SNAPSHOT.lock().ok()?;
+        guard
+            .iter()
+            .rev()
+            .find(|r| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+            .map(|r| r.action.clone())
+    }
 
     /// 注册一个可点击区域（线程安全）
     pub fn register_hit_region(action: impl Into<String>, x: f32, y: f32, width: f32, height: f32) {
@@ -96,6 +128,11 @@ mod debug_impl {
 
         if regions.is_empty() {
             return;
+        }
+
+        // 保留快照供程序化点击按名称查询（与文件输出同源）
+        if let Ok(mut snap) = HIT_SNAPSHOT.lock() {
+            *snap = regions.clone();
         }
 
         let path = hit_regions_path();
@@ -168,14 +205,31 @@ mod release_impl {
     pub fn flush_hit_regions_to_file() {
         // release 构建：空操作，零开销
     }
+
+    #[inline]
+    pub fn find_region_center(_name: &str) -> Option<(f32, f32)> {
+        // release 构建：无命中区记录，按名查询不可用
+        None
+    }
+
+    #[inline]
+    pub fn region_action_at(_x: f32, _y: f32) -> Option<String> {
+        None
+    }
 }
 
 // 公共 API：根据构建模式路由到对应实现
 #[cfg(debug_assertions)]
-pub use debug_impl::{clear_hit_regions, flush_hit_regions_to_file, register_hit_region};
+pub use debug_impl::{
+    clear_hit_regions, find_region_center, flush_hit_regions_to_file, region_action_at,
+    register_hit_region,
+};
 
 #[cfg(not(debug_assertions))]
-pub use release_impl::{clear_hit_regions, flush_hit_regions_to_file, register_hit_region};
+pub use release_impl::{
+    clear_hit_regions, find_region_center, flush_hit_regions_to_file, region_action_at,
+    register_hit_region,
+};
 
 #[cfg(test)]
 mod tests {

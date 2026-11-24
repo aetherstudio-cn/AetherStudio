@@ -398,6 +398,15 @@ unsafe fn oc_browser_address(hwnd: HWND, c: char) -> Option<LRESULT> {
     if let Some(inst) = st.browser.get_mut(id) {
         inst.address_text.push(c);
     }
+    // 地址栏渲染在右面板：标记右面板脏区，避免空脏区触发全窗口重绘
+    let rp = st.ui.layout.right_panel_region();
+    st.win.dirty_tracker.mark_region(
+        rp.x,
+        rp.y,
+        rp.width,
+        rp.height,
+        crate::dirty_rect::DirtyRegionType::RightPanel,
+    );
     drop(st);
     invalidate_window(hwnd);
     Some(LRESULT(0))
@@ -420,6 +429,8 @@ unsafe fn oc_empty_search(hwnd: HWND, c: char) -> Option<LRESULT> {
     }
     st.browser.empty_search_text.push(c);
     st.browser.empty_search_caret_visible = true;
+    // 搜索框在新标签页（右面板）：标脏右面板，避免空脏区退化为全窗口重绘
+    st.mark_new_tab_page_dirty();
     drop(st);
     invalidate_window(hwnd);
     Some(LRESULT(0))

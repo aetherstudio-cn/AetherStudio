@@ -482,7 +482,7 @@ pub enum DrainEdge {
 }
 
 /// AI 助手欢迎语（新对话初始系统消息）
-pub const AI_WELCOME: &str = "你好！我是 AI 助手，可以帮助你解释代码、重构、修复问题、生成测试等。你可以直接输入问题，或选中代码后使用快捷操作。";
+pub const AI_WELCOME: &str = "你好！我是 AI 助手，编程开发、机器学习、办公自动化、会计财务、写作分析等各类任务都可以交给我。你可以直接输入问题，或选中代码后使用快捷操作。";
 
 /// 当前 Unix 秒级时间戳（对话创建/更新时间）
 pub fn now_secs() -> u64 {
@@ -553,6 +553,10 @@ pub struct AiConversation {
     pub should_stop: Arc<AtomicBool>,
     /// 本轮注入过的 playbook 条目 ID（用于反馈归因）
     pub used_bullet_ids: Vec<String>,
+    /// 长任务长期记忆（M 段）：本会话淘汰历史的压缩摘要，随槽位保存/恢复以免串话
+    pub context_memory: String,
+    /// 已折叠进 context_memory 的 eligible 消息数（增量压缩游标）
+    pub context_folded_count: usize,
     /// 标签休眠：messages 已卸载（完整内容在 AetherDB 温数据层），
     /// 轻量现场（草稿/滚动/模式等）仍驻留内存；激活时同步水合
     pub hibernated: bool,
@@ -585,6 +589,8 @@ impl AiConversation {
             stream_state: Arc::new(Mutex::new(AiStreamState::default())),
             should_stop: Arc::new(AtomicBool::new(false)),
             used_bullet_ids: Vec::new(),
+            context_memory: String::new(),
+            context_folded_count: 0,
             hibernated: false,
             hibernate_pending_at: None,
             hibernated_msg_count: 0,
@@ -886,6 +892,42 @@ pub struct AgentPipeline {
     pub failed_files: Vec<String>,
     /// 当前任务的续写次数（防止无限续写循环）
     pub resume_count: usize,
+    /// 各任务执行状态（与 tasks 等长）：子目标驱动续跑 + 进度可视化
+    pub statuses: Vec<TaskStatus>,
+}
+
+/// 流水线任务执行状态（子目标边界跟踪）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskStatus {
+    Pending,
+    Running,
+    Done,
+    Failed,
+    Skipped,
+}
+
+impl AgentPipeline {
+    /// 标记当前任务状态（不前进 cursor，由调用方控制推进）。
+    pub fn mark_current(&mut self, status: TaskStatus) {
+        if let Some(s) = self.statuses.get_mut(self.cursor) {
+            *s = status;
+        }
+    }
+
+    /// 进度统计：(已完成, 失败/跳过, 总数, 当前下标)。供进度指示器渲染。
+    pub fn progress(&self) -> (usize, usize, usize, usize) {
+        let done = self
+            .statuses
+            .iter()
+            .filter(|s| **s == TaskStatus::Done)
+            .count();
+        let failed = self
+            .statuses
+            .iter()
+            .filter(|s| matches!(s, TaskStatus::Failed | TaskStatus::Skipped))
+            .count();
+        (done, failed, self.tasks.len(), self.cursor)
+    }
 }
 
 /// Tab 键无障碍导航的焦点动作（文件卡展开 / 文件链接打开）
@@ -987,14 +1029,6 @@ pub struct AiPanel {
     pub warm_data_store: Option<crate::ai_warm_data::WarmDataStore>,
     /// 历史列表：仅显示当前工作区的会话
     pub history_workspace_only: bool,
-    /// Playbook 管理面板是否展开
-    pub playbook_open: bool,
-    /// Playbook 面板条目缓存（展开时从 AetherDB 加载）
-    pub playbook_items: Vec<crate::memory_store::PlaybookBullet>,
-    /// Playbook 标题栏按钮命中区 (x, y, w, h)
-    pub playbook_button_region: Option<(f32, f32, f32, f32)>,
-    /// Playbook 条目删除按钮命中区 (item_index, x, y, w, h)
-    pub playbook_delete_regions: Vec<(usize, f32, f32, f32, f32)>,
     /// 历史列表当前页码（0 起）
     pub history_page: usize,
     /// 历史时间筛选
@@ -1046,6 +1080,14 @@ pub struct AiPanel {
     pub history_last_click: Option<(String, std::time::Instant)>,
     /// Agent 自动续跑轮次计数（用户手动发消息时重置；防止工具回环无限迭代）
     pub agent_iter_count: u32,
+    /// 自动续跑安全预算（探查回喂循环最大轮次）：默认 30，突破旧固定 5 轮限制，
+    /// 支持长任务多步探查；仍受用户停止与硬上限约束，防止无限回环。
+    pub agent_max_iterations: u32,
+    /// 长任务长期记忆（M 段）：被近期窗口淘汰的历史经免训练压缩后的结构化摘要，
+    /// 随每次请求注入上下文，避免早期上下文被静默丢弃（对标 Cat 三段式工作区）。
+    pub context_memory: String,
+    /// 已折叠进 context_memory 的 eligible 消息数（增量压缩游标，避免重复压缩）。
+    pub context_folded_count: usize,
     /// 最后一次生成是否被截断（达到 max_tokens）
     pub last_truncated: bool,
     /// "继续生成"按钮命中区 (x, y, w, h)
@@ -1088,6 +1130,13 @@ pub struct AiPanel {
     pub agent_tab_regions: Vec<(usize, f32, f32, f32, f32)>,
     /// 智能体模式左侧边栏：对话标签页关闭按钮命中区 (conv_index, x, y, w, h)
     pub agent_tab_close_regions: Vec<(usize, f32, f32, f32, f32)>,
+    /// 智能体模式左侧边栏：工作区分组头命中区 (workspace_path, x, y, w, h)，点击切换工作区
+    pub agent_workspace_regions: Vec<(String, f32, f32, f32, f32)>,
+    /// 智能体模式左侧边栏：其它工作区会话行命中区 (workspace_path, conv_id, x, y, w, h)，
+    /// 点击先切换工作区再打开该会话
+    pub agent_ws_conv_regions: Vec<(String, String, f32, f32, f32, f32)>,
+    /// 悬停的其它工作区会话行（agent_ws_conv_regions 下标）
+    pub hover_ws_conv: Option<usize>,
     /// 智能体模式左侧边栏：文件树区域 y 偏移量（相对于侧边栏顶部）
     pub agent_file_tree_offset_y: f32,
     /// 欢迎卡快捷 chips 悬停下标（微动效进度由 ui_anim 驱动）
@@ -1100,6 +1149,8 @@ pub struct AiPanel {
     pub hover_send_btn: bool,
     /// 输入区模型选择按钮命中区 (x, y, w, h)，渲染每帧更新
     pub model_btn_region: Option<(f32, f32, f32, f32)>,
+    /// 上下文占用指示器命中区 (x, y, w, h)，渲染每帧更新（窄面板时为 None）
+    pub context_chip_region: Option<(f32, f32, f32, f32)>,
     /// 输入区发送/中断按钮命中区 (x, y, w, h)，渲染每帧更新
     pub send_btn_region: Option<(f32, f32, f32, f32)>,
     /// Agent 工具产物附图暂存（截图等）：续跑时随 Tool 消息发给多模态模型，
@@ -1245,10 +1296,6 @@ impl AiPanel {
             hot_data_store: Self::init_hot_data_store(),
             warm_data_store: Self::init_warm_data_store(),
             history_workspace_only: true,
-            playbook_open: false,
-            playbook_items: Vec::new(),
-            playbook_button_region: None,
-            playbook_delete_regions: Vec::new(),
             history_page: 0,
             history_time_filter: HistoryTimeFilter::All,
             history_type_filter: None,
@@ -1274,6 +1321,9 @@ impl AiPanel {
             history_editing_caret: 0,
             history_last_click: None,
             agent_iter_count: 0,
+            agent_max_iterations: 30,
+            context_memory: String::new(),
+            context_folded_count: 0,
             last_truncated: false,
             continue_button_region: None,
             retry_button_region: None,
@@ -1294,6 +1344,9 @@ impl AiPanel {
             expand_anim_start_ms: 0,
             agent_new_chat_region: None,
             agent_tab_regions: Vec::new(),
+            agent_workspace_regions: Vec::new(),
+            agent_ws_conv_regions: Vec::new(),
+            hover_ws_conv: None,
             agent_tab_close_regions: Vec::new(),
             agent_file_tree_offset_y: 0.0,
             hover_welcome_chip: None,
@@ -1301,6 +1354,7 @@ impl AiPanel {
             hover_model_btn: false,
             hover_send_btn: false,
             model_btn_region: None,
+            context_chip_region: None,
             send_btn_region: None,
             agent_tool_images: Vec::new(),
             in_flight_thinking: false,
@@ -1354,14 +1408,15 @@ impl AiPanel {
         }
     }
 
-    /// 触发温数据归档（空闲时调用）
-    pub fn trigger_warm_archive(&mut self) {
+    /// 触发温数据归档（空闲时调用）；返回本轮收割的归档结果数
+    pub fn trigger_warm_archive(&mut self) -> usize {
         // 1. 先收割归档结果：后台线程异步完成，结果在后续调用中才就绪
         let results = self
             .warm_data_store
             .as_ref()
             .map(|s| s.poll_results())
             .unwrap_or_default();
+        let processed = results.len();
         for result in results {
             match result {
                 crate::ai_warm_data::ArchiveResult::Success { conv_id } => {
@@ -1393,6 +1448,7 @@ impl AiPanel {
                 }
             }
         }
+        processed
     }
 
     /// 应用退出前调用：同步归档所有有效会话并关闭归档线程。
@@ -1480,6 +1536,8 @@ impl AiPanel {
         slot.mode = self.mode;
         slot.attachments = self.attachments.clone();
         slot.pending_images = self.pending_images.clone();
+        slot.context_memory = self.context_memory.clone();
+        slot.context_folded_count = self.context_folded_count;
         slot.stream_state = Arc::clone(&self.stream_state);
         slot.should_stop = Arc::clone(&self.should_stop);
         slot.updated_at = now_secs();
@@ -1507,6 +1565,8 @@ impl AiPanel {
         self.mode = slot.mode;
         self.attachments = std::mem::take(&mut slot.attachments);
         self.pending_images = std::mem::take(&mut slot.pending_images);
+        self.context_memory = std::mem::take(&mut slot.context_memory);
+        self.context_folded_count = slot.context_folded_count;
         self.image_chip_regions.clear();
         self.hover_image_chip = None;
         self.stream_state = Arc::clone(&slot.stream_state);
@@ -1734,6 +1794,27 @@ impl AiPanel {
         self.load_slot_into_active(new_idx);
         self.request_hibernate(prev);
         self.dismiss_history_dropdown();
+    }
+
+    /// 按会话 ID 打开历史会话（侧栏其它工作区会话行使用）：
+    /// 已在本工作区标签页组内则直接切换，否则从温数据层加载为新的活动标签。
+    pub fn open_conversation_by_id(&mut self, conv_id: &str) {
+        if let Some(pos) = self.conversations.iter().position(|c| c.id == conv_id) {
+            self.switch_to(pos);
+            return;
+        }
+        let Some(store) = self.warm_data_store.as_ref() else {
+            return;
+        };
+        let Ok(conv) = store.load_conversation(conv_id) else {
+            return;
+        };
+        self.snapshot_active_into_slot();
+        let prev = self.active;
+        self.conversations.push(conv);
+        let new_idx = self.conversations.len() - 1;
+        self.load_slot_into_active(new_idx);
+        self.request_hibernate(prev);
     }
 
     /// 用首条用户消息自动生成活动会话标题（仍为默认标题时）
@@ -2109,17 +2190,17 @@ impl AiPanel {
 
     /// 根据用户输入内容智能判断模式
     ///
-    /// 判断逻辑：
-    /// 1. 如果输入包含文件操作关键词（如"创建文件"、"修改代码"、"删除文件"等），则使用 Agent 模式
-    /// 2. 如果输入包含命令执行关键词（如"运行命令"、"执行脚本"等），则使用 Agent 模式
-    /// 3. 如果输入包含多步骤任务关键词（如"步骤"、"计划"、"任务"等），则使用 Agent 模式
-    /// 4. 如果输入是浏览器意图（如"打开百度"、"帮我搜一下X"），则使用 Agent 模式
+    /// AI 面向通用任务（编程开发、机器学习、办公、会计财务等），不做领域限制：
+    /// 1. 输入包含产出文件/文档的关键词（代码、表格、报告、数据等）→ Agent 模式
+    /// 2. 输入包含命令执行关键词（"运行命令"、"执行脚本"等）→ Agent 模式
+    /// 3. 输入包含多步骤任务关键词（"步骤"、"计划"、"任务"等）→ Agent 模式
+    /// 4. 输入是浏览器意图（"打开百度"、"帮我搜一下X"）→ Agent 模式
     ///    （只有 Agent 模式会下发内置浏览器工具标记说明）
     /// 5. 否则使用 Ask 模式（简单问答）
     fn detect_mode_from_input(&self, input: &str) -> AiMode {
         let input_lower = input.to_lowercase();
 
-        // 文件操作关键词
+        // 文件/产出类关键词（覆盖编程、办公文档、数据分析、会计财务、机器学习等通用任务）
         let file_keywords = [
             "创建文件",
             "新建文件",
@@ -2133,6 +2214,34 @@ impl AiPanel {
             "生成文件",
             "保存文件",
             "写入文件",
+            "生成表格",
+            "生成文档",
+            "生成报告",
+            "写一份",
+            "撰写",
+            "表格",
+            "文档",
+            "报告",
+            "演示文稿",
+            "幻灯片",
+            "数据分析",
+            "处理数据",
+            "整理资料",
+            "excel",
+            "word",
+            "ppt",
+            "csv",
+            "财务",
+            "记账",
+            "对账",
+            "账目",
+            "报表",
+            "发票",
+            "机器学习",
+            "深度学习",
+            "神经网络",
+            "训练模型",
+            "数据集",
             "create file",
             "modify file",
             "delete file",
@@ -2140,6 +2249,9 @@ impl AiPanel {
             "generate code",
             "refactor code",
             "update file",
+            "spreadsheet",
+            "report",
+            "dataset",
         ];
 
         // 命令执行关键词
@@ -2279,9 +2391,10 @@ impl AiPanel {
         mode: AiMode,
         images: Vec<AiImageAttachment>,
     ) -> Result<String, String> {
-        const MAX_AGENT_ITERATIONS: u32 = 5;
-        if self.agent_iter_count >= MAX_AGENT_ITERATIONS {
-            return Err(format!("已达最大自动执行轮次（{}）", MAX_AGENT_ITERATIONS));
+        // 自动续跑安全预算：可配置（默认 30），硬上限 200 防误配置 runaway。
+        let max_iterations = self.continuation_budget();
+        if !self.can_auto_continue() {
+            return Err(format!("已达最大自动执行轮次（{}）", max_iterations));
         }
         self.agent_iter_count += 1;
 
@@ -2304,11 +2417,24 @@ impl AiPanel {
         let settings = settings.clone();
         let context = String::new();
         let mut messages = build_chat_prompt(&settings, &context, mode);
+        // P4 跨会话记忆：续跑轮同样注入 playbook 经验（以工具反馈为查询），
+        // 使长任务多步执行持续受益于已沉淀的项目决策/约束/教训。
+        if let Some(warm) = self.warm_data_store.as_ref() {
+            if let Ok(hits) = warm.search_playbook(&feedback, 5) {
+                if !hits.is_empty() {
+                    messages.push(ChatMessage {
+                        role: "system".to_string(),
+                        content: crate::reflector::format_bullets(&hits),
+                        images: Vec::new(),
+                    });
+                }
+            }
+        }
         let input_budget = settings
             .max_input_tokens
             .map(|v| v as usize)
             .unwrap_or(24000);
-        messages.extend(Self::history_to_chat_messages(&self.messages, input_budget));
+        messages.extend(self.assemble_context_messages(input_budget));
         // 附图挂到最后一条 user 消息（即本轮 Tool 结果），与输入框附图同链路
         if settings.multimodal && !images.is_empty() {
             let imgs: Vec<ChatImage> = images
@@ -2742,7 +2868,7 @@ impl AiPanel {
             .max_input_tokens
             .map(|v| v as usize)
             .unwrap_or(24000);
-        messages.extend(Self::history_to_chat_messages(&self.messages, input_budget));
+        messages.extend(self.assemble_context_messages(input_budget));
         // 图片只附到本轮最新的 user 消息（OpenAI 兼容 image_url 块；
         // history_to_chat_messages 保证最新消息必在切片内）。历史消息不重发图片，
         // 控制多轮对话的请求体大小与 token 成本。
@@ -2771,16 +2897,10 @@ impl AiPanel {
         s.chars().count()
     }
 
-    /// 将本会话消息转换为发送给模型的历史，应用"窗口切片"：
-    /// - 跳过用于展示的 System 欢迎语（真正的 system 由 build_chat_prompt 注入）；
-    /// - 从最近往前累加，受最大消息数与 token 预算双重限制，避免上下文过长影响性能；
-    /// - 始终至少包含最后一条（当前用户输入）。
-    ///
-    /// 历史取自各会话自身的 messages，因此不同标签页/对话轮次天然隔离、互不串扰。
-    fn history_to_chat_messages(
-        messages: &[AiMessage],
-        max_input_tokens: usize,
-    ) -> Vec<ChatMessage> {
+    /// 近期高保真窗口选择（三段式的 I_k 段）：跳过 System，从最近往前累加，
+    /// 受最大消息数与 token 预算双限，始终至少含最后一条。返回按原顺序的选中引用。
+    /// 由 `history_to_chat_messages` 与 `fold_context_memory` 共用，避免窗口口径分叉。
+    fn select_recent_window(messages: &[AiMessage], max_input_tokens: usize) -> Vec<&AiMessage> {
         const MAX_MSGS: usize = 40;
         // 下限保护：预算过小会几乎丢光上下文，至少保留约 2000 字符
         let budget = max_input_tokens.max(2000);
@@ -2800,6 +2920,19 @@ impl AiPanel {
         }
         selected.reverse();
         selected
+    }
+
+    /// 将本会话消息转换为发送给模型的历史，应用"窗口切片"：
+    /// - 跳过用于展示的 System 欢迎语（真正的 system 由 build_chat_prompt 注入）；
+    /// - 从最近往前累加，受最大消息数与 token 预算双重限制，避免上下文过长影响性能；
+    /// - 始终至少包含最后一条（当前用户输入）。
+    ///
+    /// 历史取自各会话自身的 messages，因此不同标签页/对话轮次天然隔离、互不串扰。
+    fn history_to_chat_messages(
+        messages: &[AiMessage],
+        max_input_tokens: usize,
+    ) -> Vec<ChatMessage> {
+        Self::select_recent_window(messages, max_input_tokens)
             .into_iter()
             .map(|m| match m.role {
                 AiRole::User => ChatMessage::user(m.content.clone()),
@@ -2811,6 +2944,90 @@ impl AiPanel {
                 },
             })
             .collect()
+    }
+
+    /// 增量折叠长期记忆（三段式的 M 段）：把近期窗口淘汰、且尚未折叠的历史
+    /// 经免训练压缩并入 `context_memory`，使早期上下文以摘要形式保留而非静默丢弃。
+    /// 应在每次组装请求前调用（与 `history_to_chat_messages` 配套）。
+    pub fn fold_context_memory(&mut self, max_input_tokens: usize) {
+        let budget = max_input_tokens.max(2000);
+        let folded = {
+            let eligible: Vec<&AiMessage> = self
+                .messages
+                .iter()
+                .filter(|m| m.role != AiRole::System)
+                .collect();
+            let recent_len = Self::select_recent_window(&self.messages, budget).len();
+            let window_start = eligible.len().saturating_sub(recent_len);
+            if window_start > self.context_folded_count {
+                let dropped: Vec<AiMessage> = eligible[self.context_folded_count..window_start]
+                    .iter()
+                    .map(|m| (*m).clone())
+                    .collect();
+                let mem = crate::context_compress::compress_to_memory(
+                    &dropped,
+                    &self.context_memory,
+                    crate::context_compress::MEMORY_CAP,
+                );
+                Some((mem, window_start))
+            } else {
+                None
+            }
+        };
+        if let Some((mem, cursor)) = folded {
+            self.context_memory = mem;
+            self.context_folded_count = cursor;
+        }
+    }
+
+    /// 把长期记忆作为一条前置上下文消息注入（M 段）。空记忆返回 None。
+    /// 以 user 角色承载结构化摘要，标注来源以免与真实用户输入混淆。
+    fn memory_chat_message(&self) -> Option<ChatMessage> {
+        if self.context_memory.trim().is_empty() {
+            return None;
+        }
+        Some(ChatMessage::user(format!(
+            "【长期记忆·早期对话摘要】\n{}",
+            self.context_memory
+        )))
+    }
+
+    /// 组装三段式上下文：固定锚点（system，由调用方注入）+ 长期记忆 M + 近期窗口 I_k。
+    /// 先增量折叠淘汰历史，再拼接记忆与近期窗口。
+    pub fn assemble_context_messages(&mut self, max_input_tokens: usize) -> Vec<ChatMessage> {
+        self.fold_context_memory(max_input_tokens);
+        let mut out = Vec::new();
+        if let Some(mem) = self.memory_chat_message() {
+            out.push(mem);
+        }
+        out.extend(Self::history_to_chat_messages(
+            &self.messages,
+            max_input_tokens,
+        ));
+        out
+    }
+
+    /// 上下文占用统计（供 UI 指示器）：返回 (已用字符, 预算字符, 占用比 0..1)。
+    /// 已用 = 近期高保真窗口 + 长期记忆；占用比钳制到 1.0。
+    pub fn context_usage(&self, max_input_tokens: usize) -> (usize, usize, f32) {
+        let budget = max_input_tokens.max(2000);
+        let recent: usize = Self::select_recent_window(&self.messages, budget)
+            .iter()
+            .map(|m| m.content.chars().count())
+            .sum();
+        let used = recent + self.context_memory.chars().count();
+        let ratio = (used as f32 / budget as f32).min(1.0);
+        (used, budget, ratio)
+    }
+
+    /// 自动续跑安全预算（钳制到 1..=200，防误配置导致无限回环）。
+    pub fn continuation_budget(&self) -> u32 {
+        self.agent_max_iterations.clamp(1, 200)
+    }
+
+    /// 是否仍可自动续跑（未达安全预算）。
+    pub fn can_auto_continue(&self) -> bool {
+        self.agent_iter_count < self.continuation_budget()
     }
 
     /// 输入字符（在光标位置插入）
@@ -2975,10 +3192,10 @@ impl AiPanel {
     /// 清除所有对话
     pub fn clear_history(&mut self) {
         self.messages.clear();
-        self.messages.push(AiMessage::new(
-            AiRole::System,
-            "你好！我是 AI 助手，可以帮助你解释代码、重构、修复问题、生成测试等。".to_string(),
-        ));
+        self.context_memory.clear();
+        self.context_folded_count = 0;
+        self.messages
+            .push(AiMessage::new(AiRole::System, AI_WELCOME.to_string()));
         if let Ok(mut s) = self.stream_state.lock() {
             *s = AiStreamState::default();
         }
@@ -3351,8 +3568,6 @@ impl AiPanel {
         self.history_button_region = None;
         self.history_item_regions.clear();
         self.reasoning_toggle_regions.clear();
-        self.playbook_button_region = None;
-        self.playbook_delete_regions.clear();
         self.history_delete_regions.clear();
         self.history_page_prev_region = None;
         self.history_page_next_region = None;
@@ -3388,36 +3603,7 @@ impl AiPanel {
         self.close_history_window();
     }
 
-    // ===== Playbook 管理面板 =====
-
-    /// 切换 Playbook 管理面板展开/收起（展开时从 AetherDB 加载条目）
-    pub fn toggle_playbook_panel(&mut self) {
-        self.playbook_open = !self.playbook_open;
-        if self.playbook_open {
-            self.reload_playbook();
-        }
-    }
-
-    /// 重新加载 Playbook 条目缓存
-    pub fn reload_playbook(&mut self) {
-        if let Some(warm) = self.warm_data_store.as_ref() {
-            self.playbook_items = warm.list_playbook(None).unwrap_or_default();
-        }
-    }
-
-    /// 删除指定下标的 Playbook 条目（调用方需先弹确认）
-    pub fn delete_playbook_item(&mut self, idx: usize) -> Result<(), String> {
-        let id = self
-            .playbook_items
-            .get(idx)
-            .map(|b| b.id.clone())
-            .ok_or_else(|| "条目不存在".to_string())?;
-        if let Some(warm) = self.warm_data_store.as_ref() {
-            warm.delete_bullet(&id)?;
-        }
-        self.reload_playbook();
-        Ok(())
-    }
+    // ===== 历史列表 =====
 
     /// 切换历史列表的工作区过滤
     pub fn toggle_history_workspace_only(&mut self) {
@@ -3974,6 +4160,122 @@ mod tests {
         assert!(out.is_empty());
     }
 
+    // ===== 长任务上下文压缩：三段式组装 / 增量折叠 =====
+
+    #[test]
+    fn fold_context_memory_preserves_dropped_gist() {
+        let mut p = test_panel();
+        p.messages.clear();
+        p.messages.push(msg(AiRole::User, "目标：修复终端闪窗"));
+        p.messages
+            .push(msg(AiRole::Assistant, "决定移除 AllocConsole 调用"));
+        for i in 0..20 {
+            p.messages.push(msg(AiRole::User, &"x".repeat(3000)));
+            p.messages
+                .push(msg(AiRole::Assistant, &format!("回复{}", i)));
+        }
+        p.fold_context_memory(24000);
+        assert!(!p.context_memory.is_empty(), "早期历史应被折叠进记忆");
+        assert!(
+            p.context_memory.contains("AllocConsole"),
+            "关键决策应保留在记忆: {}",
+            p.context_memory
+        );
+        assert!(p.context_folded_count > 0);
+    }
+
+    #[test]
+    fn assemble_context_prepends_memory_and_keeps_last() {
+        let mut p = test_panel();
+        p.messages.clear();
+        p.messages
+            .push(msg(AiRole::Assistant, "决定采用三段式上下文"));
+        for i in 0..20 {
+            p.messages.push(msg(AiRole::User, &"x".repeat(3000)));
+            p.messages
+                .push(msg(AiRole::Assistant, &format!("回复{}", i)));
+        }
+        let out = p.assemble_context_messages(24000);
+        assert!(
+            out[0].content.contains("长期记忆"),
+            "首条应为记忆注入: {}",
+            out[0].content
+        );
+        assert_eq!(out.last().unwrap().content, "回复19", "最新消息应保留");
+    }
+
+    #[test]
+    fn fold_is_incremental_idempotent() {
+        let mut p = test_panel();
+        p.messages.clear();
+        p.messages
+            .push(msg(AiRole::Assistant, "决定改用 mmap 读取"));
+        for i in 0..20 {
+            p.messages.push(msg(AiRole::User, &"x".repeat(3000)));
+            p.messages
+                .push(msg(AiRole::Assistant, &format!("回复{}", i)));
+        }
+        p.fold_context_memory(24000);
+        let mem1 = p.context_memory.clone();
+        let cursor1 = p.context_folded_count;
+        p.fold_context_memory(24000);
+        assert_eq!(p.context_memory, mem1, "无新增淘汰历史时记忆不应变化");
+        assert_eq!(p.context_folded_count, cursor1);
+    }
+
+    // ===== P2：可配置续跑预算 / 流水线任务状态 =====
+
+    #[test]
+    fn continuation_budget_default_and_clamp() {
+        let mut p = test_panel();
+        assert_eq!(
+            p.continuation_budget(),
+            30,
+            "默认预算应为 30（突破旧 5 轮）"
+        );
+        p.agent_max_iterations = 0;
+        assert_eq!(p.continuation_budget(), 1, "下限钳制到 1");
+        p.agent_max_iterations = 9999;
+        assert_eq!(p.continuation_budget(), 200, "上限钳制到 200");
+    }
+
+    #[test]
+    fn can_auto_continue_tracks_count() {
+        let mut p = test_panel();
+        p.agent_max_iterations = 3;
+        p.agent_iter_count = 2;
+        assert!(p.can_auto_continue());
+        p.agent_iter_count = 3;
+        assert!(!p.can_auto_continue(), "达预算应停止自动续跑");
+    }
+
+    #[test]
+    fn pipeline_progress_tracks_status() {
+        use crate::ai_agent::{PlannedTask, PlannedTaskKind};
+        let task = |t: &str| PlannedTask {
+            kind: PlannedTaskKind::File,
+            target: t.to_string(),
+            description: String::new(),
+        };
+        let mut pipe = AgentPipeline {
+            goal: "目标".to_string(),
+            tasks: vec![task("a.rs"), task("b.rs"), task("c.rs")],
+            cursor: 0,
+            created_files: Vec::new(),
+            failed_files: Vec::new(),
+            resume_count: 0,
+            statuses: vec![TaskStatus::Pending; 3],
+        };
+        assert_eq!(pipe.progress(), (0, 0, 3, 0));
+        pipe.mark_current(TaskStatus::Done);
+        pipe.cursor = 1;
+        pipe.mark_current(TaskStatus::Failed);
+        pipe.cursor = 2;
+        assert_eq!(pipe.progress(), (1, 1, 3, 2), "应统计 1 完成 1 失败");
+        pipe.mark_current(TaskStatus::Done);
+        assert_eq!(pipe.progress(), (2, 1, 3, 2));
+    }
+
     // ===== 历史记录列表：筛选 / 分页 / 详情 / 清除 =====
 
     fn test_panel() -> AiPanel {
@@ -4518,6 +4820,28 @@ mod tests {
             p.detect_mode_from_input("帮我打开百度"),
             AiMode::Agent,
             "浏览器意图应进入 Agent 模式（该模式才下发浏览器工具）"
+        );
+    }
+
+    #[test]
+    fn general_task_intents_switch_to_agent_mode() {
+        let p = test_panel();
+        for input in [
+            "帮我用这份数据训练一个机器学习模型",
+            "把这个表格整理成 Excel 报表",
+            "做一份公司月度对账报告",
+            "创建文件 hello.py",
+        ] {
+            assert_eq!(
+                p.detect_mode_from_input(input),
+                AiMode::Agent,
+                "通用生产任务应进入 Agent 模式: {input}"
+            );
+        }
+        assert_eq!(
+            p.detect_mode_from_input("解释一下什么是梯度下降"),
+            AiMode::Ask,
+            "普通知识问答保持 Ask 模式"
         );
     }
 }

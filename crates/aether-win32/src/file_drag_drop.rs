@@ -141,7 +141,7 @@ impl EditorState {
         self.fs.file_drag.last_paint_x = mouse_x;
         self.fs.file_drag.last_paint_y = mouse_y;
         // 浮标/高亮跟随鼠标：整个侧边栏标脏（区域小，代价可接受）
-        let sidebar = self.ui.layout.sidebar_region();
+        let sidebar = self.file_tree_region();
         self.win.dirty_tracker.mark_region(
             sidebar.x,
             sidebar.y,
@@ -187,7 +187,7 @@ impl EditorState {
             (Some(src), Some(t)) => self.file_drag_perform_move(src, t),
             _ => self.ui.status_message = "已取消移动".to_string(),
         }
-        let sidebar = self.ui.layout.sidebar_region();
+        let sidebar = self.file_tree_region();
         self.win.dirty_tracker.mark_region(
             sidebar.x,
             sidebar.y,
@@ -207,7 +207,7 @@ impl EditorState {
         mouse_x: f32,
         mouse_y: f32,
     ) -> Option<DropTarget> {
-        let sidebar = self.ui.layout.sidebar_region();
+        let sidebar = self.file_tree_region();
         if !sidebar.contains(mouse_x, mouse_y) {
             return None;
         }
@@ -381,7 +381,7 @@ impl EditorState {
         }
         self.fs.file_drag.drop_target = None;
         self.fs.file_drag.drag_label.clear();
-        let sidebar = self.ui.layout.sidebar_region();
+        let sidebar = self.file_tree_region();
         self.win.dirty_tracker.mark_region(
             sidebar.x,
             sidebar.y,

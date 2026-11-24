@@ -146,6 +146,78 @@ unsafe fn run_extract_script(view: &ICoreWebView2, id: usize, hwnd: HWND) {
     }
 }
 
+/// 把智能体浏览器交互命令翻译为可在页面执行的 JS（IIFE，返回字符串结果）。
+///
+/// 支持：`click <选择器>` / `type <选择器> <文本>` / `scroll <dx> <dy>` /
+/// `eval <JS表达式>` / `back` / `forward` / `reload`。
+pub fn browser_act_script(command: &str) -> Result<String, String> {
+    let cmd = command.trim();
+    let (verb, rest) = match cmd.split_once(char::is_whitespace) {
+        Some((v, r)) => (v.to_ascii_lowercase(), r.trim()),
+        None => (cmd.to_ascii_lowercase(), ""),
+    };
+    let js = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string());
+    let script = match verb.as_str() {
+        "click" => {
+            if rest.is_empty() {
+                return Err("click 需要 CSS 选择器".to_string());
+            }
+            let sel = js(rest);
+            format!("(()=>{{const e=document.querySelector({sel});if(!e)return 'ERR: 未找到元素 '+{sel};e.scrollIntoView({{block:'center'}});e.click();return 'OK: 已点击 '+{sel};}})()")
+        }
+        "type" => {
+            let (sel, text) = rest
+                .split_once(char::is_whitespace)
+                .ok_or_else(|| "type 需要 <选择器> <文本>".to_string())?;
+            let sel = js(sel.trim());
+            let text = js(text.trim());
+            format!("(()=>{{const e=document.querySelector({sel});if(!e)return 'ERR: 未找到元素 '+{sel};e.focus();e.value={text};e.dispatchEvent(new Event('input',{{bubbles:true}}));e.dispatchEvent(new Event('change',{{bubbles:true}}));return 'OK: 已输入 '+{sel};}})()")
+        }
+        "scroll" => {
+            let mut it = rest.split_whitespace();
+            let dx = it.next().and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
+            let dy = it.next().and_then(|s| s.parse::<i32>().ok()).unwrap_or(600);
+            format!("(()=>{{window.scrollBy({dx},{dy});return 'OK: scrollY='+window.scrollY;}})()")
+        }
+        "eval" => {
+            if rest.is_empty() {
+                return Err("eval 需要 JS 表达式".to_string());
+            }
+            format!("(()=>{{try{{const r=({rest});return typeof r==='string'?r:JSON.stringify(r);}}catch(e){{return 'ERR: '+e.message;}}}})()")
+        }
+        "back" => "(()=>{history.back();return 'OK: back';})()".to_string(),
+        "forward" => "(()=>{history.forward();return 'OK: forward';})()".to_string(),
+        "reload" => "(()=>{location.reload();return 'OK: reload';})()".to_string(),
+        _ => {
+            return Err(format!(
+                "未知浏览器交互命令: {verb}（支持 click/type/scroll/eval/back/forward/reload）"
+            ))
+        }
+    };
+    Ok(script)
+}
+
+/// 在页面执行自定义交互脚本，结果经 `WM_BROWSER_EVENT` 回传主循环
+unsafe fn run_custom_script(view: &ICoreWebView2, id: usize, hwnd: HWND, script: &str) {
+    let wide: Vec<u16> = script.encode_utf16().chain(std::iter::once(0)).collect();
+    let handler = ExecuteScriptCompletedHandler::create(Box::new(
+        move |error_code: windows::core::Result<()>, result_json: String| {
+            let action = match error_code {
+                Ok(()) => PendingAction::ScriptCompleted(id, Ok(result_json)),
+                Err(e) => PendingAction::ScriptCompleted(id, Err(format!("{e:?}"))),
+            };
+            push_action(action, hwnd);
+            Ok(())
+        },
+    ));
+    if view.ExecuteScript(PCWSTR(wide.as_ptr()), &handler).is_err() {
+        push_action(
+            PendingAction::ScriptCompleted(id, Err("交互脚本提交失败".to_string())),
+            hwnd,
+        );
+    }
+}
+
 /// 输入规范化：带协议直接导航；像域名补 https://；否则按必应搜索处理
 pub fn normalize_url(input: &str) -> String {
     let s = input.trim();
@@ -274,6 +346,8 @@ pub struct PendingPageRead {
     pub url: String,
     /// 本轮同步探查的反馈文本（随首个网页结果一起回喂，避免重复发轮）
     pub extra_feedback: String,
+    /// true=浏览器交互脚本结果（原样回喂），false=网页正文采集（格式化回喂）
+    pub is_interaction: bool,
 }
 
 /// 浏览器工具栏命中布局（绝对逻辑坐标，渲染时记录，点击处理使用）
@@ -564,6 +638,23 @@ impl BrowserState {
     /// 环境是否已确认不可用（系统缺少 WebView2 Runtime）
     pub fn is_unsupported(&self) -> bool {
         self.env_failed
+    }
+
+    /// 在指定实例当前页面执行自定义交互脚本（不导航），结果由 `take_read_result` 轮询。
+    /// 返回 false 表示实例不存在/不支持/视图尚未就绪。
+    pub fn request_script(&mut self, id: usize, script: &str, hwnd: HWND) -> bool {
+        if self.env_failed || self.get(id).is_none() {
+            return false;
+        }
+        let inst = self.get_mut(id).unwrap();
+        inst.last_script_json = None;
+        inst.last_script_error = None;
+        if let Some(view) = &inst.view {
+            unsafe { run_custom_script(view, id, hwnd, script) };
+            true
+        } else {
+            false
+        }
     }
 
     /// 请求提取指定实例的网页正文：`url` 为 Some 时先导航到该页（输入按 URL/关键词规范化），
@@ -986,11 +1077,48 @@ impl crate::editor::EditorState {
         }
         Ok(id)
     }
+
+    /// 智能体 `AETHER_BROWSER_ACT`：在当前活动浏览器页面执行交互命令
+    /// （click/type/scroll/eval/back/forward/reload），结果异步回喂。返回实例 id。
+    pub fn agent_browser_act(&mut self, command: &str) -> Result<usize, String> {
+        let id = self.active_browser_id().ok_or_else(|| {
+            "当前没有已打开的网页，请先用 AETHER_OPEN 打开页面再交互。".to_string()
+        })?;
+        let script = crate::browser::browser_act_script(command)?;
+        let hwnd = self.win.hwnd;
+        if !self.browser.request_script(id, &script, hwnd) {
+            return Err("页面尚未就绪（加载中），请稍后重试该交互命令。".to_string());
+        }
+        Ok(id)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_browser_act_script_click() {
+        let s = browser_act_script("click #submit").unwrap();
+        assert!(s.contains("querySelector"));
+        assert!(s.contains("#submit"));
+        assert!(s.contains(".click()"));
+    }
+
+    #[test]
+    fn test_browser_act_script_type_and_scroll() {
+        let t = browser_act_script("type input[name=q] hello world").unwrap();
+        assert!(t.contains("hello world"));
+        assert!(t.contains("input"));
+        let sc = browser_act_script("scroll 0 800").unwrap();
+        assert!(sc.contains("scrollBy(0,800)"));
+    }
+
+    #[test]
+    fn test_browser_act_script_rejects_unknown() {
+        assert!(browser_act_script("fly somewhere").is_err());
+        assert!(browser_act_script("click").is_err());
+    }
 
     #[test]
     fn test_normalize_url_keeps_protocol() {

@@ -77,7 +77,7 @@ impl EditorState {
                 .brush_cache
                 .get_brush(target, &self.win.theme.line_number_bg)
                 .unwrap();
-            let sep_color = color_f(0.3, 0.3, 0.3, 1.0);
+            let sep_color = app_theme::border();
             let sep_brush = self
                 .win
                 .render_ctx

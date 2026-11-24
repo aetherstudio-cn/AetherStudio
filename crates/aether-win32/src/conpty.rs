@@ -1,12 +1,11 @@
 //! ConPTY（Windows 伪控制台）封装与普通管道回退。
 //!
 //! 优先使用 `CreatePseudoConsole` API 创建真正的同步终端，支持交互式命令、
-//! Tab 补全、方向键导航、ANSI 颜色等。当 ConPTY 不可用时（例如 GUI 子系统
-//! 进程无法分配控制台），回退到传统匿名管道子进程，仍可输入输出。
+//! Tab 补全、方向键导航、ANSI 颜色等。当 ConPTY 不可用时回退到传统匿名管道
+//! 子进程，仍可输入输出。
 //!
-//! 注意：GUI 子系统（`#![windows_subsystem = "windows"]`）进程在调用
-//! `CreatePseudoConsole` 前需要关联控制台，否则返回 `E_HANDLE`。
-//! 本模块会尝试在 `spawn` 时分配隐藏控制台；若失败则回退到管道。
+//! GUI 进程直接使用 ConPTY，无需 `AllocConsole`，避免控制台窗口闪屏；
+//! 普通管道回退使用 `CREATE_NO_WINDOW`，同样不弹窗。
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -16,8 +15,7 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Security::SECURITY_ATTRIBUTES;
 use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
 use windows::Win32::System::Console::{
-    AllocConsole, ClosePseudoConsole, CreatePseudoConsole, FreeConsole, GetConsoleProcessList,
-    GetConsoleWindow, ResizePseudoConsole, COORD, HPCON,
+    ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON,
 };
 use windows::Win32::System::Memory::{GetProcessHeap, HeapAlloc, HeapFree, HEAP_FLAGS};
 use windows::Win32::System::Pipes::CreatePipe;
@@ -27,18 +25,13 @@ use windows::Win32::System::Threading::{
     WaitForSingleObject, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST,
     PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
 };
-use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
 
 /// ConPTY 进程属性值。Windows SDK 中 `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` = 0x20016。
 const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x20016;
 
 /// 终端后端类型：ConPTY（功能完整）或 普通管道（回退）。
 enum Backend {
-    ConPty {
-        hpc: HPCON,
-        /// 本会话是否由 `spawn` 分配了控制台，Drop 时需要释放。
-        console_allocated: bool,
-    },
+    ConPty { hpc: HPCON },
     Pipe,
 }
 
@@ -64,70 +57,19 @@ impl ConPtySession {
     /// 返回 `(session, read_handle)`，`read_handle` 是输出读取管道句柄，
     /// 调用方应在后台线程中读取并在结束时 `CloseHandle`。
     ///
-    /// 本函数会尝试在 GUI 子系统下分配隐藏控制台以使用 ConPTY；
-    /// 若分配失败则回退到普通管道子进程。
+    /// 优先使用 ConPTY（无需控制台、不弹窗）；失败时回退到普通管道子进程。
     pub fn spawn(
         commandline: &str,
         cwd: Option<&str>,
         cols: i16,
         rows: i16,
     ) -> Result<(ConPtySession, HANDLE), String> {
-        unsafe {
-            // 尝试为 ConPTY 分配隐藏控制台。
-            //
-            // GUI 子系统进程没有控制台。某些启动环境（如从 Trae/VS Code 终端
-            // 启动）会继承父进程的无效控制台句柄，导致 AllocConsole 返回
-            // E_HANDLE。解决方法：先 FreeConsole 清理残留句柄，再 AllocConsole。
-            //
-            // 注意：仅当 GetConsoleWindow 返回 null 且 GetConsoleProcessList
-            // 返回 0 时（真正无 console），才调用 FreeConsole。
-            // 如果已经 attached to parent's console（GetConsoleProcessList > 0），
-            // 直接使用现有 console，不要 FreeConsole（会断开与父进程的关系）。
-            let mut console_allocated = false;
-            let existing_console_window = GetConsoleWindow();
-            let mut pids = [0u32; 1];
-            let inherited_console = GetConsoleProcessList(pids.as_mut_slice()) > 0;
-            if !existing_console_window.0.is_null() || inherited_console {
-                // 已有 console（可能是从命令行/父进程继承），直接使用
-                tracing::info!(
-                    has_window = !existing_console_window.0.is_null(),
-                    inherited = inherited_console,
-                    "ConPTY: 检测到已有控制台，直接使用"
-                );
-            } else {
-                // 先 FreeConsole 清理可能继承的无效控制台句柄
-                let _ = FreeConsole();
-                match AllocConsole() {
-                    Ok(_) => {
-                        let hwnd = GetConsoleWindow();
-                        if !hwnd.0.is_null() {
-                            let _ = ShowWindow(hwnd, SW_HIDE);
-                        }
-                        console_allocated = true;
-                        tracing::info!("ConPTY: AllocConsole 成功（FreeConsole 后重新分配）");
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "ConPTY: AllocConsole 失败（FreeConsole 后仍失败），将回退到普通管道");
-                    }
-                }
+        match Self::spawn_conpty(commandline, cwd, cols, rows) {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                tracing::warn!(error = %e, "ConPTY 创建失败，回退到普通管道");
+                Self::spawn_pipe(commandline, cwd)
             }
-
-            // 尝试 ConPTY 创建
-            if console_allocated || !existing_console_window.0.is_null() || inherited_console {
-                match Self::spawn_conpty(commandline, cwd, cols, rows, console_allocated) {
-                    Ok(result) => return Ok(result),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "ConPTY 创建失败，回退到普通管道");
-                        if console_allocated {
-                            let _ = FreeConsole();
-                        }
-                    }
-                }
-            }
-
-            // 回退：使用普通管道启动子进程
-            tracing::info!("ConPTY 不可用，使用普通管道模式");
-            Self::spawn_pipe(commandline, cwd)
         }
     }
 
@@ -137,25 +79,17 @@ impl ConPtySession {
         cwd: Option<&str>,
         cols: i16,
         rows: i16,
-        console_allocated: bool,
     ) -> Result<(ConPtySession, HANDLE), String> {
         unsafe {
-            // 1. 创建两对匿名管道。
-            //    bInheritHandle = TRUE：管道句柄需要可继承，以便 CreateProcessW
-            //    将子进程的标准输入/输出关联到这些管道（Microsoft 官方示例）。
-            let sa = SECURITY_ATTRIBUTES {
-                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                lpSecurityDescriptor: std::ptr::null_mut(),
-                bInheritHandle: windows::Win32::Foundation::BOOL(1),
-            };
+            // 1. 创建两对匿名管道。ConPTY 通过进程属性关联管道，不依赖句柄继承。
             let mut pipe_in_read = INVALID_HANDLE_VALUE;
             let mut pipe_in_write = INVALID_HANDLE_VALUE;
-            CreatePipe(&mut pipe_in_read, &mut pipe_in_write, Some(&sa), 0)
+            CreatePipe(&mut pipe_in_read, &mut pipe_in_write, None, 0)
                 .map_err(|e| format!("CreatePipe(input) 失败: {}", e))?;
 
             let mut pipe_out_read = INVALID_HANDLE_VALUE;
             let mut pipe_out_write = INVALID_HANDLE_VALUE;
-            CreatePipe(&mut pipe_out_read, &mut pipe_out_write, Some(&sa), 0).map_err(|e| {
+            CreatePipe(&mut pipe_out_read, &mut pipe_out_write, None, 0).map_err(|e| {
                 let _ = CloseHandle(pipe_in_read);
                 let _ = CloseHandle(pipe_in_write);
                 format!("CreatePipe(output) 失败: {}", e)
@@ -232,18 +166,16 @@ impl ConPtySession {
                 return Err(format!("UpdateProcThreadAttribute 失败: {}", e));
             }
 
-            // 4. 准备 STARTUPINFOEXW
-            //
-            //    **重要**：使用 ConPTY 时不能设置 STARTF_USESTDHANDLES，也不能
-            //    设置 hStdInput/hStdOutput/hStdError。ConPTY 会自动为子进程创建
-            //    控制台并管理其 stdio。设置 STARTF_USESTDHANDLES 会导致子进程
-            //    直接使用管道句柄而非 ConPTY 控制台，进入非交互模式（不回显）。
-            //
-            //    同时 bInheritHandles 必须为 FALSE（Microsoft 官方要求），
-            //    因为 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 与句柄继承互斥。
+            // 4. 准备 STARTUPINFOEXW。GUI 进程没有控制台，默认标准句柄可能为空；
+            //    显式指向通信管道可避免 cmd.exe 收到 EOF 后立即退出。
+            //    bInheritHandles 保持 FALSE，伪控制台通过进程属性关联。
             let startup_info = STARTUPINFOEXW {
                 StartupInfo: STARTUPINFOW {
                     cb: std::mem::size_of::<STARTUPINFOEXW>() as u32,
+                    dwFlags: STARTF_USESTDHANDLES,
+                    hStdInput: pipe_in_read,
+                    hStdOutput: pipe_out_write,
+                    hStdError: pipe_out_write,
                     ..Default::default()
                 },
                 lpAttributeList: attr_list,
@@ -313,10 +245,7 @@ impl ConPtySession {
 
             Ok((
                 ConPtySession {
-                    backend: Backend::ConPty {
-                        hpc,
-                        console_allocated,
-                    },
+                    backend: Backend::ConPty { hpc },
                     process_info,
                     pipe_write: pipe_in_write,
                     attr_buffer,
@@ -492,10 +421,7 @@ impl Drop for ConPtySession {
             }
 
             match &self.backend {
-                Backend::ConPty {
-                    hpc,
-                    console_allocated,
-                } => {
+                Backend::ConPty { hpc } => {
                     // 先关闭 ConPTY，通知子进程控制台已断开
                     ClosePseudoConsole(*hpc);
                     // 等待子进程自行退出
@@ -506,10 +432,6 @@ impl Drop for ConPtySession {
                     }
                     if !self.process_info.hProcess.is_invalid() {
                         let _ = CloseHandle(self.process_info.hProcess);
-                    }
-                    // 若本会话分配了控制台，在子进程结束后释放
-                    if *console_allocated {
-                        let _ = FreeConsole();
                     }
                 }
                 Backend::Pipe => {

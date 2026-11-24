@@ -13,3 +13,4 @@ pub use aether_ai_panel::embedding::*;
 pub use aether_ai_panel::memory_store::*;
 pub use aether_ai_panel::reflector::*;
 pub use aether_ai_panel::syntax_highlight;
+pub use aether_ai_panel::verify;

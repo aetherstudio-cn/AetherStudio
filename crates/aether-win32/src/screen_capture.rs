@@ -233,6 +233,74 @@ pub fn capture_window_to_file(hwnd: HWND) -> Result<PathBuf, String> {
     save_shot(&capture_window(hwnd)?)
 }
 
+/// 直接捕获本窗口自身渲染内容（PrintWindow + PW_RENDERFULLCONTENT）。
+///
+/// 与 [`capture_window`] 的关键区别：**不做屏幕 BitBlt 回退**。即使窗口被其它
+/// 窗口遮挡，也只抓取本窗口的 DWM 重定向表面内容，绝不会误截前台其它窗口；
+/// 因此无需把窗口切到前台，适合后台自截图/验收。全黑（未渲染）时返回错误。
+pub fn capture_own_window(hwnd: HWND) -> Result<Capture, String> {
+    unsafe {
+        let mut rect = std::mem::zeroed::<windows::Win32::Foundation::RECT>();
+        if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_err() {
+            return Err("获取窗口矩形失败".to_string());
+        }
+        let w = rect.right - rect.left;
+        let h = rect.bottom - rect.top;
+        if w <= 0 || h <= 0 {
+            return Err("窗口尺寸无效（可能已最小化）".to_string());
+        }
+        let screen_dc = GetDC(None);
+        if screen_dc.is_invalid() {
+            return Err("获取屏幕 DC 失败".to_string());
+        }
+        let mem_dc = CreateCompatibleDC(screen_dc);
+        if mem_dc.is_invalid() {
+            ReleaseDC(None, screen_dc);
+            return Err("创建兼容 DC 失败".to_string());
+        }
+        let bmp = CreateCompatibleBitmap(screen_dc, w, h);
+        if bmp.is_invalid() {
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(None, screen_dc);
+            return Err("创建兼容位图失败".to_string());
+        }
+        let old = SelectObject(mem_dc, HGDIOBJ(bmp.0));
+        // PW_RENDERFULLCONTENT = 2：捕获 Direct2D/DirectComposition 渲染内容
+        let flags = windows::Win32::Storage::Xps::PRINT_WINDOW_FLAGS(2);
+        let printed = windows::Win32::Storage::Xps::PrintWindow(hwnd, mem_dc, flags).as_bool();
+        let cap = if printed {
+            read_bitmap_pixels(screen_dc, bmp, mem_dc, old, w, h)
+        } else {
+            SelectObject(mem_dc, old);
+            Err("PrintWindow 失败".to_string())
+        };
+        let _ = DeleteObject(HGDIOBJ(bmp.0));
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(None, screen_dc);
+        let cap = cap?;
+        if cap.rgba.iter().all(|&b| b == 0) {
+            return Err("窗口内容全黑（可能尚未渲染或已最小化）".to_string());
+        }
+        Ok(cap)
+    }
+}
+
+/// 自截图固定落盘路径：`%TEMP%\Aether\shots\selfshot.png`（覆盖式，便于外部读取）。
+pub fn selfshot_path() -> PathBuf {
+    shots_dir().join("selfshot.png")
+}
+
+/// 捕获本窗口自身内容并落盘到指定路径（无需前台）。
+pub fn capture_own_window_to_path(hwnd: HWND, path: &std::path::Path) -> Result<PathBuf, String> {
+    let cap = capture_own_window(hwnd)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建截图目录失败: {}", e))?;
+    }
+    let png = encode_png(cap.width, cap.height, &cap.rgba)?;
+    std::fs::write(path, &png).map_err(|e| format!("写入截图失败: {}", e))?;
+    Ok(path.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
